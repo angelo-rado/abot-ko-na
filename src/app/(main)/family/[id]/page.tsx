@@ -152,45 +152,13 @@ export default function FamilyDetailPage() {
             const profile = await fetchProfileOnce(user.uid)
             const memberDocRef = doc(firestore, 'families', family.id, 'members', user.uid)
 
-            try {
-              await updateDoc(memberDocRef, {}) // Check if doc exists
-            } catch {
-              await setDoc(memberDocRef, {
-                role: 'member',
-                addedAt: serverTimestamp(),
-                name: profile.name ?? '',
-                email: profile.email ?? '',
-                photoURL: profile.photoURL ?? '',
-              })
-            }
-
-            try {
-              await updateDoc(doc(firestore, 'users', user.uid), {
-                familiesJoined: arrayUnion(family.id),
-              })
-            } catch (_) { }
-          }
-        }
-
-
-        if (user && family) {
-          const isMemberDocMissing = !snap.docs.find(doc => doc.id === user.uid)
-
-          if (isMemberDocMissing) {
-            const profile = await fetchProfileOnce(user.uid)
-            const memberDocRef = doc(firestore, 'families', family.id, 'members', user.uid)
-
-            try {
-              await updateDoc(memberDocRef, {}) // Check if doc exists
-            } catch {
-              await setDoc(memberDocRef, {
-                role: 'member',
-                addedAt: serverTimestamp(),
-                name: profile.name ?? '',
-                email: profile.email ?? '',
-                photoURL: profile.photoURL ?? '',
-              })
-            }
+            await setDoc(memberDocRef, {
+              role: 'member',
+              addedAt: serverTimestamp(),
+              name: profile.name ?? '',
+              email: profile.email ?? '',
+              photoURL: profile.photoURL ?? '',
+            }, { merge: true })
 
             try {
               await updateDoc(doc(firestore, 'users', user.uid), {
