@@ -10,6 +10,8 @@ import {
   deleteDoc,
   collection,
   getDocs,
+  setDoc,
+  arrayUnion,
   onSnapshot,
   serverTimestamp,
 } from 'firebase/firestore'
@@ -143,7 +145,61 @@ export default function FamilyDetailPage() {
       async (snap) => {
         if (!mountedRef.current) return
 
-        // Map member docs to local Member shape; prefer embedded profile fields
+        if (user && family) {
+          const isMemberDocMissing = !snap.docs.find(doc => doc.id === user.uid)
+
+          if (isMemberDocMissing) {
+            const profile = await fetchProfileOnce(user.uid)
+            const memberDocRef = doc(firestore, 'families', family.id, 'members', user.uid)
+
+            try {
+              await updateDoc(memberDocRef, {}) // Check if doc exists
+            } catch {
+              await setDoc(memberDocRef, {
+                role: 'member',
+                addedAt: serverTimestamp(),
+                name: profile.name ?? '',
+                email: profile.email ?? '',
+                photoURL: profile.photoURL ?? '',
+              })
+            }
+
+            try {
+              await updateDoc(doc(firestore, 'users', user.uid), {
+                familiesJoined: arrayUnion(family.id),
+              })
+            } catch (_) { }
+          }
+        }
+
+
+        if (user && family) {
+          const isMemberDocMissing = !snap.docs.find(doc => doc.id === user.uid)
+
+          if (isMemberDocMissing) {
+            const profile = await fetchProfileOnce(user.uid)
+            const memberDocRef = doc(firestore, 'families', family.id, 'members', user.uid)
+
+            try {
+              await updateDoc(memberDocRef, {}) // Check if doc exists
+            } catch {
+              await setDoc(memberDocRef, {
+                role: 'member',
+                addedAt: serverTimestamp(),
+                name: profile.name ?? '',
+                email: profile.email ?? '',
+                photoURL: profile.photoURL ?? '',
+              })
+            }
+
+            try {
+              await updateDoc(doc(firestore, 'users', user.uid), {
+                familiesJoined: arrayUnion(family.id),
+              })
+            } catch (_) { }
+          }
+        }
+
         const docs = snap.docs.map((d) => {
           const data = d.data() as any
           return {
@@ -153,15 +209,12 @@ export default function FamilyDetailPage() {
             email: data?.email ?? undefined,
             photoURL: data?.photoURL ?? undefined,
             addedAt: data?.addedAt ?? data?.createdAt ?? null,
-            // copy all other fields so UI can use status/statusSource if present
             ...data,
           } as Member
         })
 
-        // figure out which profiles we still need to fetch
         const toFetch = docs.filter(m => !m.name && !m.photoURL && !m.email).map(m => m.id)
 
-        // fetch missing profiles in parallel (cached)
         await Promise.all(
           toFetch.map(async (uid) => {
             try {
@@ -176,7 +229,6 @@ export default function FamilyDetailPage() {
           })
         )
 
-        // place owner on top, then sort by name
         const ownerId = (family && family.createdBy) ? family.createdBy : null
         const sorted = docs.slice().sort((a, b) => {
           if (a.id === ownerId) return -1
@@ -186,10 +238,9 @@ export default function FamilyDetailPage() {
           return na.localeCompare(nb)
         }).map(m => ({ ...m, __isOwner: m.id === ownerId }))
 
-        // set members and myRole (authoritative from member doc)
         if (mountedRef.current) {
           setMembers(sorted)
-          const me = sorted.find(x => x.id === user.uid)
+          const me = sorted.find(x => x.id === user?.uid)
           if (me) {
             if (family && family.createdBy === user.uid) {
               setMyRole('owner')
@@ -197,7 +248,6 @@ export default function FamilyDetailPage() {
               setMyRole(me.role ?? 'member')
             }
           } else {
-            // not in members list (we might be before fetch); fallback
             if (family && family.createdBy === user.uid) setMyRole('owner')
             else setMyRole(null)
           }
@@ -213,6 +263,7 @@ export default function FamilyDetailPage() {
         }
       }
     )
+
 
     return () => {
       familyUnsub()
@@ -408,7 +459,7 @@ export default function FamilyDetailPage() {
                           <AvatarImage src={member.photoURL} alt={member.name ?? 'User'} />
                         ) : (
                           <AvatarFallback>
-                            {(member.name ?? '?').split(' ').map(s => s[0]).join('').slice(0,2).toUpperCase()}
+                            {(member.name ?? '?').split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase()}
                           </AvatarFallback>
                         )}
                       </Avatar>
