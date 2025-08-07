@@ -25,32 +25,40 @@ export default function FamilyJoinPage() {
   const rawInvite = searchParams.get('invite')
   const { user, loading } = useAuth()
   const router = useRouter()
+  const isOnline = useOnlineStatus()
 
   const [family, setFamily] = useState<{ id: string; name?: string } | null>(null)
   const [fetchingFamily, setFetchingFamily] = useState<boolean>(false)
   const [joining, setJoining] = useState(false)
-  const isOnline = useOnlineStatus()
-    if (!isOnline) {
-      return <p className="text-center text-red-500">You're offline — cached content only.</p>
-    }
 
-  // Helper to extract an ID if someone passed a full URL into the invite param.
+  if (!isOnline) {
+    return <p className="text-center text-red-500">You're offline — cached content only.</p>
+  }
+
+  // Extract ID from ?invite URL or raw value
   const extractFamilyId = (val: string | null) => {
     if (!val) return ''
     try {
       const maybe = new URL(val, typeof window !== 'undefined' ? window.location.origin : undefined)
       const p = maybe.searchParams.get('invite')
       if (p) return p
-    } catch (_) {
-      // not a URL — fall through
-    }
+    } catch (_) {}
     return val.trim()
   }
 
   const invite = extractFamilyId(rawInvite)
 
+  // 🔐 Redirect to login if not authenticated
   useEffect(() => {
-    if (!invite) return
+    if (!user && !loading && invite) {
+      const currentPath = `/family/join?invite=${invite}`
+      router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
+    }
+  }, [user, loading, invite, router])
+
+  // Fetch family doc (after auth)
+  useEffect(() => {
+    if (!invite || !user) return
     let mounted = true
     const fetchFamily = async () => {
       setFetchingFamily(true)
@@ -74,9 +82,9 @@ export default function FamilyJoinPage() {
     }
     fetchFamily()
     return () => { mounted = false }
-  }, [invite])
+  }, [invite, user])
 
-  // If user is already a member (member doc exists) redirect them to the family page.
+  // If already a member, redirect to family page
   useEffect(() => {
     if (!user || !family) return
     let mounted = true
@@ -106,7 +114,6 @@ export default function FamilyJoinPage() {
       const familyRef = doc(firestore, 'families', family.id)
       const memberRef = doc(firestore, 'families', family.id, 'members', user.uid)
 
-      // 0) Guard: if member doc already exists, redirect (avoid race)
       const existing = await getDoc(memberRef)
       if (existing.exists()) {
         toast.success(`You're already a member of ${family.name ?? 'this family'}`)
@@ -114,13 +121,10 @@ export default function FamilyJoinPage() {
         return
       }
 
-      // 1) Write authoritative membership subdoc (presence defaults, role).
-      //    Include profile fields (name/photo) so readers don't need users/{uid}.
       await setDoc(memberRef, {
         uid: user.uid,
         role: 'member',
         addedAt: serverTimestamp(),
-        // presence defaults (manual by default)
         status: 'away',
         statusSource: 'manual',
         updatedAt: serverTimestamp(),
@@ -128,41 +132,31 @@ export default function FamilyJoinPage() {
         photoURL: (user as any).photoURL ?? null,
       }, { merge: true })
 
-      // 2) Best-effort: add user to families.{id}.members array so array-contains queries work
       try {
         await updateDoc(familyRef, {
           members: arrayUnion(user.uid),
         })
-      } catch (err) {
-        console.warn('Could not update families.members array (will fallback to set merge)', err)
-        try {
-          // fallback: set merge with array if updateDoc failed
-          await setDoc(familyRef, { members: [user.uid] }, { merge: true })
-        } catch (err2) {
-          console.warn('Fallback set for families.members failed', err2)
-        }
+      } catch {
+        await setDoc(familyRef, { members: [user.uid] }, { merge: true })
       }
 
-      // 3) Best-effort: add family id to user's familiesJoined and set preferredFamily so UI picks it up
       try {
         await updateDoc(userRef, {
           familiesJoined: arrayUnion(family.id),
           preferredFamily: family.id,
         })
-      } catch (err) {
-        console.warn('Could not update users.familiesJoined/preferredFamily (will fallback to set merge)', err)
-        try {
-          await setDoc(userRef, { familiesJoined: [family.id], preferredFamily: family.id }, { merge: true })
-        } catch (err2) {
-          console.warn('Fallback set for users doc failed', err2)
-        }
+      } catch {
+        await setDoc(userRef, {
+          familiesJoined: [family.id],
+          preferredFamily: family.id,
+        }, { merge: true })
       }
 
-      // 4) Persist locally so UI early-init picks this family immediately
-      try { localStorage.setItem(LOCAL_FAMILY_KEY, family.id) } catch (e) { /* ignore */ }
+      try {
+        localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
+      } catch {}
 
       toast.success(`You joined the family: ${family.name ?? family.id}`)
-      // navigate to family page
       router.replace(`/family/${family.id}`)
     } catch (e) {
       console.error('Failed to join family', e)
@@ -184,10 +178,10 @@ export default function FamilyJoinPage() {
     )
   }
 
-  if (fetchingFamily) {
+  if (loading || !user || fetchingFamily) {
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
-        <p className="text-muted-foreground">Loading family info…</p>
+        <p className="text-muted-foreground">Loading…</p>
       </div>
     )
   }
@@ -202,13 +196,6 @@ export default function FamilyJoinPage() {
       </div>
     )
   }
-
-  // Force redirect to login if unauthenticated
-if (!user && !loading) {
-  const currentPath = `/family/join?invite=${invite}`
-  router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
-  return null
-}
 
   return (
     <main className="max-w-xl mx-auto p-6 space-y-6">
