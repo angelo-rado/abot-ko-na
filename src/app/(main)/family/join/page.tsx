@@ -203,16 +203,12 @@ export default function FamilyJoinPage() {
     )
   }
 
-  if (!user && !loading) {
-    return (
-      <div className="max-w-xl mx-auto p-6 text-center">
-        <p className="mb-4 text-muted-foreground">Please log in to join the family.</p>
-        <Link href="/login">
-          <Button>Log In</Button>
-        </Link>
-      </div>
-    )
-  }
+  // Force redirect to login if unauthenticated
+if (!user && !loading) {
+  const currentPath = `/family/join?invite=${invite}`
+  router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
+  return null
+}
 
   return (
     <main className="max-w-xl mx-auto p-6 space-y-6">
