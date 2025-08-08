@@ -29,6 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import FamilyCreatedSuccess from '@/app/components/FamilyCreatedSuccess'
 import JoinFamilyModal from '@/app/components/JoinFamilyModal'
+import CreateFamilyModal from '@/app/components/CreateFamilyModal'
 
 type Family = {
   id: string
@@ -53,6 +54,7 @@ export default function FamilyPickerPage() {
   const createdFamilyId = searchParams.get('created')
   const lastSeenCreatedId = useRef<string | null>(null)
   const memberUnsubsRef = useRef<Map<string, () => void>>(new Map())
+  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -241,6 +243,8 @@ export default function FamilyPickerPage() {
               Joined
             </TabsTrigger>
           </TabsList>
+
+          <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
 
           <TabsContent value="created" className="space-y-2 pt-4">
             {loading ? renderSkeleton() : (
