@@ -11,17 +11,16 @@ export const metadata: Metadata = {
   description: 'Realtime family delivery + presence tracking',
   icons: {
     icon: [
-      { url: '/maskable_icon_x192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/maskable_icon_x128.png', sizes: '128x128', type: 'image/png' },
-      { url: '/maskable_icon_x512.png', sizes: '512x512', type: 'image/png' },
-      { url: 'maskable_icon_x96.png',   sizes: '96x96',   type: 'image/png' },
-      { url: 'maskable_icon_x72.png',   sizes: '72x72',   type: 'image/png' },
-      { url: '/maskable_icon_x384.png', sizes: '384x384', type: 'image/png' },
-      { url: '/maskable_icon_x512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/favicon.ico', sizes: 'any' }, // Tab favicon (required)
+      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
+      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/android-chrome-192x192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/android-chrome-512x512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/icon-192.png',
-    shortcut: '/icon-192.png',
+    apple: '/apple-touch-icon.png', // iOS home screen
+    shortcut: '/favicon.ico',
   },
+  manifest: '/site.webmanifest', // PWA manifest
 
 }
 

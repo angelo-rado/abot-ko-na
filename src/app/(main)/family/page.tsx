@@ -20,7 +20,6 @@ import {
 
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
-import { cn } from '@/lib/utils'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -29,7 +28,6 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import FamilyCreatedSuccess from '@/app/components/FamilyCreatedSuccess'
-import CreateFamilyModal from '@/app/components/CreateFamilyModal'
 import JoinFamilyModal from '@/app/components/JoinFamilyModal'
 
 type Family = {
@@ -277,21 +275,6 @@ export default function FamilyPickerPage() {
           </TabsContent>
         </Tabs>
       </div>
-
-      <CreateFamilyModal open={showModal} onOpenChange={setShowModal} />
-      {ownedFamilies.length > 0 && //Show only when there's data
-        /* Floating FAB */
-        <button
-          onClick={() => setShowModal(true)}
-          className={cn(
-            buttonVariants({ variant: 'default', size: 'icon' }),
-            'rounded-full fixed bottom-6 right-6 shadow-lg bg-primary text-white hover:bg-primary/90'
-          )}
-          aria-label="Create Family"
-        >
-          <PlusIcon className="w-5 h-5" />
-        </button>
-      }
     </div>
   )
 }
