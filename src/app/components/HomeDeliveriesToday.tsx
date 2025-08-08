@@ -565,9 +565,9 @@ export default function HomeDeliveriesToday({
               console.log('DeliveryItemsMap', items)
 
               console.log('Rendering delivery', d.id, {
-  hasItems: deliveryItemsMap.has(d.id),
-  items: deliveryItemsMap.get(d.id),
-})
+                hasItems: deliveryItemsMap.has(d.id),
+                items: deliveryItemsMap.get(d.id),
+              })
 
               // Grouped deliveries (show items)
               if (!isSingleByDoc && items.length > 0) {
@@ -804,10 +804,18 @@ export default function HomeDeliveriesToday({
                   </div>
 
                   <div>
-                    <Button size="sm" onClick={() => handleMarkDelivery(d.id, d.note)} disabled={processingId === d.id || d.status === 'delivered'}>
-                      {processingId === d.id ? 'Saving…' : d.status === 'delivered' ? 'Received' : 'Mark as Received'}
-                    </Button>
+                    <MarkDeliveryButton
+                      id={d.id}
+                      isProcessing={processingId === d.id}
+                      onClick={() => setDialogOpenId(d.id)}
+                    />
                   </div>
+                  <ReceiverNoteDialog
+                    open={!!dialogOpenId}
+                    onClose={() => setDialogOpenId(null)}
+                    onSubmit={handleReceiverNoteSubmit}
+                    loading={saving}
+                  />
                 </div>
               )
             })}
