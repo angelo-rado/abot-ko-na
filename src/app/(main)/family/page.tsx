@@ -13,7 +13,6 @@ import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   HomeIcon,
-  PlusIcon,
   UsersIcon,
   Loader2,
 } from 'lucide-react'
@@ -24,7 +23,7 @@ import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import FamilyCreatedSuccess from '@/app/components/FamilyCreatedSuccess'
@@ -227,9 +226,11 @@ export default function FamilyPickerPage() {
       <div className="sticky top-0 z-10 bg-white pt-2 pb-4">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-xl font-semibold">Your Families</h1>
-          <Button size="sm" onClick={() => setShowModal(true)}>
-            + Create
-          </Button>
+          {ownedFamilies.length > 0 &&
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              + Create
+            </Button>
+          }
         </div>
 
         <Tabs defaultValue="created">
@@ -254,7 +255,7 @@ export default function FamilyPickerPage() {
                     icon: <HomeIcon className="w-6 h-6 text-muted-foreground" />,
                     title: 'No families yet',
                     description: 'Start by creating a new family group.',
-                    cta: <Button onClick={() => setShowModal(true)}>Create Family</Button>,
+                    cta: <Button onClick={() => setCreateOpen(true)}>Create Family</Button>,
                   })
                   : ownedFamilies.map(renderFamilyCard)}
               </AnimatePresence>
