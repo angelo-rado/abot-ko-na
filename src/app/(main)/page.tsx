@@ -19,7 +19,6 @@ import {
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import FamilyPicker from '../components/FamilyPicker'
-import LoginButton from '@/app/components/LoginButton'
 import { Loader2, Home, DoorOpen } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
@@ -31,7 +30,6 @@ import {
 } from '@/components/ui/tooltip'
 import { formatDistanceToNow } from 'date-fns'
 import { motion, AnimatePresence } from 'framer-motion'
-import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import CreateFamilyModal from '../components/CreateFamilyModal'
 import JoinFamilyModal from '../components/JoinFamilyModal'
@@ -304,49 +302,46 @@ export default function HomePage() {
 
   // Subscribe to the members collection for the selected family (live updates)
   useEffect(() => {
-    if (!user?.uid || !familyId) {
+  if (!user?.uid || !familyId) {
+    setMembersLive([])
+    setMembersLoading(false)
+    setPresenceLoading(false)
+    return
+  }
+
+  const membersRef = collection(firestore, 'families', familyId, 'members')
+
+  const unsub = onSnapshot(
+    membersRef,
+    (snapshot) => {
+      if (!user?.uid) return // guard against logout race
+      const docs = snapshot.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }))
+      setMembersLive(docs)
+      setMembersLoading(false)
+      setPresenceLoading(false)
+
+      const me = docs.find((m) => m.uid === user.uid)
+      if (me) {
+        const isRecentChange = justChangedStatusAt && Date.now() - justChangedStatusAt < 1500
+        if (!isRecentChange) {
+          setIsHome(me.status === 'home')
+        }
+        setMyStatusSource(me.statusSource ?? me.source ?? me.status_source ?? null)
+      }
+    },
+    (err) => {
+      if (user?.uid) { // prevent error spam after logout
+        console.warn('members collection snapshot error', err)
+      }
       setMembersLive([])
       setMembersLoading(false)
       setPresenceLoading(false)
-      return
     }
+  )
 
-    setMembersLoading(true)
-    setPresenceLoading(true)
-    const membersRef = collection(firestore, 'families', familyId, 'members')
+  return () => unsub()
+}, [user?.uid, familyId, justChangedStatusAt])
 
-    const unsub = onSnapshot(
-      membersRef,
-      (snapshot) => {
-        // Debug: logs raw docs so you can confirm updates arrived and field names
-        console.log('[Home] members snapshot raw', snapshot.docs.map(d => ({ id: d.id, data: d.data() })))
-        console.log('[Home] members snapshot changes', snapshot.docChanges().map(c => ({ id: c.doc.id, type: c.type })))
-
-        const docs = snapshot.docs.map(d => ({ uid: d.id, ...(d.data() as any) }))
-        setMembersLive(docs)
-        setMembersLoading(false)
-        setPresenceLoading(false)
-
-        // Also update the current user's isHome if their doc changed
-        const me = docs.find((m) => m.uid === user.uid)
-        if (me) {
-          const isRecentChange = justChangedStatusAt && Date.now() - justChangedStatusAt < 1500
-          if (!isRecentChange) {
-            setIsHome(me.status === 'home')
-          }
-          setMyStatusSource(me.statusSource ?? me.source ?? me.status_source ?? null)
-        }
-      },
-      (err) => {
-        console.warn('members collection snapshot error', err)
-        setMembersLive([])
-        setMembersLoading(false)
-        setPresenceLoading(false)
-      }
-    )
-
-    return () => unsub()
-  }, [user?.uid, familyId])
 
   const handlePresenceChange = async (newStatus: 'home' | 'away') => {
     if (!user || !familyId) return
@@ -380,18 +375,6 @@ export default function HomePage() {
     return (
       <main className="flex items-center justify-center h-screen">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </main>
-    )
-  }
-
-  if (!user) {
-    return (
-      <main className="max-w-2xl mx-auto p-6 space-y-6 text-center">
-        <h1 className="text-xl font-semibold">Home Dashboard</h1>
-        <p className="text-muted-foreground mb-4">
-          Sign in to manage deliveries with your family
-        </p>
-        <LoginButton />
       </main>
     )
   }
@@ -611,7 +594,7 @@ export default function HomePage() {
                                     )}
                                   </TooltipContent>
                                 </Tooltip>
-                                <HelpCircleHint 
+                                <HelpCircleHint
                                   title={presence.statusSource === 'geo'
                                     ? 'Auto'
                                     : presence.statusSource === 'manual'

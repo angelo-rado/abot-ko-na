@@ -41,6 +41,29 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   // derive autoPresence from member doc
   const autoPresence = (myMemberDoc?.statusSource === 'geo')
 
+  // Add these helper functions (outside the component)
+  async function checkLocationPermission(): Promise<boolean> {
+    try {
+      const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName })
+      return status.state === 'granted'
+    } catch (err) {
+      console.warn('[Presence] Permissions API unsupported or failed', err)
+      return false
+    }
+  }
+
+  async function requestLocationPermission(): Promise<boolean> {
+    return new Promise((resolve) => {
+      navigator.geolocation.getCurrentPosition(
+        () => resolve(true),
+        (err) => {
+          console.warn('[Presence] Geolocation permission denied', err)
+          resolve(false)
+        }
+      )
+    })
+  }
+
   // Resolve familyId from user's preferredFamily if not provided (single-shot)
   useEffect(() => {
     if (!user?.uid || propFamilyId) {
@@ -71,10 +94,10 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         if (!mountedRef.current) return
         if (famSnap.exists()) {
           setResolvedFamilyId(preferred)
-          try { localStorage.setItem('abot:selectedFamily', preferred) } catch {}
+          try { localStorage.setItem('abot:selectedFamily', preferred) } catch { }
         } else {
           setResolvedFamilyId(null)
-          try { localStorage.removeItem('abot:selectedFamily') } catch {}
+          try { localStorage.removeItem('abot:selectedFamily') } catch { }
         }
       } catch (err) {
         console.warn('[PresenceSettings] error validating preferredFamily', err)
@@ -127,7 +150,6 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
 
   // Handler to toggle auto presence. It will be disabled until `loaded === true` and it's not currently saving.
   const handleToggleAuto = useCallback(async (next: boolean) => {
-    // Defensive guards: don't run while loading/saving or missing required context
     if (!user?.uid) {
       toast('Sign in to change presence settings.')
       return
@@ -137,7 +159,6 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
       return
     }
     if (!loaded || memberLoading) {
-      // still loading — ignore clicks
       console.debug('[PresenceSettings] toggle clicked while loading — ignored')
       return
     }
@@ -146,11 +167,43 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
       return
     }
 
+    // If enabling auto-presence, confirm location access first
+    if (next) {
+      const alreadyGranted = await checkLocationPermission()
+      if (!alreadyGranted) {
+        const granted = await requestLocationPermission()
+
+        if (!granted) {
+          const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+
+          if (isMobile) {
+            toast.error('Location access denied. Please enable location in your device settings.', {
+              action: {
+                label: 'How?',
+                onClick: () => {
+                  if (/Android/i.test(navigator.userAgent)) {
+                    // Android: attempt to open location settings (will work in some PWAs / WebViews)
+                    window.open('intent://settings#Intent;scheme=android.settings.LOCATION_SOURCE_SETTINGS;end')
+                  } else {
+                    // iOS: show helpful alert (iOS blocks direct settings links)
+                    alert('To enable location on iOS:\n\n1. Open Settings\n2. Scroll to Safari (or your browser)\n3. Tap Location\n4. Set to “While Using the App”')
+                  }
+                }
+              }
+            })
+          } else {
+            toast.error('Location permission is required for auto presence.')
+          }
+
+          return
+        }
+      }
+    }
+
     setSavingAuto(true)
     try {
       const memberRef = doc(firestore, 'families', resolvedFamilyId, 'members', user.uid)
 
-      // Decide intended statusSource
       const newSource = next ? 'geo' : 'manual'
       const writeData: any = {
         statusSource: newSource,
@@ -159,22 +212,18 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         photoURL: (user as any).photoURL ?? null,
       }
 
-      // If enabling geo, we do NOT set status here; use auto hook to compute it.
-      // If disabling, keep no status change (manual writes will set status if user uses manual buttons)
       await setDoc(memberRef, writeData, { merge: true })
 
-      // optimistic local update so UI reflects change immediately
       setMyMemberDoc(prev => ({ ...(prev ?? {}), statusSource: newSource } as MemberDoc))
-
       toast.success(`Auto presence ${next ? 'enabled' : 'disabled'}`)
     } catch (err) {
       console.error('[PresenceSettings] toggle write failed', err)
       toast.error('Failed to change auto presence')
     } finally {
-      // ensure we keep toggle disabled until we've finished saving
       setSavingAuto(false)
     }
   }, [user?.uid, resolvedFamilyId, loaded, memberLoading, savingAuto])
+
 
   // Manual status writer (used by home page buttons). Keep here for reference — not touched now.
   const setStatusManual = useCallback(async (status: 'home' | 'away') => {
@@ -239,6 +288,12 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
             disabled={toggleDisabled}
             aria-label="Auto presence toggle"
           />
+
+        )}
+        {autoPresence && (
+          <div className="text-xs text-muted-foreground mt-1">
+            Location access is required to determine presence automatically.
+          </div>
         )}
       </div>
 
@@ -248,7 +303,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         <div className="text-xs text-muted-foreground">
           {autoPresence
             ? 'Auto-presence is enabled — manual controls are disabled. Turn off auto-presence to set manually.'
-            : 'Set your presence manually. This will update Firestore as a manual status.'}
+            : 'Set your presence manually.'}
         </div>
 
         <div className="flex gap-2 mt-2">

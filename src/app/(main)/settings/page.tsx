@@ -22,7 +22,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (!loading && user === null) {
-      router.push('/');
+      router.push('/login');
     }
   }, [user, loading, router]);
 

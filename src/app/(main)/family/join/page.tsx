@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
 import Link from 'next/link'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
+import JoinFamilyModal from '@/app/components/JoinFamilyModal'
+import { join } from 'path'
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
@@ -30,6 +32,8 @@ export default function FamilyJoinPage() {
   const [family, setFamily] = useState<{ id: string; name?: string } | null>(null)
   const [fetchingFamily, setFetchingFamily] = useState<boolean>(false)
   const [joining, setJoining] = useState(false)
+
+  const [joinOpen, setJoinOpen] = useState(false)
 
   if (!isOnline) {
     return <p className="text-center text-red-500">You're offline — cached content only.</p>
@@ -95,7 +99,7 @@ export default function FamilyJoinPage() {
         if (!mounted) return
         if (memberSnap.exists()) {
           toast.success(`You're already a member of ${family.name ?? 'this family'}`)
-          router.replace(`/family/${family.id}`)
+          router.replace(`/onboarding?family=${family.id}`)
         }
       } catch (err) {
         console.warn('Failed to check existing member', err)
@@ -117,7 +121,7 @@ export default function FamilyJoinPage() {
       const existing = await getDoc(memberRef)
       if (existing.exists()) {
         toast.success(`You're already a member of ${family.name ?? 'this family'}`)
-        router.replace(`/family/${family.id}`)
+        router.replace(`/onboarding?family=${family.id}`)
         return
       }
 
@@ -157,7 +161,7 @@ export default function FamilyJoinPage() {
       } catch {}
 
       toast.success(`You joined the family: ${family.name ?? family.id}`)
-      router.replace(`/family/${family.id}`)
+      router.replace(`/onboarding?family=${family.id}`)
     } catch (e) {
       console.error('Failed to join family', e)
       toast.error('Failed to join family. Please try again.')
@@ -170,10 +174,9 @@ export default function FamilyJoinPage() {
   if (!invite) {
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
-        <p className="text-muted-foreground">No invite code provided.</p>
-        <Link href="/family">
-          <Button className="mt-4">Go to Families</Button>
-        </Link>
+        <p className="text-muted-foreground">No invite code provided. Please enter invite code below</p>
+        <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
+        <Button className="mt-4" variant="outline" onClick={() => setJoinOpen(true)}>Enter Invite Code</Button>
       </div>
     )
   }
@@ -190,9 +193,6 @@ export default function FamilyJoinPage() {
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
         <p className="text-muted-foreground">Invalid invite link: family not found.</p>
-        <Link href="/family">
-          <Button className="mt-4">Browse Families</Button>
-        </Link>
       </div>
     )
   }

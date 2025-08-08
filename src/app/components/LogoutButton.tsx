@@ -9,8 +9,19 @@ export default function LogoutButton() {
   const router = useRouter()
 
   const handleLogout = async () => {
-    await signOut(auth)
-    router.push('/')
+    try {
+      // Clear local storage (preferredFamily, etc.)
+      localStorage.removeItem('abot:selectedFamily')
+      localStorage.removeItem('abot:onboarded')
+
+      // Sign out
+      await signOut(auth)
+
+      // Push to root (login screen)
+      router.push('/login')
+    } catch (err) {
+      console.error('Logout failed:', err)
+    }
   }
 
   return (

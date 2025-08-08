@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import ConfirmDialog from '@/app/components/ConfirmDialog'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
+import { useRouter } from 'next/navigation'
 
 // Types
 type Family = { id: string; name?: string }
@@ -35,6 +36,7 @@ const ARCHIVE_OLDER_THAN_DAYS = 30
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
+  const { loading } = useAuth()
   const [familyId, setFamilyId] = useState<string | null>(null)
   const [families, setFamilies] = useState<Family[]>([])
   const [familiesLoading, setFamiliesLoading] = useState(true)
@@ -65,6 +67,8 @@ export default function DeliveriesPage() {
 
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+
+  const router = useRouter()
 
   const isOnline = useOnlineStatus()
   if (!isOnline) {
@@ -100,6 +104,13 @@ export default function DeliveriesPage() {
       confirmResolveRef.current = null
     }
   }
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace('/login') // 👈 send to main page when not logged in
+    }
+  }, [user, loading])
+
 
   useEffect(() => {
     return () => {
@@ -296,13 +307,6 @@ export default function DeliveriesPage() {
   const keyFor = (d: any) => `${d.id}-${d.updatedAt?.seconds || d.createdAt?.seconds || ''}`
 
   if (authLoading) return <main className="flex items-center justify-center h-screen"><Loader2 className="w-6 h-6 animate-spin" /></main>
-  if (!user) return (
-    <main className="max-w-2xl mx-auto p-6 space-y-6 text-center">
-      <h1 className="text-xl font-semibold">Deliveries</h1>
-      <p className="text-muted-foreground">Sign in to manage your family deliveries.</p>
-      <Button onClick={() => window.location.assign('/signin')}>Sign in</Button>
-    </main>
-  )
 
   return (
     <div className="px-4 py-6 max-w-4xl mx-auto space-y-6">
@@ -389,6 +393,15 @@ export default function DeliveriesPage() {
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full rounded" />
           ))}
+        </div>
+      ) : families.length === 0 ? (
+        <div className="text-center py-10 space-y-4">
+          <p className="text-muted-foreground text-sm">
+            You haven't joined or created a family yet. Deliveries require a family group.
+          </p>
+          <div className="flex justify-center gap-4">
+            <Button onClick={() => router.push('/family/create')}>Go to Families</Button>
+          </div>
         </div>
       ) : deliveries.length === 0 ? (
         <p className="text-muted-foreground text-sm">No deliveries yet.</p>
