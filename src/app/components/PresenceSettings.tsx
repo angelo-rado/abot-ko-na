@@ -290,12 +290,12 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
           />
 
         )}
-        {autoPresence && (
-          <div className="text-xs text-muted-foreground mt-1">
-            Location access is required to determine presence automatically.
-          </div>
-        )}
       </div>
+      {!autoPresence && (
+        <div className="text-xs text-muted-foreground mt-1">
+          Location access is required to determine presence automatically.
+        </div>
+      )}
 
       {/* Manual presence UI (kept but will be disabled if auto is on) */}
       <div className="space-y-2">

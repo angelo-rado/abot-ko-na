@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { collection, addDoc, Timestamp, doc, updateDoc, getDocs } from 'firebase/firestore'
+import { collection, addDoc, Timestamp, doc, updateDoc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { createDelivery, updateDelivery } from '@/lib/deliveries'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -48,6 +48,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   const draftItemsRef = useRef<ItemRow[] | null>(null)
 
+  const modifiedItemsRef = useRef<Set<string>>(new Set())
+
   const parseExpectedDate = (d: any) => {
     if (!d) return ''
     if (typeof d.toDate === 'function') return d.toDate().toISOString().slice(0, 16)
@@ -59,7 +61,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   const [values, setValues] = useState<DeliveryFormValues>({
     title: delivery?.title ?? '',
-    expectedDate: parseExpectedDate(delivery?.expectedDate),
+    expectedDate: delivery?.expectedDate
+      ? parseExpectedDate(delivery.expectedDate)
+      : getLocalISOStringForTime(23, 59),
     codAmount: delivery?.codAmount ?? null,
     status: (delivery?.status as DeliveryStatus) ?? 'pending',
     note: delivery?.note ?? '',
@@ -76,6 +80,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   const addItemDisabled = itemMode === 'single' && (!isEdit || items.length >= 1)
 
+
+
   useEffect(() => {
     if (formErrors.items && items.length > 0) {
       setFormErrors((prev) => {
@@ -86,32 +92,48 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   }, [items.length, formErrors.items])
 
   useEffect(() => {
-    if (open && !isEdit) {
-      setValues({ title: '', expectedDate: '', codAmount: null, status: 'pending' })
-      if (draftItemsRef.current) {
-        setItems(draftItemsRef.current)
-        setItemMode('multiple')
-      } else {
-        setItems([])
-        setItemMode('single')
-      }
-      setConfirmSinglePromptOpen(false)
+    if (!open || isEdit) return
+
+    setValues({
+      title: '',
+      expectedDate: delivery?.expectedDate
+        ? parseExpectedDate(delivery.expectedDate)
+        : getLocalISOStringForTime(23, 59),
+      codAmount: null, status: 'pending'
+    })
+
+    if (draftItemsRef.current) {
+      setItems(draftItemsRef.current)
+      setItemMode('multiple')
+    } else {
+      setItems([])
+      setItemMode('single')
     }
+
+    setConfirmSinglePromptOpen(false)
   }, [open, isEdit])
 
+
   useEffect(() => {
+    if (!delivery || !isEdit) return
+
     setValues({
-      title: delivery?.title ?? '',
-      expectedDate: parseExpectedDate(delivery?.expectedDate),
-      codAmount: delivery?.codAmount ?? null,
-      status: (delivery?.status as DeliveryStatus) ?? 'pending',
-      note: delivery?.note ?? '',
+      title: delivery.title ?? '',
+      expectedDate: parseExpectedDate(delivery.expectedDate),
+      codAmount: delivery.codAmount ?? null,
+      status: (delivery.status as DeliveryStatus) ?? 'pending',
+      note: delivery.note ?? '',
     })
-    setItems([])
-    setItemMode(delivery?.type === 'bulk' ? 'multiple' : 'single')
+
+    // 🧠 only clear items if it's not a bulk delivery
+    if (delivery.type !== 'bulk') {
+      setItems([])
+    }
+
+    setItemMode(delivery.type === 'bulk' ? 'multiple' : 'single')
     draftItemsRef.current = null
     setConfirmSinglePromptOpen(false)
-  }, [delivery])
+  }, [delivery, isEdit])
 
   useEffect(() => {
     async function fetchItems() {
@@ -129,7 +151,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           note: data.note ?? '',
         }
       })
+
       setItems(rows)
+
     }
 
     if (open && isEdit && delivery?.type === 'bulk') {
@@ -154,18 +178,22 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   function addItemRow() {
     if (itemMode === 'single' && items.length >= 1) return
+
     setItems((prev) => [
       ...prev,
       {
         id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: '',
         price: null,
-        expectedDate: '',
+        expectedDate: delivery?.expectedDate
+          ? parseExpectedDate(delivery.expectedDate)
+          : getLocalISOStringForTime(23, 59), 
       },
     ])
   }
 
   function updateItemRow(id: string, patch: Partial<ItemRow>) {
+    modifiedItemsRef.current.add(id) // 🔥 mark item as changed
     setItems((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   }
 
@@ -225,6 +253,13 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
     if (!values.expectedDate?.trim()) {
       errors.expectedDate = 'Expected date is required'
+    } else {
+      const now = new Date()
+      const expected = new Date(values.expectedDate)
+
+      if (expected < now) {
+        errors.expectedDate = 'Expected date cannot be in the past'
+      }
     }
 
     if (itemMode === 'multiple') {
@@ -232,15 +267,30 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         errors.items = 'Please add at least two items for bulk deliveries'
       }
 
+      const headerExpected = values.expectedDate ? new Date(values.expectedDate) : null
+
       items.forEach((item, index) => {
         if (!item.name.trim()) {
           errors[`item-${item.id}-name`] = `Item ${index + 1}: Name required`
         }
+
         if (item.price === null || isNaN(item.price)) {
           errors[`item-${item.id}-price`] = `Item ${index + 1}: Price required`
         }
+
         if (!item.expectedDate?.trim()) {
           errors[`item-${item.id}-date`] = `Item ${index + 1}: Date required`
+        } else {
+          const itemDate = new Date(item.expectedDate)
+          const now = new Date()
+
+          if (itemDate < now) {
+            errors[`item-${item.id}-date`] = `Item ${index + 1}: Date cannot be in the past`
+          }
+
+          if (headerExpected && itemDate < headerExpected) {
+            errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery ETA`
+          }
         }
       })
     }
@@ -250,39 +300,25 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       return
     }
 
+    setIsSaving(true)
+
     try {
-      setIsSaving(true)
-
       if (isEdit && delivery?.id) {
-        await updateDelivery(familyId, delivery.id, {
-          title: values.title.trim(),
-          codAmount: values.codAmount,
-          status: values.status,
-          expectedDate: values.expectedDate ? new Date(values.expectedDate) : undefined,
-          note: values.note?.trim() || '',
-        })
-        onOpenChange(false)
-        return
-      }
+        // ✅ EDIT MODE
 
-      const determinedType = itemMode === 'multiple' || items.length > 1 ? 'bulk' : 'single'
-      const created = await createDelivery(familyId, {
-        title: values.title.trim(),
-        status: values.status,
-        itemCount: 0,
-        type: determinedType,
-        codAmount: values.codAmount ?? undefined,
-        expectedDate: values.expectedDate ? new Date(values.expectedDate) : undefined,
-        note: values.note?.trim() || '',
-        receiverNote: '',
-      })
+        const deliveryRef = doc(firestore, 'families', familyId, 'deliveries', delivery.id)
+        const itemsCol = collection(deliveryRef, 'items')
 
-      const newId = created.id
-      const itemsCol = collection(firestore, 'families', familyId, 'deliveries', newId, 'items')
+        // 1. Delete existing items
+        const existingItemsSnap = await getDocs(itemsCol)
+        const deletePromises = existingItemsSnap.docs.map((doc) => deleteDoc(doc.ref))
+        await Promise.all(deletePromises)
 
-      if (items.length > 0) {
-        for (const it of items) {
-          await addDoc(itemsCol, {
+        // 2. Add updated items
+        const batch = writeBatch(firestore)
+        items.forEach((it) => {
+          const itemRef = doc(itemsCol)
+          batch.set(itemRef, {
             name: it.name.trim(),
             price: it.price,
             status: 'pending',
@@ -290,40 +326,95 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
             ...(it.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(it.expectedDate)) } : {}),
             ...(it.note ? { note: it.note.trim() } : {}),
           })
-        }
+        })
 
-        await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
+        // 3. Update delivery metadata
+        batch.update(deliveryRef, {
+          title: values.title.trim(),
+          codAmount: values.codAmount ?? null,
+          status: values.status,
+          expectedDate: values.expectedDate ? Timestamp.fromDate(new Date(values.expectedDate)) : null,
+          note: values.note?.trim() || '',
           itemCount: items.length,
           type: items.length > 1 ? 'bulk' : 'single',
           updatedAt: Timestamp.now(),
         })
-      } else {
-        await addDoc(itemsCol, {
-          name: values.title.trim() || 'Delivery',
-          price: null,
-          status: 'pending',
-          createdAt: Timestamp.now(),
-          ...(values.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(values.expectedDate)) } : {}),
-        })
 
-        await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
-          itemCount: 1,
-          type: 'single',
+        await batch.commit()
+
+        // ✅ cleanup
+        draftItemsRef.current = null
+        modifiedItemsRef.current.clear()
+        setItems([])
+
+        onOpenChange(false)
+        return
+      } else {
+        // ✅ CREATE MODE
+
+        const determinedType = itemMode === 'multiple' || items.length > 1 ? 'bulk' : 'single'
+        const created = await createDelivery(familyId, {
+          title: values.title.trim(),
+          status: values.status,
+          itemCount: 0,
+          type: determinedType,
+          codAmount: values.codAmount ?? undefined,
+          expectedDate: values.expectedDate ? new Date(values.expectedDate) : undefined,
           note: values.note?.trim() || '',
           receiverNote: '',
-          updatedAt: Timestamp.now(),
         })
-      }
 
-      onOpenChange(false)
+        const newId = created.id
+        const itemsCol = collection(firestore, 'families', familyId, 'deliveries', newId, 'items')
+
+        if (items.length > 0) {
+          for (const it of items) {
+            await addDoc(itemsCol, {
+              name: it.name.trim(),
+              price: it.price,
+              status: 'pending',
+              createdAt: Timestamp.now(),
+              ...(it.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(it.expectedDate)) } : {}),
+              ...(it.note ? { note: it.note.trim() } : {}),
+            })
+          }
+
+          await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
+            itemCount: items.length,
+            type: items.length > 1 ? 'bulk' : 'single',
+            updatedAt: Timestamp.now(),
+          })
+        } else {
+          await addDoc(itemsCol, {
+            name: values.title.trim() || 'Delivery',
+            price: null,
+            status: 'pending',
+            createdAt: Timestamp.now(),
+            ...(values.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(values.expectedDate)) } : {}),
+          })
+
+          await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
+            itemCount: 1,
+            type: 'single',
+            note: values.note?.trim() || '',
+            receiverNote: '',
+            updatedAt: Timestamp.now(),
+          })
+        }
+
+        draftItemsRef.current = null
+        modifiedItemsRef.current.clear()
+        setItems([])
+        onOpenChange(false)
+      }
     } catch (err) {
       console.error('DeliveryFormDialog submit err', err)
       alert('Failed to save delivery')
     } finally {
       setIsSaving(false)
-      draftItemsRef.current = null
     }
   }
+
 
   const previewNames = (draftItemsRef.current ?? items)
     .slice(0, 5)
@@ -706,4 +797,14 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
     </>
   )
+}
+
+function getLocalISOStringForTime(hour: number, minute: number) {
+  const date = new Date()
+  date.setHours(hour, minute, 0, 0)
+
+  const offset = date.getTimezoneOffset()
+  const localDate = new Date(date.getTime() - offset * 60 * 1000)
+
+  return localDate.toISOString().slice(0, 16) // for <input type="datetime-local">
 }

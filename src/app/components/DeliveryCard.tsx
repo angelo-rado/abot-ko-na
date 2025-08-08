@@ -299,21 +299,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
                 {expanded ? 'Collapse' : `Items (${pendingCount})`}
               </Button>
             )}
-            <Button
-              size="sm"
-              onClick={onMarkParent}
-              disabled={processing || (isSingle ? parent.status === 'delivered' : pendingCount === 0)}
-            >
-              {processing
-                ? 'Saving…'
-                : parentType === 'order'
-                  ? 'Mark order delivered'
-                  : isSingle
-                    ? parent.status === 'delivered'
-                      ? 'Received'
-                      : 'Mark delivery received'
-                    : 'Mark delivery received'}
-            </Button>
+            
           </div>
         </CardTitle>
       </CardHeader>
@@ -396,16 +382,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
                         )}
                       </div>
 
-                      <div className="flex flex-col items-end gap-2">
-                        <StatusBadge status={(it.status ?? 'pending') as Status} />
-                        {it.status !== 'delivered' ? (
-                          <Button size="sm" onClick={() => onMarkItem(it.id)} disabled={processing}>
-                            Mark as Received
-                          </Button>
-                        ) : (
-                          <div className="text-sm text-muted-foreground" />
-                        )}
-                      </div>
+                      
                     </div>
                   )
                 })}
