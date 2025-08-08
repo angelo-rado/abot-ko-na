@@ -58,7 +58,7 @@ export default function FamilyJoinPage() {
 
   // Fetch family doc (after auth)
   useEffect(() => {
-    if (!invite || !user) return
+    if (!invite || !user || loading) return
     let mounted = true
     const fetchFamily = async () => {
       setFetchingFamily(true)
