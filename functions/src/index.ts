@@ -80,12 +80,13 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
     if (response.failureCount > 0) {
       response.responses.forEach((resp, idx) => {
         if (!resp.success) {
-          logger.error('Failed to send notification', { token: tokens[idx], error: resp.error });
+          logger.error('Failed to send notification', { token: tokens[idx], error: resp.error?.message ?? resp.error });
         }
       });
     }
   } catch (error) {
-    logger.error('Error sending notifications', { familyId, error });
+    logger.error('Error sending notifications', { familyId, error: error instanceof Error ? error.message : JSON.stringify(error) });
+    console.error('Full error stack:', error);
   }
 }
 
@@ -176,7 +177,8 @@ export const scheduledDeliveryNotification = scheduler.onSchedule('every 1 hours
       notifiedFamilies.add(familyId);
     }
   } catch (error) {
-    logger.error('Error during scheduled notification', { error });
+    logger.error('Error during scheduled notification', { error: error instanceof Error ? error.message : JSON.stringify(error) });
+    console.error('Full error stack:', error);
   }
 
   return;
