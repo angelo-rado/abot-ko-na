@@ -9,16 +9,26 @@ const messaging = admin.messaging();
 export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
   'families/{familyId}/deliveries/{deliveryId}',
   async (event) => {
+    console.log('Function triggered with params:', event.params);
+
     const beforeSnap = event.data?.before;
     const afterSnap = event.data?.after;
     const familyId = event.params.familyId;
 
-    if (!beforeSnap || !afterSnap || !familyId) return null;
+    if (!beforeSnap || !afterSnap || !familyId) {
+      console.log('Missing beforeSnap, afterSnap, or familyId - exiting');
+      return null;
+    }
 
     const before = beforeSnap.data();
     const after = afterSnap.data();
 
-    if (!before || !after) return null;
+    if (!before || !after) {
+      console.log('Missing before or after data - exiting');
+      return null;
+    }
+
+    console.log('Before status:', before.status, 'After status:', after.status);
 
     if (before.status !== 'in_transit' && after.status === 'in_transit') {
       let expectedDate: Date | null = null;
@@ -26,13 +36,21 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
       if (after.expectedDate) {
         if (typeof after.expectedDate === 'object' && 'toDate' in after.expectedDate) {
           expectedDate = (after.expectedDate as admin.firestore.Timestamp).toDate();
+          console.log('Parsed expectedDate from Timestamp:', expectedDate);
         } else {
           expectedDate = new Date(after.expectedDate);
+          console.log('Parsed expectedDate from string/date:', expectedDate);
         }
+      } else {
+        console.log('No expectedDate found on after snapshot');
       }
 
       const now = new Date();
+      console.log('Current date/time:', now);
+
       if (expectedDate && expectedDate <= now) {
+        console.log('Expected date is before or equal now, proceeding with notification');
+
         try {
           const familyUsersSnapshot = await firestore
             .collection('families')
@@ -41,20 +59,26 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
             .get();
 
           const userIds = familyUsersSnapshot.docs.map((doc) => doc.id);
+          console.log(`Found ${userIds.length} family members`);
 
           const tokens: string[] = [];
           for (const userId of userIds) {
             const userDoc = await firestore.collection('users').doc(userId).get();
             const userData = userDoc.data();
             if (userData && Array.isArray(userData.fcmTokens)) {
+              console.log(`User ${userId} has ${userData.fcmTokens.length} FCM tokens`);
               tokens.push(...userData.fcmTokens);
+            } else {
+              console.log(`User ${userId} has no FCM tokens`);
             }
           }
 
           if (tokens.length === 0) {
-            console.log('No FCM tokens found for family members');
+            console.log('No FCM tokens found for any family members');
             return null;
           }
+
+          console.log(`Sending notification to ${tokens.length} tokens`);
 
           const payload: admin.messaging.MessagingPayload = {
             notification: {
@@ -74,12 +98,17 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
           };
 
           const response = await messaging.sendMulticast(message);
-          console.log('Notifications sent:', response.successCount);
+          console.log('Notifications sent:', response.successCount, 'failures:', response.failureCount);
         } catch (error) {
           console.error('Error sending notifications:', error);
         }
+      } else {
+        console.log('Expected date is in the future or missing, no notification sent');
       }
+    } else {
+      console.log('Status change does not meet criteria for sending notification');
     }
+
     return null;
   }
 );
