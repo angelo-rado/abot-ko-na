@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
-import admin from 'firebase-admin'
 
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-    }),
-  })
-}
-
-const firestore = admin.firestore()
-const FieldValue = admin.firestore.FieldValue
+export const runtime = 'nodejs'  // ensures this runs on Node runtime, not Edge
 
 export async function POST(req: NextRequest) {
+  // Dynamically import firebase-admin here so it only runs server-side at runtime
+  const admin = await import('firebase-admin')
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      }),
+    })
+  }
+
+  const firestore = admin.firestore()
+  const FieldValue = admin.firestore.FieldValue
+
   try {
     const { token, userId } = await req.json()
 
