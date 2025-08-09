@@ -47,71 +47,65 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
   const auth = getAuth();
-  let unsubscribe: (() => void) | undefined;
 
-  function setupPushNotificationsForUser(uid: string) {
-    (async () => {
-      if (!('serviceWorker' in navigator)) {
-        console.log('Service Worker not supported');
+  const unsubscribe = onAuthStateChanged(auth, (user) => {
+    if (!user) {
+      console.log('User signed out');
+      return;
+    }
+
+    console.log('User signed in:', user.uid);
+    setupPushNotificationsForUser(user.uid).catch((err) => {
+      console.error('Push setup failed:', err);
+    });
+  });
+
+  async function setupPushNotificationsForUser(uid: string) {
+    if (typeof window === 'undefined') return;
+    if (!('serviceWorker' in navigator)) {
+      console.log('Service Worker not supported');
+      return;
+    }
+
+    try {
+      console.log('Registering service worker...');
+      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+      console.log('Service Worker registered with scope:', registration.scope);
+
+      // Wait until service worker is active
+      await navigator.serviceWorker.ready;
+
+      const messaging = getFirebaseMessaging();
+      if (!messaging) {
+        console.log('Firebase Messaging not initialized');
         return;
       }
 
-      try {
-        console.log('Registering service worker...');
-        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
-          scope: '/',
-        });
-        console.log('Service Worker registered with scope:', registration.scope);
-
-        // Ensure it's active before proceeding
-        await navigator.serviceWorker.ready;
-        console.log('Service Worker ready');
-
-        const messaging = getFirebaseMessaging();
-        if (!messaging) {
-          console.log('Firebase Messaging not initialized');
-          return;
-        }
-
-        const permission = await Notification.requestPermission();
-        if (permission !== 'granted') {
-          console.log('Notification permission not granted:', permission);
-          return;
-        }
-        console.log('Notification permission granted');
-
-        const token = await getToken(messaging, {
-          vapidKey:
-            'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
-          serviceWorkerRegistration: registration,
-        });
-
-        if (token) {
-          console.log('FCM token:', token);
-          if (uid) {
-            await sendTokenToBackend(token, uid);
-            console.log('Token sent to backend successfully');
-          }
-        } else {
-          console.warn('No FCM token retrieved.');
-        }
-      } catch (error) {
-        console.error('Error setting up notifications:', error);
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        console.log('Notification permission not granted:', permission);
+        return;
       }
-    })();
+
+      const token = await getToken(messaging, {
+        vapidKey: 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
+        serviceWorkerRegistration: registration,
+      });
+
+      if (token) {
+        await sendTokenToBackend(token, uid);
+        console.log('Token sent to backend successfully');
+      } else {
+        console.warn('No FCM token retrieved');
+      }
+    } catch (error) {
+      console.error('Error setting up notifications:', error);
+    }
   }
 
-  unsubscribe = onAuthStateChanged(auth, (user) => {
-    if (user) {
-      console.log('User signed in:', user.uid);
-      setupPushNotificationsForUser(user.uid);
-    } else {
-      console.log('User signed out');
-    }
-  });
-
-  return () => unsubscribe && unsubscribe();
+  return () => unsubscribe();
 }, []);
+
 
   useEffect(() => {
     function updateWidth() {
