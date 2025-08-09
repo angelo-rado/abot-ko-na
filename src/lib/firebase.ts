@@ -7,7 +7,8 @@ import {
   persistentMultipleTabManager,
 } from 'firebase/firestore'
 
-import { getMessaging } from "firebase/messaging";
+// DO NOT import getMessaging here at top-level
+import type { Messaging } from 'firebase/messaging'
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
@@ -21,9 +22,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 
-const messaging = getMessaging(app);
-
-// ✅ Modern persistent local cache
+// Initialize Firestore as before
 const firestore = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
@@ -33,4 +32,17 @@ const firestore = initializeFirestore(app, {
 export const auth = getAuth(app)
 export const provider = new GoogleAuthProvider()
 export { firestore }
-export { messaging }
+
+// Export app for client to initialize messaging lazily
+export { app }
+
+// Provide a function to get messaging ONLY on client
+export function getFirebaseMessaging(): Messaging | null {
+  if (typeof window === 'undefined') {
+    // Server side - no messaging
+    return null
+  }
+  // Import getMessaging dynamically so it only runs on client
+  const { getMessaging } = require('firebase/messaging')
+  return getMessaging(app)
+}

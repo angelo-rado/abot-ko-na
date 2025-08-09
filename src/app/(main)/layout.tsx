@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { getAuth } from 'firebase/auth'
-import { messaging } from '@/lib/firebase'
+import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 
 import HomePage from './page'
@@ -20,6 +20,19 @@ const navItems = [
   { label: 'Family', href: '/family', Component: FamilyPickerPage, Icon: UsersIcon },
   { label: 'Settings', href: '/settings', Component: SettingsPage, Icon: SettingsIcon },
 ]
+
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/')
+
+  const rawData = window.atob(base64)
+  const outputArray = new Uint8Array(rawData.length)
+
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i)
+  }
+  return outputArray
+}
 
 async function sendTokenToBackend(token: string, userId: string) {
   try {
@@ -47,33 +60,44 @@ export default function MainLayout() {
   const [viewportWidth, setViewportWidth] = useState<number | null>(null)
 
   useEffect(() => {
-    async function setupPushNotifications() {
-      if ('serviceWorker' in navigator) {
-        try {
-          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+  console.log('Notification.permission:', Notification.permission);
+}, []);
 
-          const permission = await Notification.requestPermission()
-          if (permission === 'granted') {
-            const token = await getToken(messaging, {
-              vapidKey: 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
-              serviceWorkerRegistration: registration,
-            })
-            if (token) {
-              console.log('FCM Token:', token)
-              const userId = auth.currentUser?.uid
-              if (typeof userId === 'string') {
-                await sendTokenToBackend(token, userId)
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error setting up notifications:', error)
-        }
+
+  useEffect(() => {
+  async function setupPushNotifications() {
+    if (!('serviceWorker' in navigator)) return
+
+    try {
+      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      console.log('Service Worker registered with scope:', registration.scope)
+
+      const messaging = getFirebaseMessaging()
+      if (!messaging) return
+
+      const permission = await Notification.requestPermission()
+      if (permission !== 'granted') {
+        console.log('Notification permission not granted')
+        return
       }
-    }
 
-    setupPushNotifications()
-  }, [])
+      const token = await getToken(messaging, {
+        vapidKey: 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
+        serviceWorkerRegistration: registration,
+      })
+
+      console.log('FCM token:', token)
+    } catch (error) {
+      console.error('Error setting up notifications:', error)
+    }
+  }
+
+  setupPushNotifications()
+}, [])
+
+
+
+
 
   useEffect(() => {
     function updateWidth() {
