@@ -1,24 +1,20 @@
-/* eslint-disable no-undef */
-importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js'
+import { getMessaging, onBackgroundMessage } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-sw.js'
 
-// Firebase SDK imports
-importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-compat.js');
-
-// Initialize Firebase app in SW — replace with your actual config
-firebase.initializeApp({
+const firebaseApp = initializeApp({
   apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
   authDomain: 'abot-ko-na.firebaseapp.com',
   projectId: 'abot-ko-na',
   messagingSenderId: '882171741289',
-  appId: '1:882171741289:web:f7b8dc68a88bdae6a5cef8',
-});
+  appId: '1:882171289:web:f7b8dc68a88bdae6a5cef8',
+})
 
-const messaging = firebase.messaging();
+const messaging = getMessaging(firebaseApp)
 
-messaging.onBackgroundMessage((payload) => {
-  console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  const notificationTitle = payload.notification?.title || 'Abot Ko Na';
+onBackgroundMessage(messaging, (payload) => {
+  console.log('[firebase-messaging-sw.js] Received background message ', payload)
+
+  const notificationTitle = payload.notification?.title || 'Abot Ko Na'
   const notificationOptions = {
     body: payload.notification?.body || '📦 You have a new update!',
     icon: '/android-chrome-192x192.png',
@@ -26,10 +22,13 @@ messaging.onBackgroundMessage((payload) => {
     data: {
       url: payload.notification?.click_action || '/',
     },
-  };
+  }
 
-  self.registration.showNotification(notificationTitle, notificationOptions);
-});
+  self.registration.showNotification(notificationTitle, notificationOptions)
+})
+
+// ... keep your Workbox and other handlers as is
+
 
 // Workbox setup
 self.__WB_MANIFEST;
