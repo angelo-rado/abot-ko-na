@@ -2,8 +2,8 @@
 importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
 
 // Firebase SDK imports
-importScripts('https://www.gstatic.com/firebasejs/9.21.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/9.21.0/firebase-messaging-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-compat.js');
 
 // Initialize Firebase app in SW — replace with your actual config
 firebase.initializeApp({

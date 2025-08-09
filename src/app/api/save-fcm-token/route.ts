@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { firestore, FieldValue } from '@/lib/firebaseAdmin'
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,10 +9,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Missing token or userId' }, { status: 400 })
     }
 
-    // TODO: Save the token to your database, e.g. Firestore or SQL
-    // await db.saveFcmToken(userId, token)
+    const userRef = firestore.collection('users').doc(userId)
 
-    console.log(`Saving token for user ${userId}: ${token}`)
+    // Add token to user's fcmTokens array, avoiding duplicates
+    await userRef.set(
+      {
+        fcmTokens: FieldValue.arrayUnion(token),
+      },
+      { merge: true }
+    )
+
+    console.log(`Saved FCM token for user ${userId}: ${token}`)
 
     return NextResponse.json({ success: true })
   } catch (error) {
