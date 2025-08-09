@@ -85,9 +85,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         console.log('[Push Setup] Permission result:', permission);
         if (permission !== 'granted') return;
 
+        const vapidKey = 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
         console.log('[Push Setup] Step 5: Getting FCM token...');
         const token = await getToken(messaging!, {
-          vapidKey: process.env.NEXT_PUBLIC_VAPID_KEY,
+          vapidKey
         });
         console.log('[Push Setup] Token result:', token);
 
