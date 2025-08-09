@@ -47,38 +47,55 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     async function setupPushNotifications() {
-      if (!('serviceWorker' in navigator)) return
+      if (!('serviceWorker' in navigator)) {
+        console.log('Service Worker not supported in this browser');
+        return;
+      }
 
       try {
-        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
-        console.log('Service Worker registered with scope:', registration.scope)
+        console.log('Registering Service Worker...');
+        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+        console.log('Service Worker registered with scope:', registration.scope);
 
-        const messaging = getFirebaseMessaging()
-        if (!messaging) return
-
-        const permission = await Notification.requestPermission()
-        if (permission !== 'granted') {
-          console.log('Notification permission not granted')
-          return
+        const messaging = getFirebaseMessaging();
+        if (!messaging) {
+          console.log('Firebase Messaging not initialized');
+          return;
         }
 
+        console.log('Requesting notification permission...');
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          console.log('Notification permission not granted:', permission);
+          return;
+        }
+
+        console.log('Getting FCM token...');
         const token = await getToken(messaging, {
           vapidKey:
             'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
           serviceWorkerRegistration: registration,
-        })
+        });
 
-        console.log('FCM token:', token)
+        console.log('FCM token:', token);
+
         if (token && userId) {
-          await sendTokenToBackend(token, userId)
+          await sendTokenToBackend(token, userId);
+          console.log('Token sent to backend successfully');
+        } else {
+          console.log('No token or userId available');
         }
       } catch (error) {
-        console.error('Error setting up notifications:', error)
+        console.error('Error setting up notifications:', error);
       }
     }
 
-    setupPushNotifications()
-  }, [userId])
+    if (userId) {
+      setupPushNotifications();
+    } else {
+      console.log('No userId, skipping notification setup');
+    }
+  }, [userId]);
 
   useEffect(() => {
     function updateWidth() {
@@ -220,9 +237,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           <button
             key={href}
             onClick={() => setCurrentIndex(i)}
-            className={`flex flex-col items-center text-xs p-2 ${
-              i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
-            }`}
+            className={`flex flex-col items-center text-xs p-2 ${i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
+              }`}
           >
             <Icon className="w-5 h-5 mb-1" />
             {label}
