@@ -46,61 +46,66 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }, [])
 
   useEffect(() => {
-  const auth = getAuth()
-  let unsubscribe: (() => void) | undefined
+    const auth = getAuth()
+    let unsubscribe: (() => void) | undefined
 
-  function setupPushNotificationsForUser(uid: string) {
-    async function setup() {
-      if (!('serviceWorker' in navigator)) {
-        console.log('Service Worker not supported');
-        return;
+    function setupPushNotificationsForUser(uid: string) {
+      async function setup() {
+        if (!('serviceWorker' in navigator)) {
+          console.log('Service Worker not supported');
+          return;
+        }
+        try {
+          console.log('Registering service worker...')
+          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+            scope: '/'
+          })
+          console.log('Service Worker registered with scope:', registration.scope)
+
+          const messaging = getFirebaseMessaging()
+          if (!messaging) {
+            console.log('Firebase Messaging not initialized')
+            return
+          }
+          console.log('Messaging instance:', messaging)
+
+          const permission = await Notification.requestPermission()
+          if (permission !== 'granted') {
+            console.log('Notification permission not granted:', permission)
+            return
+          }
+          console.log('Notification permission:', permission)
+
+          const token = await getToken(messaging, {
+            vapidKey:
+              'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
+            serviceWorkerRegistration: registration,
+          })
+
+          console.log('FCM token:', token)
+
+          if (token && uid) {
+            await sendTokenToBackend(token, uid)
+            console.log('Token sent to backend successfully')
+          }
+        } catch (error) {
+          console.error('Error setting up notifications:', error)
+        }
       }
-      try {
-        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
-        console.log('Service Worker registered with scope:', registration.scope)
+      setup()
+    }
 
-        const messaging = getFirebaseMessaging()
-        if (!messaging) {
-          console.log('Firebase Messaging not initialized')
-          return
-        }
-
-        const permission = await Notification.requestPermission()
-        if (permission !== 'granted') {
-          console.log('Notification permission not granted:', permission)
-          return
-        }
-
-        const token = await getToken(messaging, {
-          vapidKey:
-            'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
-          serviceWorkerRegistration: registration,
-        })
-
-        console.log('FCM token:', token)
-
-        if (token && uid) {
-          await sendTokenToBackend(token, uid)
-          console.log('Token sent to backend successfully')
-        }
-      } catch (error) {
-        console.error('Error setting up notifications:', error)
+    unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log('User signed in:', user.uid)
+        setupPushNotificationsForUser(user.uid)
+      } else {
+        console.log('User signed out')
       }
-    }
-    setup()
-  }
+    })
 
-  unsubscribe = onAuthStateChanged(auth, (user) => {
-    if (user) {
-      console.log('User signed in:', user.uid)
-      setupPushNotificationsForUser(user.uid)
-    } else {
-      console.log('User signed out')
-    }
-  })
-
-  return () => unsubscribe && unsubscribe()
-}, [])
+    return () => unsubscribe && unsubscribe()
+  }, [])
 
   useEffect(() => {
     function updateWidth() {

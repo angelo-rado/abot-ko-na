@@ -7,11 +7,12 @@ importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-comp
 
 // Initialize Firebase app in SW
 firebase.initializeApp({
-  apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
-  authDomain: 'abot-ko-na.firebaseapp.com',
-  projectId: 'abot-ko-na',
-  messagingSenderId: '882171741289',
-  appId: '1:882171741289:web:f7b8dc68a88bdae6a5cef8',
+  apiKey: "AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y",
+  authDomain: "abot-ko-na.firebaseapp.com",
+  projectId: "abot-ko-na",
+  storageBucket: "abot-ko-na.firebasestorage.app",
+  messagingSenderId: "882171741289",
+  appId: "1:882171741289:web:f7b8dc68a88bdae6a5cef8",
 });
 
 const messaging = firebase.messaging();
