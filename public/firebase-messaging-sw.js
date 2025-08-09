@@ -1,16 +1,15 @@
 /* eslint-disable no-undef */
-importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
 
-// Firebase SDK imports (compat)
+// Firebase SDK imports (compat) — must load before Workbox
 importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-compat.js');
 
-// Initialize Firebase app in SW
+// Init Firebase in SW (only keys needed for messaging)
 firebase.initializeApp({
   apiKey: "AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y",
   authDomain: "abot-ko-na.firebaseapp.com",
   projectId: "abot-ko-na",
-  storageBucket: "abot-ko-na.firebasestorage.app",
+  storageBucket: "abot-ko-na.appspot.com", // ✅ fixed bucket name
   messagingSenderId: "882171741289",
   appId: "1:882171741289:web:f7b8dc68a88bdae6a5cef8",
 });
@@ -28,27 +27,20 @@ messaging.onBackgroundMessage((payload) => {
       url: payload.notification?.click_action || '/',
     },
   };
-
   self.registration.showNotification(notificationTitle, notificationOptions);
 });
 
-// Your existing workbox and push/notificationclick handlers here...
-
-
-// ... keep your Workbox and other handlers as is
-
+// Now load Workbox after Firebase
+importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
 
 // Workbox setup
 self.__WB_MANIFEST;
-
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
 });
-
 workbox.core.clientsClaim();
-
 workbox.routing.registerRoute(
   /^https:\/\/firestore\.googleapis\.com\/.*/i,
   new workbox.strategies.NetworkFirst({
@@ -65,10 +57,9 @@ workbox.routing.registerRoute(
   })
 );
 
-// Optional: keep your existing push and notificationclick handlers
+// Optional push and notificationclick handlers
 self.addEventListener('push', function (event) {
   const data = event.data?.json?.() ?? {};
-
   const title = data.notification?.title ?? 'Abot Ko Na';
   const options = {
     body: data.notification?.body ?? '📦 You have a new update!',
@@ -78,13 +69,11 @@ self.addEventListener('push', function (event) {
       url: data.notification?.click_action || '/',
     },
   };
-
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-
   event.waitUntil(
     clients.matchAll({ type: 'window' }).then((clientList) => {
       for (const client of clientList) {
