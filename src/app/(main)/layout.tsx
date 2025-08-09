@@ -7,32 +7,14 @@ import { getAuth } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 
-import HomePage from './page'
-import DeliveriesPage from './deliveries/page'
-import FamilyPickerPage from './family/page'
-import SettingsPage from './settings/page'
-
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 
 const navItems = [
-  { label: 'Home', href: '/', Component: HomePage, Icon: HomeIcon },
-  { label: 'Deliveries', href: '/deliveries', Component: DeliveriesPage, Icon: PackageIcon },
-  { label: 'Family', href: '/family', Component: FamilyPickerPage, Icon: UsersIcon },
-  { label: 'Settings', href: '/settings', Component: SettingsPage, Icon: SettingsIcon },
+  { label: 'Home', href: '/', Icon: HomeIcon },
+  { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon },
+  { label: 'Family', href: '/family', Icon: UsersIcon },
+  { label: 'Settings', href: '/settings', Icon: SettingsIcon },
 ]
-
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
-  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/')
-
-  const rawData = window.atob(base64)
-  const outputArray = new Uint8Array(rawData.length)
-
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i)
-  }
-  return outputArray
-}
 
 async function sendTokenToBackend(token: string, userId: string) {
   try {
@@ -51,53 +33,52 @@ async function sendTokenToBackend(token: string, userId: string) {
   }
 }
 
-export default function MainLayout() {
+export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
   const auth = getAuth()
-  const userId = auth.currentUser?.uid
+  const userId = auth.currentUser?.uid ?? null
 
   const [viewportWidth, setViewportWidth] = useState<number | null>(null)
 
   useEffect(() => {
-  console.log('Notification.permission:', Notification.permission);
-}, []);
-
+    console.log('Notification.permission:', Notification.permission)
+  }, [])
 
   useEffect(() => {
-  async function setupPushNotifications() {
-    if (!('serviceWorker' in navigator)) return
+    async function setupPushNotifications() {
+      if (!('serviceWorker' in navigator)) return
 
-    try {
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
-      console.log('Service Worker registered with scope:', registration.scope)
+      try {
+        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+        console.log('Service Worker registered with scope:', registration.scope)
 
-      const messaging = getFirebaseMessaging()
-      if (!messaging) return
+        const messaging = getFirebaseMessaging()
+        if (!messaging) return
 
-      const permission = await Notification.requestPermission()
-      if (permission !== 'granted') {
-        console.log('Notification permission not granted')
-        return
+        const permission = await Notification.requestPermission()
+        if (permission !== 'granted') {
+          console.log('Notification permission not granted')
+          return
+        }
+
+        const token = await getToken(messaging, {
+          vapidKey:
+            'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
+          serviceWorkerRegistration: registration,
+        })
+
+        console.log('FCM token:', token)
+        if (token && userId) {
+          await sendTokenToBackend(token, userId)
+        }
+      } catch (error) {
+        console.error('Error setting up notifications:', error)
       }
-
-      const token = await getToken(messaging, {
-        vapidKey: 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
-        serviceWorkerRegistration: registration,
-      })
-
-      console.log('FCM token:', token)
-    } catch (error) {
-      console.error('Error setting up notifications:', error)
     }
-  }
 
-  setupPushNotifications()
-}, [])
-
-
-
-
+    setupPushNotifications()
+  }, [userId])
 
   useEffect(() => {
     function updateWidth() {
@@ -108,12 +89,18 @@ export default function MainLayout() {
     return () => window.removeEventListener('resize', updateWidth)
   }, [])
 
-  const currentIndexFromPath = navItems.findIndex(item => item.href === pathname)
+  // Determine current index from pathname prefix match:
+  // So /family or /family/xxx both match index 2 (Family)
+  function findNavIndexByPath(path: string) {
+    return navItems.findIndex((item) => path === item.href || path.startsWith(item.href + '/'))
+  }
+  const currentIndexFromPath = findNavIndexByPath(pathname)
   const safeIndex = currentIndexFromPath === -1 ? 0 : currentIndexFromPath
 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null)
   const isSyncingFromPath = useRef(false)
 
+  // Sync currentIndex from pathname on route change
   useEffect(() => {
     if (safeIndex !== currentIndex) {
       isSyncingFromPath.current = true
@@ -121,6 +108,7 @@ export default function MainLayout() {
     }
   }, [safeIndex])
 
+  // Sync router when currentIndex changes (via swipe or nav click)
   useEffect(() => {
     if (currentIndex === null) return
     if (isSyncingFromPath.current) {
@@ -152,7 +140,6 @@ export default function MainLayout() {
   const lastTouchX = useRef<number | null>(null)
   const animationFrame = useRef<number | null>(null)
 
-  // Helper: safely set x with requestAnimationFrame to avoid jank
   function setXSmooth(value: number) {
     if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current)
     animationFrame.current = requestAnimationFrame(() => {
@@ -175,11 +162,10 @@ export default function MainLayout() {
     const deltaX = currentX - lastTouchX.current!
     lastTouchX.current = currentX
 
-    // No hard clamping here for elastic feel, but softly limit with easing:
     const currentOffset = x.get()
     let newOffset = currentOffset + deltaX
 
-    const maxOffset = 50 // allow 50px elastic pull
+    const maxOffset = 50
     const minOffset = -viewportWidth * (navItems.length - 1) - 50
 
     if (newOffset > maxOffset) {
@@ -197,28 +183,26 @@ export default function MainLayout() {
 
     const touchDuration = e.timeStamp - touchStartTime.current
     const offsetX = x.get()
-    const velocity = lastTouchX.current !== null && touchStartX.current !== null
-      ? (lastTouchX.current - touchStartX.current) / touchDuration * 1000
-      : 0
+    const velocity =
+      lastTouchX.current !== null && touchStartX.current !== null
+        ? ((lastTouchX.current - touchStartX.current) / touchDuration) * 1000
+        : 0
 
     let newIndex = currentIndex ?? 0
 
     const velocityThreshold = 500
     const maxIndex = navItems.length - 1
 
-    // Velocity flick moves only 1 page max
     if (velocity < -velocityThreshold && newIndex < maxIndex) {
       newIndex = Math.min(newIndex + 1, maxIndex)
     } else if (velocity > velocityThreshold && newIndex > 0) {
       newIndex = Math.max(newIndex - 1, 0)
     } else {
-      // Snap to nearest page by rounding offset
       newIndex = Math.min(Math.max(Math.round(-offsetX / viewportWidth), 0), maxIndex)
     }
 
     setCurrentIndex(newIndex)
 
-    // Animate to snapped page position for smoothness
     animate(x, -newIndex * viewportWidth, {
       type: 'spring',
       stiffness: 600,
@@ -227,21 +211,18 @@ export default function MainLayout() {
     })
   }
 
-
   if (viewportWidth === null || currentIndex === null) return null
 
   return (
-    <div
-      className="flex flex-col min-h-screen overflow-hidden select-none"
-      style={{ height: '100vh' }} // full height for max swipe area
-    >
+    <div className="flex flex-col min-h-screen overflow-hidden select-none" style={{ height: '100vh' }}>
       <nav className="fixed top-0 left-0 right-0 h-16 bg-white border-b flex items-center justify-around z-50">
         {navItems.map(({ label, href, Icon }, i) => (
           <button
             key={href}
             onClick={() => setCurrentIndex(i)}
-            className={`flex flex-col items-center text-xs p-2 ${i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
-              }`}
+            className={`flex flex-col items-center text-xs p-2 ${
+              i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
+            }`}
           >
             <Icon className="w-5 h-5 mb-1" />
             {label}
@@ -252,23 +233,23 @@ export default function MainLayout() {
       <motion.div
         className="flex flex-row pt-16 overflow-x-hidden"
         style={{ width: viewportWidth * navItems.length, x, height: 'calc(100vh - 4rem)' }}
-        // Remove framer-motion drag to avoid conflicts on mobile, use only touch handlers:
-        // drag="x"
-        // dragConstraints={{ left: -viewportWidth * (navItems.length - 1), right: 0 }}
-        // dragElastic={0}
-        // onDragStart={() => { isDragging.current = true }}
-        // onDragEnd={handleDragEnd}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
       >
-        {navItems.map(({ Component, href }, i) => (
+        {/*
+          Render children inside a full width container at current index,
+          and placeholders for other navItems to preserve layout.
+          To keep scroll inside children and consistent swipe.
+        */}
+        {navItems.map(({ href }, i) => (
           <div
             key={href}
             style={{ width: viewportWidth, flexShrink: 0, overflowY: 'auto', height: '100%' }}
           >
-            <Component />
+            {/* Only render children at active index, else render empty div */}
+            {i === currentIndex ? children : <div style={{ height: '100%' }} />}
           </div>
         ))}
       </motion.div>
