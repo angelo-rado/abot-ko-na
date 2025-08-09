@@ -9,17 +9,16 @@ const messaging = admin.messaging();
 export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
   'families/{familyId}/deliveries/{deliveryId}',
   async (event) => {
-    // v2 event data: event.data.previous and event.data.current are DocumentSnapshots
     const beforeSnap = event.data?.before;
     const afterSnap = event.data?.after;
     const familyId = event.params.familyId;
 
-    if (!beforeSnap || !afterSnap || !familyId) return;
+    if (!beforeSnap || !afterSnap || !familyId) return null;
 
     const before = beforeSnap.data();
     const after = afterSnap.data();
 
-    if (!before || !after) return;
+    if (!before || !after) return null;
 
     if (before.status !== 'in_transit' && after.status === 'in_transit') {
       let expectedDate: Date | null = null;
@@ -54,7 +53,7 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
 
           if (tokens.length === 0) {
             console.log('No FCM tokens found for family members');
-            return;
+            return null;
           }
 
           const payload: admin.messaging.MessagingPayload = {
@@ -68,7 +67,6 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
             },
           };
 
-          // **Explicitly type message as MulticastMessage**
           const message: admin.messaging.MulticastMessage = {
             tokens,
             notification: payload.notification,
@@ -82,5 +80,6 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
         }
       }
     }
+    return null;
   }
 );
