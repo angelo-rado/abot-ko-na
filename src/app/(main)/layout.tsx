@@ -69,7 +69,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
       try {
         console.log('[Push Setup] Step 1: Registering SW...');
-        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
         console.log('[Push Setup] Step 1 Success:', registration.scope);
 
         console.log('[Push Setup] Step 2: Waiting for SW ready...');
