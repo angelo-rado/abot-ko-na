@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { firestore, FieldValue } from '@/lib/firebaseAdmin'
+import admin from 'firebase-admin'
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  })
+}
+
+const firestore = admin.firestore()
+const FieldValue = admin.firestore.FieldValue
 
 export async function POST(req: NextRequest) {
   try {
