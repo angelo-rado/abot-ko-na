@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
+import { getAuth } from 'firebase/auth'
+import { messaging } from '@/lib/firebase'
+import { getToken } from 'firebase/messaging'
 
 import HomePage from './page'
 import DeliveriesPage from './deliveries/page'
@@ -18,11 +21,60 @@ const navItems = [
   { label: 'Settings', href: '/settings', Component: SettingsPage, Icon: SettingsIcon },
 ]
 
+async function sendTokenToBackend(token: string, userId: string) {
+  try {
+    const response = await fetch('/api/save-fcm-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, userId }),
+    })
+    if (!response.ok) {
+      console.error('Failed to save token')
+    } else {
+      console.log('Token saved')
+    }
+  } catch (error) {
+    console.error('Error sending token:', error)
+  }
+}
+
 export default function MainLayout() {
   const router = useRouter()
   const pathname = usePathname()
+  const auth = getAuth()
+  const userId = auth.currentUser?.uid
 
   const [viewportWidth, setViewportWidth] = useState<number | null>(null)
+
+  useEffect(() => {
+    async function setupPushNotifications() {
+      if ('serviceWorker' in navigator) {
+        try {
+          const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+
+          const permission = await Notification.requestPermission()
+          if (permission === 'granted') {
+            const token = await getToken(messaging, {
+              vapidKey: 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI',
+              serviceWorkerRegistration: registration,
+            })
+            if (token) {
+              console.log('FCM Token:', token)
+              const userId = auth.currentUser?.uid
+              if (typeof userId === 'string') {
+                await sendTokenToBackend(token, userId)
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error setting up notifications:', error)
+        }
+      }
+    }
+
+    setupPushNotifications()
+  }, [])
+
   useEffect(() => {
     function updateWidth() {
       setViewportWidth(window.innerWidth)

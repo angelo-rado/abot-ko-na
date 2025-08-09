@@ -7,6 +7,8 @@ import {
   persistentMultipleTabManager,
 } from 'firebase/firestore'
 
+import { getMessaging } from "firebase/messaging";
+
 const firebaseConfig = {
   apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
   authDomain: 'abot-ko-na.firebaseapp.com',
@@ -19,6 +21,8 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 
+const messaging = getMessaging(app);
+
 // ✅ Modern persistent local cache
 const firestore = initializeFirestore(app, {
   localCache: persistentLocalCache({
@@ -29,3 +33,4 @@ const firestore = initializeFirestore(app, {
 export const auth = getAuth(app)
 export const provider = new GoogleAuthProvider()
 export { firestore }
+export { messaging }

@@ -1,10 +1,9 @@
 /* eslint-disable no-undef */
 importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js')
 
-// ✅ Required placeholder for precaching
+// Workbox setup
 self.__WB_MANIFEST
 
-// Take control immediately
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting()
@@ -13,7 +12,6 @@ self.addEventListener('message', (event) => {
 
 workbox.core.clientsClaim()
 
-// ✅ Runtime caching for Firestore API
 workbox.routing.registerRoute(
   /^https:\/\/firestore\.googleapis\.com\/.*/i,
   new workbox.strategies.NetworkFirst({
@@ -30,7 +28,6 @@ workbox.routing.registerRoute(
   })
 )
 
-// ✅ Background push notification handler
 self.addEventListener('push', function (event) {
   const data = event.data?.json?.() ?? {}
 
@@ -47,7 +44,6 @@ self.addEventListener('push', function (event) {
   event.waitUntil(self.registration.showNotification(title, options))
 })
 
-// ✅ Click handler for notifications
 self.addEventListener('notificationclick', function (event) {
   event.notification.close()
 
