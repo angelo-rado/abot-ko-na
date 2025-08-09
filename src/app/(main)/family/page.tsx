@@ -47,13 +47,15 @@ export default function FamilyPickerPage() {
   const [ownedFamilies, setOwnedFamilies] = useState<Family[]>([])
   const [joinedFamilies, setJoinedFamilies] = useState<Family[]>([])
   const [loading, setLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
   const [createdFamily, setCreatedFamily] = useState<Family | null>(null)
 
   const createdFamilyId = searchParams.get('created')
   const lastSeenCreatedId = useRef<string | null>(null)
   const memberUnsubsRef = useRef<Map<string, () => void>>(new Map())
   const [createOpen, setCreateOpen] = useState(false)
+
+  // Track if initial load has completed to avoid flickering skeleton later
+  const hasLoaded = useRef(false)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -89,7 +91,6 @@ export default function FamilyPickerPage() {
       setLoading(false)
     })
 
-    // Handle ?created
     let unsubCreated: (() => void) | undefined
     if (createdFamilyId && createdFamilyId !== lastSeenCreatedId.current) {
       const createdRef = doc(firestore, 'families', createdFamilyId)
@@ -99,7 +100,6 @@ export default function FamilyPickerPage() {
           setCreatedFamily(data)
           lastSeenCreatedId.current = data.id
         }
-        // Remove param
         const newParams = new URLSearchParams(searchParams.toString())
         newParams.delete('created')
         router.replace(`/family?${newParams.toString()}`, { scroll: false })
@@ -114,6 +114,13 @@ export default function FamilyPickerPage() {
       memberUnsubsRef.current.clear()
     }
   }, [user?.uid, createdFamilyId, router, searchParams])
+
+  // Mark loaded once loading becomes false
+  useEffect(() => {
+    if (!loading) {
+      hasLoaded.current = true
+    }
+  }, [loading])
 
   const ensureMemberCountListener = (familyId: string) => {
     if (memberUnsubsRef.current.has(familyId)) return
@@ -210,8 +217,10 @@ export default function FamilyPickerPage() {
 
   if (!user) return null
 
-  return (
+  // Show skeleton only if loading AND never loaded before
+  const showSkeleton = loading && !hasLoaded.current
 
+  return (
     <div className="max-w-xl mx-auto px-4 pt-6 pb-32 relative">
       <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
       {createdFamily && (
@@ -248,7 +257,7 @@ export default function FamilyPickerPage() {
           <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
 
           <TabsContent value="created" className="space-y-2 pt-4">
-            {loading ? renderSkeleton() : (
+            {showSkeleton ? renderSkeleton() : (
               <AnimatePresence>
                 {ownedFamilies.length === 0
                   ? renderEmptyState({
@@ -263,7 +272,7 @@ export default function FamilyPickerPage() {
           </TabsContent>
 
           <TabsContent value="joined" className="space-y-2 pt-4">
-            {loading ? renderSkeleton() : (
+            {showSkeleton ? renderSkeleton() : (
               <AnimatePresence>
                 {joinedFamilies.filter(f => f.createdBy !== user.uid).length === 0
                   ? renderEmptyState({
