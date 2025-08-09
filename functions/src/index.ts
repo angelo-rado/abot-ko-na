@@ -57,44 +57,34 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
       return;
     }
 
-    logger.info('Sending notification to tokens', { familyId, tokensCount: tokens.length, tokensSample: tokens.slice(0, 5) });
+    logger.info('Sending notifications individually to tokens', { familyId, tokensCount: tokens.length, tokensSample: tokens.slice(0, 5) });
 
-    const payload: admin.messaging.MessagingPayload = {
-      notification: {
-        title: 'Delivery is on its way!',
-        body: 'Delivery expected today is now in transit.',
-        icon: '/android-chrome-192x192.png',
-      },
-      data: {
-        familyId,
-      },
-    };
+    for (const token of tokens) {
+      const message: admin.messaging.Message = {
+        token,
+        notification: {
+          title: 'Delivery is on its way!',
+          body: 'Delivery expected today is now in transit.',
+          //icon: '/android-chrome-192x192.png',
+        },
+        data: {
+          familyId,
+        },
+      };
 
-    const message: admin.messaging.MulticastMessage = {
-      tokens,
-      notification: payload.notification,
-      data: payload.data,
-    };
-
-    logger.info('Prepared message payload', { familyId, message: JSON.stringify(message).slice(0, 500) });
-
-    // Use updated sendMulticast with options object to avoid deprecation
-    const response = await messaging.sendMulticast(message, false); // explicitly false dryRun
-
-    logger.info('Notifications sent', { familyId, successCount: response.successCount, failureCount: response.failureCount });
-
-    if (response.failureCount > 0) {
-      response.responses.forEach((resp, idx) => {
-        if (!resp.success) {
-          logger.error('Failed to send notification', { token: tokens[idx], error: resp.error?.message ?? resp.error });
-        }
-      });
+      try {
+        const response = await messaging.send(message);
+        logger.info('Notification sent', { token, response });
+      } catch (err) {
+        logger.error('Failed to send notification', { token, error: err instanceof Error ? err.message : JSON.stringify(err) });
+      }
     }
   } catch (error) {
     logger.error('Error sending notifications', { familyId, error: error instanceof Error ? error.message : JSON.stringify(error) });
     console.error('Full error stack:', error);
   }
 }
+
 
 
 
