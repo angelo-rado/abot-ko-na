@@ -46,10 +46,14 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
       }
 
       const now = new Date();
-      console.log('Current date/time:', now);
+      const tomorrow = new Date(now);
+      tomorrow.setDate(now.getDate() + 1);
 
-      if (expectedDate && expectedDate <= now) {
-        console.log('Expected date is before or equal now, proceeding with notification');
+      console.log('Current date/time:', now);
+      console.log('Tomorrow date/time:', tomorrow);
+
+      if (expectedDate && expectedDate >= now && expectedDate <= tomorrow) {
+        console.log('Expected date is between now and tomorrow, proceeding with notification');
 
         try {
           const familyUsersSnapshot = await firestore
@@ -103,7 +107,7 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
           console.error('Error sending notifications:', error);
         }
       } else {
-        console.log('Expected date is in the future or missing, no notification sent');
+        console.log('Expected date is not within now to tomorrow, no notification sent');
       }
     } else {
       console.log('Status change does not meet criteria for sending notification');
