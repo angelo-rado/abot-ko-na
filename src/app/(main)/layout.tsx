@@ -154,6 +154,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const safeIndex = currentIndexFromPath === -1 ? 0 : currentIndexFromPath
 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null)
+  const [preloadedPages, setPreloadedPages] = useState<{ [key: number]: React.ReactNode }>({}) // [PATCH] preload state
   const isSyncingFromPath = useRef(false)
 
   useEffect(() => {
@@ -173,6 +174,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       router.push(navItems[currentIndex].href)
     }
   }, [currentIndex, safeIndex, router])
+
+  // [PATCH] preload adjacent pages
+  useEffect(() => {
+    if (currentIndex === null) return
+    const adjacent = [currentIndex - 1, currentIndex + 1].filter(i => i >= 0 && i < navItems.length)
+    adjacent.forEach(i => {
+      if (!preloadedPages[i]) {
+        fetch(navItems[i].href).then(res => res.text()).then(() => {
+          setPreloadedPages(prev => ({ ...prev, [i]: true }))
+        }).catch(() => {})
+      }
+    })
+  }, [currentIndex])
 
   const x = useMotionValue(0)
   const isDragging = useRef(false)
@@ -242,7 +256,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
     let newIndex = currentIndex ?? 0
 
-    const velocityThreshold = 500
+    const velocityThreshold = 300 // [PATCH] lowered for quicker response
     const maxIndex = navItems.length - 1
 
     if (velocity < -velocityThreshold && newIndex < maxIndex) {
@@ -294,7 +308,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             key={href}
             style={{ width: viewportWidth, flexShrink: 0, overflowY: 'auto', height: '100%' }}
           >
-            {i === currentIndex ? children : <div style={{ height: '100%' }} />}
+            {Math.abs(i - currentIndex) <= 1 ? children : <div style={{ height: '100%' }} />} {/* [PATCH] adjacent preload */}
           </div>
         ))}
       </motion.div>
