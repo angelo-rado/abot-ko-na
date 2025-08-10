@@ -245,7 +245,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const offsetX = x.get()
     const vel = velocityRef.current
     const thresholdVelocity = 450
-    const thresholdDistance = viewportWidth ? viewportWidth * 0.25 : 80
+    const thresholdDistance = viewportWidth ? viewportWidth * 0.22 : 72
     let newIndex = currentIndex ?? 0
     const maxIndex = navItems.length - 1
 
@@ -258,16 +258,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       } else if (vel > 0 && newIndex > 0) {
         newIndex = Math.max(newIndex - 1, 0)
       }
-    } else if (Math.abs(rawIndex - rounded) * viewportWidth > thresholdDistance) {
-      if (rawIndex - (currentIndex ?? 0) > 0 && (currentIndex ?? 0) < maxIndex) {
-        newIndex = Math.min((currentIndex ?? 0) + 1, maxIndex)
-      } else if (rawIndex - (currentIndex ?? 0) < 0 && (currentIndex ?? 0) > 0) {
-        newIndex = Math.max((currentIndex ?? 0) - 1, 0)
+    } else {
+      const distanceFromIndex = rawIndex - (currentIndex ?? 0)
+      if (Math.abs(distanceFromIndex) > 0.15) {
+        if (distanceFromIndex > 0 && (currentIndex ?? 0) < maxIndex) {
+          newIndex = Math.min((currentIndex ?? 0) + 1, maxIndex)
+        } else if (distanceFromIndex < 0 && (currentIndex ?? 0) > 0) {
+          newIndex = Math.max((currentIndex ?? 0) - 1, 0)
+        } else {
+          newIndex = rounded
+        }
       } else {
         newIndex = rounded
       }
-    } else {
-      newIndex = rounded
     }
 
     setCurrentIndex(newIndex)
@@ -286,21 +289,33 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     }
   }, [viewportWidth])
 
-  const [pageCache, setPageCache] = useState<Record<number, React.ReactNode>>({})
+  // preload full HTML for all pages so peeking shows real content
+  const [pageCache, setPageCache] = useState<Record<number, { html?: string, fetched?: boolean }>>({})
+  useEffect(() => {
+    // prefetch all pages once on mount (non-blocking)
+    navItems.forEach((item, idx) => {
+      if (!pageCache[idx]) {
+        fetch(item.href, { credentials: 'include' })
+          .then(res => res.text())
+          .then(html => {
+            setPageCache(prev => ({ ...prev, [idx]: { html, fetched: true } }))
+          })
+          .catch(() => {
+            setPageCache(prev => ({ ...prev, [idx]: { fetched: false } }))
+          })
+      }
+    })
+    // ensure currentIndex is initialized to safeIndex if null
+    if (currentIndex === null) {
+      setCurrentIndex(safeIndex)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // ensure children for current index stays in cache (helps when navigating back)
   useEffect(() => {
     if (currentIndex !== null) {
-      setPageCache((prev) => ({
-        ...prev,
-        [currentIndex]: children,
-      }))
-      const adj = [currentIndex - 1, currentIndex + 1].filter(i => i >= 0 && i < navItems.length)
-      adj.forEach(i => {
-        if (!pageCache[i]) {
-          fetch(navItems[i].href).then(() => {
-            setPageCache(p => ({ ...p, [i]: true }))
-          }).catch(() => {})
-        }
-      })
+      setPageCache(prev => ({ ...prev, [currentIndex]: { ...prev[currentIndex], fetched: true } }))
     }
   }, [children, currentIndex])
 
@@ -324,7 +339,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
       <motion.div
         className="relative flex flex-row pt-16 overflow-hidden"
-        style={{ width: viewportWidth * navItems.length, x, height: 'calc(100vh - 4rem)', touchAction: 'pan-y' }}
+        style={{
+          width: viewportWidth * navItems.length,
+          x,
+          height: 'calc(100vh - 4rem)',
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch'
+        }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -338,12 +359,19 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
               flexShrink: 0,
               overflowY: 'auto',
               height: '100%',
-              willChange: 'transform',
+              willChange: 'transform, opacity',
               WebkitBackfaceVisibility: 'hidden',
               backfaceVisibility: 'hidden',
+              transform: 'translateZ(0)',
             }}
           >
-            {i === currentIndex ? pageCache[i] || children : (Math.abs(i - (currentIndex ?? 0)) === 1 ? pageCache[i] ? pageCache[i] : <div style={{ height: '100%' }} /> : <div style={{ height: '100%' }} />)}
+            {i === currentIndex ? (
+              <div style={{ height: '100%' }}>{children}</div>
+            ) : pageCache[i]?.html ? (
+              <div style={{ height: '100%' }} dangerouslySetInnerHTML={{ __html: pageCache[i]!.html || '' }} />
+            ) : (
+              <div style={{ height: '100%' }} />
+            )}
           </div>
         ))}
       </motion.div>
