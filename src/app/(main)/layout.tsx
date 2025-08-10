@@ -289,35 +289,38 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     }
   }, [viewportWidth])
 
-  // preload full HTML for all pages so peeking shows real content
-  const [pageCache, setPageCache] = useState<Record<number, { html?: string, fetched?: boolean }>>({})
+  // preload iframes for all pages so peek shows real content (and interactive)
+  const iframeRefs = useRef<Record<number, HTMLIFrameElement | null>>({})
+  const [iframesReady, setIframesReady] = useState<Record<number, boolean>>({})
+
   useEffect(() => {
-    // prefetch all pages once on mount (non-blocking)
+    // initialize currentIndex
+    if (currentIndex === null) setCurrentIndex(safeIndex)
+
+    // set up listeners for iframe load
     navItems.forEach((item, idx) => {
-      if (!pageCache[idx]) {
-        fetch(item.href, { credentials: 'include' })
-          .then(res => res.text())
-          .then(html => {
-            setPageCache(prev => ({ ...prev, [idx]: { html, fetched: true } }))
-          })
-          .catch(() => {
-            setPageCache(prev => ({ ...prev, [idx]: { fetched: false } }))
-          })
+      const onLoad = () => {
+        setIframesReady(prev => ({ ...prev, [idx]: true }))
+      }
+      // if iframe already exists, attach handler
+      const el = iframeRefs.current[idx]
+      if (el) {
+        el.removeEventListener('load', onLoad)
+        el.addEventListener('load', onLoad)
       }
     })
-    // ensure currentIndex is initialized to safeIndex if null
-    if (currentIndex === null) {
-      setCurrentIndex(safeIndex)
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ensure children for current index stays in cache (helps when navigating back)
+  // on route change, ensure currentIndex synced
   useEffect(() => {
-    if (currentIndex !== null) {
-      setPageCache(prev => ({ ...prev, [currentIndex]: { ...prev[currentIndex], fetched: true } }))
+    const idx = findNavIndexByPath(pathname)
+    if (idx !== -1 && idx !== currentIndex) {
+      setCurrentIndex(idx)
+      x.set(-idx * (viewportWidth ?? 0))
     }
-  }, [children, currentIndex])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname])
 
   if (viewportWidth === null || currentIndex === null) return null
 
@@ -367,10 +370,21 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           >
             {i === currentIndex ? (
               <div style={{ height: '100%' }}>{children}</div>
-            ) : pageCache[i]?.html ? (
-              <div style={{ height: '100%' }} dangerouslySetInnerHTML={{ __html: pageCache[i]!.html || '' }} />
             ) : (
-              <div style={{ height: '100%' }} />
+              <iframe
+                ref={el => { iframeRefs.current[i] = el }}
+                src={href}
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  border: 'none',
+                  display: 'block',
+                  background: 'transparent',
+                }}
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                loading="eager"
+                title={`nav-iframe-${i}`}
+              />
             )}
           </div>
         ))}
