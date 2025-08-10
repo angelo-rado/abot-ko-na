@@ -33,6 +33,17 @@ async function sendTokenToBackend(token: string, userId: string) {
   }
 }
 
+function isIOS() {
+  if (typeof navigator === 'undefined') return false
+  return /iP(ad|hone|od)/i.test(navigator.userAgent) && !('MSStream' in window)
+}
+
+function isIOSWebKit() {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  return /iP(ad|hone|od)/i.test(ua) && /WebKit/i.test(ua)
+}
+
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -55,9 +66,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       }
 
       console.log('User signed in:', user.uid);
-      setupPushNotificationsForUser(user.uid).catch((err) => {
-        console.error('Push setup failed:', err);
-      });
+      if (isIOSWebKit()) {
+        try {
+          const evt = new CustomEvent('abot-safari-fallback', { detail: { uid: user.uid } })
+          window.dispatchEvent(evt)
+        } catch (e) {}
+      } else {
+        setupPushNotificationsForUser(user.uid).catch((err) => {
+          console.error('Push setup failed:', err);
+        });
+      }
     });
 
     async function setupPushNotificationsForUser(uid: string) {
@@ -151,8 +169,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     if (!isDragging.current && viewportWidth !== null && currentIndex !== null) {
       animate(x, -currentIndex * viewportWidth, {
         type: 'spring',
-        stiffness: 400,
-        damping: 35,
+        stiffness: 420,
+        damping: 40,
       })
     }
   }, [currentIndex, viewportWidth, x])
@@ -160,7 +178,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const touchStartX = useRef<number | null>(null)
   const touchStartTime = useRef<number>(0)
   const lastTouchX = useRef<number | null>(null)
+  const lastTouchTime = useRef<number>(0)
+  const velocityRef = useRef(0)
+  const baseOffsetRef = useRef(0)
   const animationFrame = useRef<number | null>(null)
+  const rafRunning = useRef(false)
 
   function setXSmooth(value: number) {
     if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current)
@@ -169,71 +191,101 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     })
   }
 
+  function startRafLoop() {
+    if (rafRunning.current) return
+    rafRunning.current = true
+    const loop = () => {
+      rafRunning.current && (animationFrame.current = requestAnimationFrame(loop))
+    }
+    loop()
+  }
+
+  function stopRafLoop() {
+    if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current)
+    rafRunning.current = false
+  }
+
   function onTouchStart(e: React.TouchEvent) {
     if (viewportWidth === null) return
     isDragging.current = true
     touchStartX.current = e.touches[0].clientX
     lastTouchX.current = e.touches[0].clientX
     touchStartTime.current = e.timeStamp
-    if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current)
+    lastTouchTime.current = e.timeStamp
+    baseOffsetRef.current = x.get()
+    velocityRef.current = 0
+    startRafLoop()
   }
 
   function onTouchMove(e: React.TouchEvent) {
-    if (viewportWidth === null || touchStartX.current === null) return
+    if (!isDragging.current || viewportWidth === null || touchStartX.current === null) return
     const currentX = e.touches[0].clientX
-    const deltaX = currentX - lastTouchX.current!
+    const now = e.timeStamp
+    const dx = currentX - lastTouchX.current!
+    const dt = Math.max(1, now - lastTouchTime.current)
+    const instVel = dx / dt * 1000
+    velocityRef.current = velocityRef.current * 0.2 + instVel * 0.8
     lastTouchX.current = currentX
+    lastTouchTime.current = now
 
-    const currentOffset = x.get()
-    let newOffset = currentOffset + deltaX
-
-    const maxOffset = 50
-    const minOffset = -viewportWidth * (navItems.length - 1) - 50
-
-    if (newOffset > maxOffset) {
-      newOffset = maxOffset + (newOffset - maxOffset) * 0.3
-    } else if (newOffset < minOffset) {
-      newOffset = minOffset + (newOffset - minOffset) * 0.3
-    }
-
+    const desired = baseOffsetRef.current + (currentX - touchStartX.current)
+    const max = 50
+    const min = -viewportWidth * (navItems.length - 1) - 50
+    let newOffset = desired
+    if (newOffset > max) newOffset = max + (newOffset - max) * 0.25
+    if (newOffset < min) newOffset = min + (newOffset - min) * 0.25
     setXSmooth(newOffset)
   }
 
   function onTouchEnd(e: React.TouchEvent) {
     if (viewportWidth === null) return
     isDragging.current = false
+    stopRafLoop()
 
-    const touchDuration = e.timeStamp - touchStartTime.current
     const offsetX = x.get()
-    const velocity =
-      lastTouchX.current !== null && touchStartX.current !== null
-        ? ((lastTouchX.current - touchStartX.current) / touchDuration) * 1000
-        : 0
-
+    const vel = velocityRef.current
+    const thresholdVelocity = 450
+    const thresholdDistance = viewportWidth ? viewportWidth * 0.25 : 80
     let newIndex = currentIndex ?? 0
-
-    const velocityThreshold = 500
     const maxIndex = navItems.length - 1
 
-    if (velocity < -velocityThreshold && newIndex < maxIndex) {
-      newIndex = Math.min(newIndex + 1, maxIndex)
-    } else if (velocity > velocityThreshold && newIndex > 0) {
-      newIndex = Math.max(newIndex - 1, 0)
+    const rawIndex = -offsetX / viewportWidth
+    const rounded = Math.round(rawIndex)
+
+    if (Math.abs(vel) > thresholdVelocity) {
+      if (vel < 0 && newIndex < maxIndex) {
+        newIndex = Math.min(newIndex + 1, maxIndex)
+      } else if (vel > 0 && newIndex > 0) {
+        newIndex = Math.max(newIndex - 1, 0)
+      }
+    } else if (Math.abs(rawIndex - rounded) * viewportWidth > thresholdDistance) {
+      if (rawIndex - (currentIndex ?? 0) > 0 && (currentIndex ?? 0) < maxIndex) {
+        newIndex = Math.min((currentIndex ?? 0) + 1, maxIndex)
+      } else if (rawIndex - (currentIndex ?? 0) < 0 && (currentIndex ?? 0) > 0) {
+        newIndex = Math.max((currentIndex ?? 0) - 1, 0)
+      } else {
+        newIndex = rounded
+      }
     } else {
-      newIndex = Math.min(Math.max(Math.round(-offsetX / viewportWidth), 0), maxIndex)
+      newIndex = rounded
     }
 
     setCurrentIndex(newIndex)
 
     animate(x, -newIndex * viewportWidth, {
       type: 'spring',
-      stiffness: 600,
-      damping: 45,
+      stiffness: 700,
+      damping: 48,
       mass: 1,
     })
   }
 
-  // PATCH: Preload adjacent pages
+  useEffect(() => {
+    if (currentIndex !== null && viewportWidth !== null) {
+      x.set(-currentIndex * viewportWidth)
+    }
+  }, [viewportWidth])
+
   const [pageCache, setPageCache] = useState<Record<number, React.ReactNode>>({})
   useEffect(() => {
     if (currentIndex !== null) {
@@ -241,6 +293,14 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         ...prev,
         [currentIndex]: children,
       }))
+      const adj = [currentIndex - 1, currentIndex + 1].filter(i => i >= 0 && i < navItems.length)
+      adj.forEach(i => {
+        if (!pageCache[i]) {
+          fetch(navItems[i].href).then(() => {
+            setPageCache(p => ({ ...p, [i]: true }))
+          }).catch(() => {})
+        }
+      })
     }
   }, [children, currentIndex])
 
@@ -263,8 +323,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       </nav>
 
       <motion.div
-        className="flex flex-row pt-16 overflow-x-hidden"
-        style={{ width: viewportWidth * navItems.length, x, height: 'calc(100vh - 4rem)' }}
+        className="relative flex flex-row pt-16 overflow-hidden"
+        style={{ width: viewportWidth * navItems.length, x, height: 'calc(100vh - 4rem)', touchAction: 'pan-y' }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
@@ -273,10 +333,17 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {navItems.map(({ href }, i) => (
           <div
             key={href}
-            style={{ width: viewportWidth, flexShrink: 0, overflowY: 'auto', height: '100%' }}
+            style={{
+              width: viewportWidth,
+              flexShrink: 0,
+              overflowY: 'auto',
+              height: '100%',
+              willChange: 'transform',
+              WebkitBackfaceVisibility: 'hidden',
+              backfaceVisibility: 'hidden',
+            }}
           >
-            {/* PATCH: Render current + adjacent pages */}
-            {pageCache[i] || (i === currentIndex ? children : <div style={{ height: '100%' }} />)}
+            {i === currentIndex ? pageCache[i] || children : (Math.abs(i - (currentIndex ?? 0)) === 1 ? pageCache[i] ? pageCache[i] : <div style={{ height: '100%' }} /> : <div style={{ height: '100%' }} />)}
           </div>
         ))}
       </motion.div>
