@@ -22,7 +22,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 
-// Initialize Firestore as before
 const firestore = initializeFirestore(app, {
   localCache: persistentLocalCache({
     tabManager: persistentMultipleTabManager(),
@@ -32,17 +31,29 @@ const firestore = initializeFirestore(app, {
 export const auth = getAuth(app)
 export const provider = new GoogleAuthProvider()
 export { firestore }
-
-// Export app for client to initialize messaging lazily
 export { app }
 
-// Provide a function to get messaging ONLY on client
+// Patched: Safe Firebase Messaging init for iOS Safari/Chrome
 export function getFirebaseMessaging(): Messaging | null {
   if (typeof window === 'undefined') {
-    // Server side - no messaging
     return null
   }
-  // Import getMessaging dynamically so it only runs on client
-  const { getMessaging } = require('firebase/messaging')
-  return getMessaging(app)
+
+  const supportsPush =
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    typeof Notification !== 'undefined'
+
+  if (!supportsPush) {
+    console.warn('Push notifications are not supported on this browser.')
+    return null
+  }
+
+  try {
+    const { getMessaging } = require('firebase/messaging')
+    return getMessaging(app)
+  } catch (err) {
+    console.error('Failed to initialize Firebase Messaging', err)
+    return null
+  }
 }

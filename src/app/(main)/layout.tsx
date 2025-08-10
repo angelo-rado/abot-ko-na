@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
-import { getFirebaseMessaging } from '@/lib/firebase'
+import { getFirebaseMessaging, firestore as clientFirestore } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
+import { doc, setDoc } from 'firebase/firestore'
 
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 
@@ -33,6 +34,17 @@ async function sendTokenToBackend(token: string, userId: string) {
   }
 }
 
+function isIOS() {
+  if (typeof navigator === 'undefined') return false
+  return /iP(ad|hone|od)/i.test(navigator.userAgent) && !('MSStream' in window)
+}
+
+function isIOSWebKit() {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent
+  return /iP(ad|hone|od)/i.test(ua) && /WebKit/i.test(ua)
+}
+
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -55,10 +67,28 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       }
 
       console.log('User signed in:', user.uid);
-      setupPushNotificationsForUser(user.uid).catch((err) => {
-        console.error('Push setup failed:', err);
-      });
+
+      if (isIOSWebKit()) {
+        registerSafariFallback(user.uid).catch((err) => {
+          console.error('Safari fallback registration failed:', err)
+        })
+      } else {
+        setupPushNotificationsForUser(user.uid).catch((err) => {
+          console.error('Push setup failed:', err);
+        });
+      }
     });
+
+    async function registerSafariFallback(uid: string) {
+      try {
+        await setDoc(doc(clientFirestore, 'users', uid), {
+          isSafari: true,
+        }, { merge: true })
+        console.log('[Safari Fallback] Marked user as Safari/webkit user')
+      } catch (err) {
+        console.error('[Safari Fallback] Failed to mark user:', err)
+      }
+    }
 
     async function setupPushNotificationsForUser(uid: string) {
       if (typeof window === 'undefined') return;
@@ -117,8 +147,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener('resize', updateWidth)
   }, [])
 
-  // Determine current index from pathname prefix match:
-  // So /family or /family/xxx both match index 2 (Family)
   function findNavIndexByPath(path: string) {
     return navItems.findIndex((item) => path === item.href || path.startsWith(item.href + '/'))
   }
@@ -128,7 +156,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null)
   const isSyncingFromPath = useRef(false)
 
-  // Sync currentIndex from pathname on route change
   useEffect(() => {
     if (safeIndex !== currentIndex) {
       isSyncingFromPath.current = true
@@ -136,7 +163,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     }
   }, [safeIndex])
 
-  // Sync router when currentIndex changes (via swipe or nav click)
   useEffect(() => {
     if (currentIndex === null) return
     if (isSyncingFromPath.current) {
@@ -151,7 +177,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const x = useMotionValue(0)
   const isDragging = useRef(false)
 
-  // Animate x on currentIndex change, if not dragging
   useEffect(() => {
     if (!isDragging.current && viewportWidth !== null && currentIndex !== null) {
       animate(x, -currentIndex * viewportWidth, {
@@ -162,7 +187,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     }
   }, [currentIndex, viewportWidth, x])
 
-  // Touch tracking refs
   const touchStartX = useRef<number | null>(null)
   const touchStartTime = useRef<number>(0)
   const lastTouchX = useRef<number | null>(null)
@@ -265,17 +289,11 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
       >
-        {/*
-          Render children inside a full width container at current index,
-          and placeholders for other navItems to preserve layout.
-          To keep scroll inside children and consistent swipe.
-        */}
         {navItems.map(({ href }, i) => (
           <div
             key={href}
             style={{ width: viewportWidth, flexShrink: 0, overflowY: 'auto', height: '100%' }}
           >
-            {/* Only render children at active index, else render empty div */}
             {i === currentIndex ? children : <div style={{ height: '100%' }} />}
           </div>
         ))}
