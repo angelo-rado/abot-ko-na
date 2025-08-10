@@ -4,9 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
-import { getFirebaseMessaging, firestore as clientFirestore } from '@/lib/firebase'
+import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
-import { doc, setDoc } from 'firebase/firestore'
 
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 
@@ -34,17 +33,6 @@ async function sendTokenToBackend(token: string, userId: string) {
   }
 }
 
-function isIOS() {
-  if (typeof navigator === 'undefined') return false
-  return /iP(ad|hone|od)/i.test(navigator.userAgent) && !('MSStream' in window)
-}
-
-function isIOSWebKit() {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent
-  return /iP(ad|hone|od)/i.test(ua) && /WebKit/i.test(ua)
-}
-
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -67,28 +55,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       }
 
       console.log('User signed in:', user.uid);
-
-      if (isIOSWebKit()) {
-        registerSafariFallback(user.uid).catch((err) => {
-          console.error('Safari fallback registration failed:', err)
-        })
-      } else {
-        setupPushNotificationsForUser(user.uid).catch((err) => {
-          console.error('Push setup failed:', err);
-        });
-      }
+      setupPushNotificationsForUser(user.uid).catch((err) => {
+        console.error('Push setup failed:', err);
+      });
     });
-
-    async function registerSafariFallback(uid: string) {
-      try {
-        await setDoc(doc(clientFirestore, 'users', uid), {
-          isSafari: true,
-        }, { merge: true })
-        console.log('[Safari Fallback] Marked user as Safari/webkit user')
-      } catch (err) {
-        console.error('[Safari Fallback] Failed to mark user:', err)
-      }
-    }
 
     async function setupPushNotificationsForUser(uid: string) {
       if (typeof window === 'undefined') return;
@@ -154,7 +124,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const safeIndex = currentIndexFromPath === -1 ? 0 : currentIndexFromPath
 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null)
-  const [preloadedPages, setPreloadedPages] = useState<{ [key: number]: React.ReactNode }>({}) // [PATCH] preload state
   const isSyncingFromPath = useRef(false)
 
   useEffect(() => {
@@ -174,19 +143,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       router.push(navItems[currentIndex].href)
     }
   }, [currentIndex, safeIndex, router])
-
-  // [PATCH] preload adjacent pages
-  useEffect(() => {
-    if (currentIndex === null) return
-    const adjacent = [currentIndex - 1, currentIndex + 1].filter(i => i >= 0 && i < navItems.length)
-    adjacent.forEach(i => {
-      if (!preloadedPages[i]) {
-        fetch(navItems[i].href).then(res => res.text()).then(() => {
-          setPreloadedPages(prev => ({ ...prev, [i]: true }))
-        }).catch(() => {})
-      }
-    })
-  }, [currentIndex])
 
   const x = useMotionValue(0)
   const isDragging = useRef(false)
@@ -256,7 +212,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
     let newIndex = currentIndex ?? 0
 
-    const velocityThreshold = 300 // [PATCH] lowered for quicker response
+    const velocityThreshold = 500
     const maxIndex = navItems.length - 1
 
     if (velocity < -velocityThreshold && newIndex < maxIndex) {
@@ -276,6 +232,17 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       mass: 1,
     })
   }
+
+  // PATCH: Preload adjacent pages
+  const [pageCache, setPageCache] = useState<Record<number, React.ReactNode>>({})
+  useEffect(() => {
+    if (currentIndex !== null) {
+      setPageCache((prev) => ({
+        ...prev,
+        [currentIndex]: children,
+      }))
+    }
+  }, [children, currentIndex])
 
   if (viewportWidth === null || currentIndex === null) return null
 
@@ -308,7 +275,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             key={href}
             style={{ width: viewportWidth, flexShrink: 0, overflowY: 'auto', height: '100%' }}
           >
-            {Math.abs(i - currentIndex) <= 1 ? children : <div style={{ height: '100%' }} />} {/* [PATCH] adjacent preload */}
+            {/* PATCH: Render current + adjacent pages */}
+            {pageCache[i] || (i === currentIndex ? children : <div style={{ height: '100%' }} />)}
           </div>
         ))}
       </motion.div>
