@@ -41,42 +41,66 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
     logger.info(`Found family members`, { familyId, count: userIds.length, userIds });
 
     const tokens: string[] = [];
+    const safariUsers: string[] = [];
     for (const userId of userIds) {
       const userDoc = await firestore.collection('users').doc(userId).get();
       const userData = userDoc.data();
-      if (userData && Array.isArray(userData.fcmTokens)) {
+      if (userData && Array.isArray(userData.fcmTokens) && userData.fcmTokens.length > 0) {
         logger.info(`User has FCM tokens`, { userId, tokensCount: userData.fcmTokens.length, tokens: userData.fcmTokens });
         tokens.push(...userData.fcmTokens);
       } else {
         logger.info(`User has no FCM tokens`, { userId });
+        if (userData && userData.isSafari) {
+          safariUsers.push(userId);
+        }
       }
     }
 
-    if (tokens.length === 0) {
-      logger.warn('No FCM tokens found for any family members', { familyId });
+    if (tokens.length === 0 && safariUsers.length === 0) {
+      logger.warn('No FCM tokens or Safari fallback targets found for any family members', { familyId });
       return;
     }
 
-    logger.info('Sending notifications individually to tokens', { familyId, tokensCount: tokens.length, tokensSample: tokens.slice(0, 5) });
+    if (tokens.length > 0) {
+      logger.info('Sending notifications individually to tokens', { familyId, tokensCount: tokens.length, tokensSample: tokens.slice(0, 5) });
 
-    for (const token of tokens) {
-      const message: admin.messaging.Message = {
-        token,
-        notification: {
-          title: 'Delivery is on its way!',
-          body: 'Delivery expected today is now in transit.',
-          //icon: '/android-chrome-192x192.png',
-        },
-        data: {
-          familyId,
-        },
-      };
+      for (const token of tokens) {
+        const message: admin.messaging.Message = {
+          token,
+          notification: {
+            title: 'Delivery is on its way!',
+            body: 'Delivery expected today is now in transit.',
+          },
+          data: {
+            familyId,
+          },
+        };
 
-      try {
-        const response = await messaging.send(message);
-        logger.info('Notification sent', { token, response });
-      } catch (err) {
-        logger.error('Failed to send notification', { token, error: err instanceof Error ? err.message : JSON.stringify(err) });
+        try {
+          const response = await messaging.send(message);
+          logger.info('Notification sent', { token, response });
+        } catch (err) {
+          logger.error('Failed to send notification', { token, error: err instanceof Error ? err.message : JSON.stringify(err) });
+        }
+      }
+    }
+
+    if (safariUsers.length > 0) {
+      logger.info('Adding Safari fallback notifications', { safariUsers });
+      for (const userId of safariUsers) {
+        try {
+          await firestore.collection('users').doc(userId).update({
+            pendingNotifications: admin.firestore.FieldValue.arrayUnion({
+              title: 'Delivery is on its way!',
+              body: 'Delivery expected today is now in transit.',
+              familyId,
+              timestamp: Date.now(),
+            })
+          });
+          logger.info('Safari fallback notification queued', { userId });
+        } catch (err) {
+          logger.error('Failed to queue Safari fallback notification', { userId, error: err instanceof Error ? err.message : JSON.stringify(err) });
+        }
       }
     }
   } catch (error) {
@@ -84,9 +108,6 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
     console.error('Full error stack:', error);
   }
 }
-
-
-
 
 export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
     'families/{familyId}/deliveries/{deliveryId}',
@@ -139,7 +160,6 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
         return;
     }
 );
-
 
 export const scheduledDeliveryNotification = scheduler.onSchedule('every 1 hours', async (event) => {
     logger.info('Scheduled delivery notification triggered');
