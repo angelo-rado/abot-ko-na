@@ -1,7 +1,7 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { auth, provider } from '@/lib/firebase'
+import { auth, provider, firestore } from '@/lib/firebase'
 import { signInWithPopup } from 'firebase/auth'
 import { useEffect, useState } from 'react'
 import { FcGoogle } from 'react-icons/fc'
@@ -10,7 +10,6 @@ import Providers from '../providers'
 import { useAuth } from '@/lib/useAuth'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { doc, getDoc } from 'firebase/firestore'
-import { firestore } from '@/lib/firebase'
 
 const FEATURES = [
   { title: 'Auto Presence', description: 'Automatically show when you’re home or away.', icon: MapPinIcon },
@@ -25,30 +24,32 @@ export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  const redirect = searchParams.get('redirect') || null
-  const invite = searchParams.get('invite') || searchParams.get('family') || null
+  const redirect = searchParams.get('redirect')
+  const invite = searchParams.get('invite')
 
+  // Check if user already onboarded
   useEffect(() => {
     if (authLoading || !user) return
 
     const checkOnboarding = async () => {
       const snap = await getDoc(doc(firestore, 'users', user.uid))
       const data = snap.data()
-
       if (data?.onboardingComplete) {
-        // If user is onboarded, go directly to redirect target if available
         if (redirect) {
           router.replace(redirect)
+        } else if (invite) {
+          router.replace(`/family/join?invite=${encodeURIComponent(invite)}&autoJoin=1`)
         } else {
           router.replace('/')
         }
       } else {
-        // If not onboarded, go to onboarding and preserve invite/family
-        let onboardingUrl = '/onboarding'
         if (invite) {
-          onboardingUrl += `?invite=${encodeURIComponent(invite)}`
+          router.replace(`/onboarding?invite=${encodeURIComponent(invite)}`)
+        } else if (redirect) {
+          router.replace(`/onboarding?redirect=${encodeURIComponent(redirect)}`)
+        } else {
+          router.replace('/onboarding')
         }
-        router.replace(onboardingUrl)
       }
     }
 
@@ -70,7 +71,6 @@ export default function LoginPage() {
     <Providers>
       <main className="min-h-screen flex items-center justify-center bg-[#fdfcf9] px-6">
         <div className="space-y-8 text-center max-w-md w-full">
-          {/* Title */}
           <div className="space-y-2">
             <h1 className="text-3xl font-bold tracking-tight">Welcome to Abot Ko Na</h1>
             <p className="text-sm text-muted-foreground">
@@ -78,7 +78,6 @@ export default function LoginPage() {
             </p>
           </div>
 
-          {/* Google Button */}
           <div>
             <Button
               type="button"
@@ -92,7 +91,6 @@ export default function LoginPage() {
             </Button>
           </div>
 
-          {/* Feature highlights */}
           <div className="grid grid-cols-2 gap-4 text-left text-sm">
             {FEATURES.map(({ title, description, icon: Icon }) => (
               <div key={title} className="flex items-start gap-3">
@@ -107,7 +105,6 @@ export default function LoginPage() {
             ))}
           </div>
 
-          {/* Privacy note */}
           <p className="text-xs text-muted-foreground mt-6">
             Your presence and location data stays within your family group.
           </p>

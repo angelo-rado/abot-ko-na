@@ -11,26 +11,10 @@ import { HomeIcon, MapPinIcon, PackageIcon, ShieldIcon } from 'lucide-react'
 import Providers from '../providers'
 
 const FEATURES = [
-  {
-    title: 'Auto Presence',
-    description: 'Your family will know when you’re home or away — automatically.',
-    icon: MapPinIcon,
-  },
-  {
-    title: 'Delivery Tracker',
-    description: 'Log who received a package and when.',
-    icon: PackageIcon,
-  },
-  {
-    title: 'House View',
-    description: 'See who’s home in real time with the shared dashboard.',
-    icon: HomeIcon,
-  },
-  {
-    title: 'Privacy First',
-    description: 'Your location and presence data is only visible to your family. You control what’s shared',
-    icon: ShieldIcon,
-  },
+  { title: 'Auto Presence', description: 'Your family will know when you’re home or away — automatically.', icon: MapPinIcon },
+  { title: 'Delivery Tracker', description: 'Log who received a package and when.', icon: PackageIcon },
+  { title: 'House View', description: 'See who’s home in real time with the shared dashboard.', icon: HomeIcon },
+  { title: 'Privacy First', description: 'Your location and presence data is only visible to your family.', icon: ShieldIcon },
 ]
 
 export default function OnboardingPage() {
@@ -42,19 +26,15 @@ export default function OnboardingPage() {
   const [checking, setChecking] = useState(true)
   const [loadingPermission, setLoadingPermission] = useState(false)
 
-  // preserve the invite/family id from query
-  const familyId = searchParams.get('family') || searchParams.get('invite') || null
+  const invite = searchParams.get('invite')
+  const redirect = searchParams.get('redirect')
 
   useEffect(() => {
     if (!loading && !user) {
-      // preserve family/invite in redirect URL if present
-      const redirectPath = familyId ? `/onboarding?family=${encodeURIComponent(familyId)}` : '/onboarding'
-      router.replace(`/login?redirect=${encodeURIComponent(redirectPath)}`)
+      router.replace(`/login?redirect=${encodeURIComponent(window.location.pathname + window.location.search)}`)
     }
-    if (user) {
-      setChecking(false)
-    }
-  }, [user, loading, router, familyId])
+    if (user) setChecking(false)
+  }, [user, loading, router])
 
   const requestLocation = async (): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -69,11 +49,9 @@ export default function OnboardingPage() {
     setLoadingPermission(true)
     const granted = await requestLocation()
     setLocationGranted(granted)
-
     if (!granted) {
       toast.error('Location access denied. You can enable it later in Settings.')
     }
-
     setStep('next')
     setLoadingPermission(false)
   }
@@ -81,19 +59,19 @@ export default function OnboardingPage() {
   const finishOnboarding = async () => {
     if (!user?.uid) return
     try {
-      await setDoc(
-        doc(firestore, 'users', user.uid),
-        { onboardingComplete: true },
-        { merge: true }
-      )
-
-      // Add a short delay to allow Firestore propagation
+      await setDoc(doc(firestore, 'users', user.uid), { onboardingComplete: true }, { merge: true })
       await new Promise((resolve) => setTimeout(resolve, 500))
     } catch (err) {
       console.warn('Failed to mark onboarding complete:', err)
     } finally {
       localStorage.setItem('abot:onboarded', '1')
-      router.replace('/')
+      if (invite) {
+        router.replace(`/family/join?invite=${encodeURIComponent(invite)}&autoJoin=1`)
+      } else if (redirect) {
+        router.replace(redirect)
+      } else {
+        router.replace('/')
+      }
     }
   }
 
@@ -154,34 +132,8 @@ export default function OnboardingPage() {
             </section>
 
             <section className="space-y-4">
-              <Button
-                type="button"
-                onClick={() => {
-                  if (familyId) {
-                    router.push(`/family/join?invite=${encodeURIComponent(familyId)}`)
-                  } else {
-                    router.push('/family/join')
-                  }
-                }}
-                className="w-full"
-              >
-                Join via Invite Link
-              </Button>
-              <Button
-                type="button"
-                onClick={() => router.push('/family/create')}
-                variant="outline"
-                className="w-full"
-              >
-                Create a New Family
-              </Button>
-              <Button
-                type="button"
-                onClick={finishOnboarding}
-                variant="ghost"
-                className="w-full text-muted-foreground"
-              >
-                Skip for now
+              <Button type="button" onClick={finishOnboarding} className="w-full">
+                Continue
               </Button>
             </section>
           </>

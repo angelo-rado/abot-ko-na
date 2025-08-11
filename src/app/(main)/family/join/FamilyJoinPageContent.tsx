@@ -191,6 +191,14 @@ export default function FamilyJoinPageContent() {
     )
   }
 
+  // Auto-join if coming from onboarding/login
+  useEffect(() => {
+    if (user && family && searchParams.get('autoJoin') === '1') {
+      handleJoin()
+    }
+  }, [user, family, searchParams])
+
+
   return (
     <main className="max-w-xl mx-auto p-6 space-y-6">
       <Card>
