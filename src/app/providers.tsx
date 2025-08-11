@@ -1,4 +1,3 @@
-// app/providers.tsx
 'use client'
 
 import { ReactNode, useEffect, useState } from 'react'
@@ -29,7 +28,6 @@ export default function Providers({ children }: { children: ReactNode }) {
         const data = snap.data()
 
         if (!data?.onboardingComplete && !pathname.startsWith('/onboarding')) {
-          // Preserve current query string (invite, redirect, etc.)
           const query = searchParams.toString()
           router.replace(`/onboarding${query ? `?${query}` : ''}`)
           return

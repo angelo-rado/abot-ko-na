@@ -24,12 +24,19 @@ export default function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  const redirect = searchParams.get('redirect')
-  const invite = searchParams.get('invite')
+  const [redirect, setRedirect] = useState<string | null>(null)
+  const [invite, setInvite] = useState<string | null>(null)
 
-  // Check if user already onboarded
+  // Read query params only after hydration
+  useEffect(() => {
+    setRedirect(searchParams.get('redirect'))
+    setInvite(searchParams.get('invite'))
+  }, [searchParams])
+
+  // Redirect if user already onboarded
   useEffect(() => {
     if (authLoading || !user) return
+    if (redirect === null && invite === null) return // wait for params
 
     const checkOnboarding = async () => {
       const snap = await getDoc(doc(firestore, 'users', user.uid))
