@@ -53,8 +53,8 @@ export default function FamilyPickerPage() {
   const lastSeenCreatedId = useRef<string | null>(null)
   const memberUnsubsRef = useRef<Map<string, () => void>>(new Map())
   const [createOpen, setCreateOpen] = useState(false)
+  const [joinOpen, setJoinOpen] = useState(false)
 
-  // Track if initial load has completed to avoid flickering skeleton later
   const hasLoaded = useRef(false)
 
   useEffect(() => {
@@ -115,7 +115,6 @@ export default function FamilyPickerPage() {
     }
   }, [user?.uid, createdFamilyId, router, searchParams])
 
-  // Mark loaded once loading becomes false
   useEffect(() => {
     if (!loading) {
       hasLoaded.current = true
@@ -124,7 +123,6 @@ export default function FamilyPickerPage() {
 
   const ensureMemberCountListener = (familyId: string) => {
     if (memberUnsubsRef.current.has(familyId)) return
-
     try {
       const membersRef = collection(firestore, 'families', familyId, 'members')
       const unsub = onSnapshot(membersRef, (snap) => {
@@ -205,8 +203,6 @@ export default function FamilyPickerPage() {
     </motion.div>
   )
 
-  const [joinOpen, setJoinOpen] = useState(false)
-
   if (authLoading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -217,7 +213,6 @@ export default function FamilyPickerPage() {
 
   if (!user) return null
 
-  // Show skeleton only if loading AND never loaded before
   const showSkeleton = loading && !hasLoaded.current
 
   return (
