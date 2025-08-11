@@ -8,54 +8,52 @@ import { FcGoogle } from 'react-icons/fc'
 import { HomeIcon, MapPinIcon, PackageIcon, ShieldIcon } from 'lucide-react'
 import Providers from '../providers'
 import { useAuth } from '@/lib/useAuth'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { doc, getDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 
 const FEATURES = [
-  {
-    title: 'Auto Presence',
-    description: 'Automatically show when you’re home or away.',
-    icon: MapPinIcon,
-  },
-  {
-    title: 'Delivery Tracker',
-    description: 'Log who received a package and when.',
-    icon: PackageIcon,
-  },
-  {
-    title: 'House View',
-    description: 'See who’s home in real time.',
-    icon: HomeIcon,
-  },
-  {
-    title: 'Privacy First',
-    description: 'Only your family can see your presence.',
-    icon: ShieldIcon,
-  },
+  { title: 'Auto Presence', description: 'Automatically show when you’re home or away.', icon: MapPinIcon },
+  { title: 'Delivery Tracker', description: 'Log who received a package and when.', icon: PackageIcon },
+  { title: 'House View', description: 'See who’s home in real time.', icon: HomeIcon },
+  { title: 'Privacy First', description: 'Only your family can see your presence.', icon: ShieldIcon },
 ]
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
 
-  // ⛳ Redirect if user is already onboarded
+  const redirect = searchParams.get('redirect') || null
+  const invite = searchParams.get('invite') || searchParams.get('family') || null
+
   useEffect(() => {
     if (authLoading || !user) return
 
     const checkOnboarding = async () => {
       const snap = await getDoc(doc(firestore, 'users', user.uid))
       const data = snap.data()
+
       if (data?.onboardingComplete) {
-        router.replace('/')
+        // If user is onboarded, go directly to redirect target if available
+        if (redirect) {
+          router.replace(redirect)
+        } else {
+          router.replace('/')
+        }
       } else {
-        router.replace('/onboarding')
+        // If not onboarded, go to onboarding and preserve invite/family
+        let onboardingUrl = '/onboarding'
+        if (invite) {
+          onboardingUrl += `?invite=${encodeURIComponent(invite)}`
+        }
+        router.replace(onboardingUrl)
       }
     }
 
     checkOnboarding()
-  }, [user, authLoading, router])
+  }, [user, authLoading, router, redirect, invite])
 
   const handleLogin = async () => {
     setLoading(true)
