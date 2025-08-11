@@ -22,7 +22,7 @@ async function sendTokenToBackend(token: string, userId: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, userId }),
     })
-  } catch {}
+  } catch { }
 }
 
 function isIOSWebKit() {
@@ -82,7 +82,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
       const token = await getToken(messaging!, { vapidKey })
       if (token) await sendTokenToBackend(token, uid)
-    } catch {}
+    } catch { }
   }
 
   function setXSmooth(value: number) {
@@ -146,6 +146,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const rawIndex = -offsetX / viewportWidth
     const rounded = Math.round(rawIndex)
     let newIndex = currentIndex
+
     if (Math.abs(vel) > thresholdVelocity) {
       if (vel < 0 && currentIndex < maxIndex) newIndex = currentIndex + 1
       if (vel > 0 && currentIndex > 0) newIndex = currentIndex - 1
@@ -159,8 +160,13 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         newIndex = rounded
       }
     }
-    router.push(navItems[newIndex].href)
+
+    // ✅ Only navigate if tab actually changes
+    if (newIndex !== currentIndex) {
+      router.push(navItems[newIndex].href)
+    }
   }
+
 
   return (
     <div className="flex flex-col min-h-screen overflow-hidden select-none" style={{ height: '100vh' }}>
@@ -170,9 +176,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             type="button"
             key={href}
             onClick={() => router.push(href)}
-            className={`flex flex-col items-center text-xs p-2 ${
-              i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
-            }`}
+            className={`flex flex-col items-center text-xs p-2 ${i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
+              }`}
           >
             <Icon className="w-5 h-5 mb-1" />
             {label}

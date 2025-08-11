@@ -20,7 +20,6 @@ import { useAuth } from '@/lib/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
-import Link from 'next/link'
 import InviteModal from '@/app/components/InviteModal'
 import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
@@ -29,7 +28,6 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatDistanceToNow } from 'date-fns'
-import { cn } from '@/lib/utils'
 
 type Member = {
   id: string
@@ -119,126 +117,96 @@ export default function FamilyDetailPage() {
     if (!user) return
     setLoading(true)
 
-    const familyRef = doc(firestore, 'families', id)
-    const familyUnsub = onSnapshot(
+    const familyRef = doc(firestore, "families", id)
+    let hadFamily = false
+
+    const unsubFamily = onSnapshot(
       familyRef,
       (snap) => {
         if (!mountedRef.current) return
+
         if (!snap.exists()) {
-          toast.error('Family not found')
-          router.replace('/family')
+          if (hadFamily) {
+            toast.error("Family not found")
+            router.replace("/family")
+          }
           return
         }
+
+        hadFamily = true
         const f = { id: snap.id, ...(snap.data() as any) } as Family
         setFamily(f)
-      },
-      (err) => {
-        console.error('family onSnapshot error', err)
-        toast.error('Failed to listen to family updates')
-      }
-    )
 
-    const membersRef = collection(firestore, 'families', id, 'members')
+        // now that we know family exists, subscribe to members
+        const membersRef = collection(firestore, "families", f.id, "members")
 
-    // subscribe to members subcollection for real-time roles/status/etc
-    const membersUnsub = onSnapshot(
-      membersRef,
-      async (snap) => {
-        if (!mountedRef.current) return
+        const unsubMembers = onSnapshot(
+          membersRef,
+          async (msnap) => {
+            if (!mountedRef.current) return
 
-        if (user && family) {
-          const isMemberDocMissing = !snap.docs.find(doc => doc.id === user.uid)
+            const docs = msnap.docs.map((d) => {
+              const data = d.data() as any
+              return {
+                id: d.id,
+                role: data?.role ?? null,
+                name: data?.name,
+                email: data?.email,
+                photoURL: data?.photoURL,
+                addedAt: data?.addedAt ?? data?.createdAt ?? null,
+                ...data,
+              } as Member
+            })
 
-          if (isMemberDocMissing) {
-            const profile = await fetchProfileOnce(user.uid)
-            const memberDocRef = doc(firestore, 'families', family.id, 'members', user.uid)
+            // fill missing profile info
+            const toFetch = docs.filter(m => !m.name && !m.photoURL && !m.email).map(m => m.id)
+            await Promise.all(toFetch.map(async (uid) => {
+              try {
+                const p = await fetchProfileOnce(uid)
+                const idx = docs.findIndex(x => x.id === uid)
+                if (idx >= 0) docs[idx] = { ...docs[idx], ...p }
+              } catch { }
+            }))
 
-            await setDoc(memberDocRef, {
-              role: 'member',
-              addedAt: serverTimestamp(),
-              name: profile.name ?? '',
-              email: profile.email ?? '',
-              photoURL: profile.photoURL ?? '',
-            }, { merge: true })
+            // sort with owner first
+            const ownerId = f.createdBy ?? null
+            const sorted = docs.slice().sort((a, b) => {
+              if (a.id === ownerId) return -1
+              if (b.id === ownerId) return 1
+              return (a.name ?? "").localeCompare(b.name ?? "")
+            }).map(m => ({ ...m, __isOwner: m.id === ownerId }))
 
-            try {
-              await updateDoc(doc(firestore, 'users', user.uid), {
-                familiesJoined: arrayUnion(family.id),
-              })
-            } catch (_) { }
-          }
-        }
+            setMembers(sorted)
 
-        const docs = snap.docs.map((d) => {
-          const data = d.data() as any
-          return {
-            id: d.id,
-            role: data?.role ?? null,
-            name: data?.name ?? undefined,
-            email: data?.email ?? undefined,
-            photoURL: data?.photoURL ?? undefined,
-            addedAt: data?.addedAt ?? data?.createdAt ?? null,
-            ...data,
-          } as Member
-        })
-
-        const toFetch = docs.filter(m => !m.name && !m.photoURL && !m.email).map(m => m.id)
-
-        await Promise.all(
-          toFetch.map(async (uid) => {
-            try {
-              const p = await fetchProfileOnce(uid)
-              const idx = docs.findIndex(x => x.id === uid)
-              if (idx >= 0) {
-                docs[idx] = { ...docs[idx], name: p.name, email: p.email, photoURL: p.photoURL }
-              }
-            } catch (err) {
-              console.warn('failed to fetch profile for', uid, err)
+            const me = sorted.find(x => x.id === user.uid)
+            if (me) {
+              setMyRole(f.createdBy === user.uid ? "owner" : me.role ?? "member")
+            } else {
+              setMyRole(f.createdBy === user.uid ? "owner" : null)
             }
-          })
+
+            setLoading(false)
+          },
+          (err) => {
+            console.error("members onSnapshot error", err)
+            toast.error("Failed to listen to members updates")
+            setMembers([])
+            setLoading(false)
+          }
         )
 
-        const ownerId = (family && family.createdBy) ? family.createdBy : null
-        const sorted = docs.slice().sort((a, b) => {
-          if (a.id === ownerId) return -1
-          if (b.id === ownerId) return 1
-          const na = (a.name ?? '').toLowerCase()
-          const nb = (b.name ?? '').toLowerCase()
-          return na.localeCompare(nb)
-        }).map(m => ({ ...m, __isOwner: m.id === ownerId }))
-
-        if (mountedRef.current) {
-          setMembers(sorted)
-          const me = sorted.find(x => x.id === user?.uid)
-          if (me) {
-            if (family && family.createdBy === user.uid) {
-              setMyRole('owner')
-            } else {
-              setMyRole(me.role ?? 'member')
-            }
-          } else {
-            if (family && family.createdBy === user.uid) setMyRole('owner')
-            else setMyRole(null)
-          }
-          setLoading(false)
-        }
+        // cleanup members when family changes or component unmounts
+        return () => unsubMembers()
       },
       (err) => {
-        console.error('members onSnapshot error', err)
-        if (mountedRef.current) {
-          toast.error('Failed to listen to members updates')
-          setMembers([])
-          setLoading(false)
-        }
+        console.error("family onSnapshot error", err)
+        toast.error("Failed to listen to family updates")
       }
     )
 
-
-    return () => {
-      familyUnsub()
-      membersUnsub()
-    }
+    return () => unsubFamily()
   }, [user, id])
+
 
   // Confirm remove modal opener
   const confirmRemove = (m: Member) => {
@@ -373,7 +341,7 @@ export default function FamilyDetailPage() {
   return (
     <>
       <div
-          className="max-w-2xl mx-auto p-4 space-y-6"
+        className="max-w-2xl mx-auto p-4 space-y-6"
       >
         {/* Header */}
         <header className="sticky top-0 z-10 backdrop-blur-sm bg-background/70 pb-2 border-b">
@@ -394,7 +362,20 @@ export default function FamilyDetailPage() {
               {canManage ? (
                 <>
                   <Button type="button" size="sm" onClick={(e) => { e.stopPropagation(); setInviteOpen(true) }} aria-label="Invite members">Invite</Button>
-                  <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setManageOpen(true) }} aria-label="Manage family">Manage</Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setManageOpen(true);
+                    }}
+                    aria-label="Manage family"
+                  >
+                    Manage
+                  </Button>
+
                 </>
               ) : (
                 <Button type="button" size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); setLeaveModalOpen(true) }} aria-label="Leave family">Leave</Button>
