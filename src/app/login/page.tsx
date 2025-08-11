@@ -1,21 +1,15 @@
 'use client'
 
 import { Suspense } from 'react'
-import Providers from '../providers'
 import LoginPage from './_components/LoginPage'
-
-function LoginPageWrapper() {
-  return (
-    <Suspense fallback={null}>
-      <LoginPage />
-    </Suspense>
-  )
-}
+import Providers from '../providers'
 
 export default function Page() {
   return (
     <Providers>
-      <LoginPageWrapper />
+      <Suspense fallback={<div className="p-6 text-center">Loading...</div>}>
+        <LoginPage />
+      </Suspense>
     </Providers>
   )
 }

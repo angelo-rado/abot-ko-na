@@ -1,11 +1,15 @@
-// app/onboarding/page.tsx
-import { Suspense } from 'react'
-import OnboardingPage from './_OnBoardingPage'
+'use client'
 
-export default function OnboardingPageWrapper() {
+import { Suspense } from 'react'
+import Providers from '@/app/providers'
+import OnboardingPage from './_OnBoardingPage' // your existing component
+
+export default function Page() {
   return (
-    <Suspense fallback={<div className="p-6 text-center text-sm text-muted-foreground">Loading onboarding…</div>}>
-      <OnboardingPage />
-    </Suspense>
+    <Providers>
+      <Suspense fallback={<div className="p-6 text-center">Loading...</div>}>
+        <OnboardingPage />
+      </Suspense>
+    </Providers>
   )
 }

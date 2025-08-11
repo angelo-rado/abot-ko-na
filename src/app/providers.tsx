@@ -2,7 +2,7 @@
 'use client'
 
 import { ReactNode, useEffect, useState } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/useAuth'
 import { doc, getDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
@@ -12,10 +12,10 @@ export default function Providers({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    // Don't do anything until auth is done loading
     if (loading) return
 
     if (!user) {
@@ -28,8 +28,10 @@ export default function Providers({ children }: { children: ReactNode }) {
         const snap = await getDoc(doc(firestore, 'users', user.uid))
         const data = snap.data()
 
-        if (!data?.onboardingComplete && pathname !== '/onboarding') {
-          router.replace('/onboarding')
+        if (!data?.onboardingComplete && !pathname.startsWith('/onboarding')) {
+          // Preserve current query string (invite, redirect, etc.)
+          const query = searchParams.toString()
+          router.replace(`/onboarding${query ? `?${query}` : ''}`)
           return
         }
       } catch (err) {
@@ -40,7 +42,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     }
 
     checkOnboarding()
-  }, [user, loading, pathname, router])
+  }, [user, loading, pathname, router, searchParams])
 
   if (loading || checking) {
     return (
