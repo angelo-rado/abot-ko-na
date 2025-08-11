@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import SwipeableContainer from './ux/SwipeableContainer'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import {
@@ -185,7 +184,6 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
 
   if (!parent) {
     return (
-      <SwipeableContainer leftActions={[{label:'Mark Delivered',onClick:onMarkParent,className:'bg-emerald-600'}]} rightActions={[]}>
       <Card>
         <CardHeader>
           <CardTitle>No delivery/order provided</CardTitle>
@@ -196,7 +194,6 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
           </div>
         </CardContent>
       </Card>
-    </SwipeableContainer>
     )
   }
 
@@ -298,7 +295,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
 
           <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
             {!isSingle && (
-              <Button size="sm" variant="ghost" onClick={() => setExpanded((s) => !s)}>
+              <Button variant="ghost" onClick={() => setExpanded((s) => !s)}>
                 {expanded ? 'Collapse' : `Items (${pendingCount})`}
               </Button>
             )}
