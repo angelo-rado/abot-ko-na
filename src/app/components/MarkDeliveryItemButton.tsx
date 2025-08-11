@@ -27,6 +27,7 @@ export function MarkDeliveryItemButton({
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
+            type="button"
             size="icon"
             variant="ghost"
             className="h-8 w-8"

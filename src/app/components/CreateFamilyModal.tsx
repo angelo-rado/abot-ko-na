@@ -64,6 +64,7 @@ export default function CreateFamilyModal({ open, onOpenChange }: Props) {
             onChange={(e) => setFamilyName(e.target.value)}
           />
           <Button
+            type="button"
             onClick={handleCreate}
             disabled={loading || !familyName.trim()}
             className="w-full"

@@ -330,6 +330,7 @@ export default function DeliveriesPage() {
 
         <div className="flex gap-2 flex-wrap sm:flex-nowrap">
           <Button
+            type="button"
             variant="outline"
             onClick={() => {
               setSelectionMode((s) => !s)
@@ -339,6 +340,7 @@ export default function DeliveriesPage() {
             {selectionMode ? 'Exit edit' : 'Edit / Delete'}
           </Button>
           <Button
+            type="button"
             onClick={() => {
               setEditingDelivery(null)
               setOpenForm(true)
@@ -356,6 +358,7 @@ export default function DeliveriesPage() {
         <div className="flex gap-2 bg-muted rounded-md p-1">
           {['upcoming', 'archived'].map((t) => (
             <button
+              type="button"
               key={t}
               onClick={() => setTab(t as any)}
               className={`px-3 py-1 rounded text-sm font-medium ${tab === t ? 'bg-white text-black shadow-sm' : 'text-muted-foreground'
@@ -400,7 +403,7 @@ export default function DeliveriesPage() {
             You haven't joined or created a family yet. Deliveries require a family group.
           </p>
           <div className="flex justify-center gap-4">
-            <Button onClick={() => router.push('/family/create')}>Go to Families</Button>
+            <Button type="button" onClick={() => router.push('/family/create')}>Go to Families</Button>
           </div>
         </div>
       ) : deliveries.length === 0 ? (
@@ -427,8 +430,8 @@ export default function DeliveriesPage() {
                         <DeliveryCard familyId={familyId!} {...props} />
                         {!selectionMode && (
                           <div className="flex justify-end gap-2 mt-2">
-                            <Button size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
-                            <Button size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
                           </div>
                         )}
                       </div>
@@ -459,8 +462,8 @@ export default function DeliveriesPage() {
                         <DeliveryCard familyId={familyId!} {...props} />
                         {!selectionMode && (
                           <div className="flex justify-end gap-2 mt-2">
-                            <Button size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
-                            <Button size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
                           </div>
                         )}
                       </div>
@@ -477,9 +480,9 @@ export default function DeliveriesPage() {
       {selectionMode && (
         <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-white border rounded shadow-md px-6 py-3 flex items-center gap-4 z-50">
           <span className="text-sm">{selectedCount} selected</span>
-          <Button onClick={bulkArchive} disabled={processingBulk || selectedCount === 0}>Archive</Button>
-          <Button variant="destructive" onClick={bulkDelete} disabled={processingBulk || selectedCount === 0}>Delete</Button>
-          <Button variant="ghost" onClick={() => { setSelectionMode(false); clearSelection() }}>Cancel</Button>
+          <Button type="button" onClick={bulkArchive} disabled={processingBulk || selectedCount === 0}>Archive</Button>
+          <Button type="button" variant="destructive" onClick={bulkDelete} disabled={processingBulk || selectedCount === 0}>Delete</Button>
+          <Button type="button" variant="ghost" onClick={() => { setSelectionMode(false); clearSelection() }}>Cancel</Button>
         </div>
       )}
 

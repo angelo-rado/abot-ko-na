@@ -386,16 +386,16 @@ export default function FamilyDetailPage() {
 
           <div className="flex items-center gap-2">
             <Link href="/family">
-              <Button variant="outline" size="sm">Back</Button>
+              <Button type="button" variant="outline" size="sm">Back</Button>
             </Link>
 
             {canManage ? (
               <>
-                <Button size="sm" onClick={() => setInviteOpen(true)} aria-label="Invite members">Invite</Button>
-                <Button size="sm" variant="ghost" onClick={() => setManageOpen(true)} aria-label="Manage family">Manage</Button>
+                <Button type="button" size="sm" onClick={() => setInviteOpen(true)} aria-label="Invite members">Invite</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={() => setManageOpen(true)} aria-label="Manage family">Manage</Button>
               </>
             ) : (
-              <Button size="sm" variant="destructive" onClick={() => setLeaveModalOpen(true)} aria-label="Leave family">Leave</Button>
+              <Button type="button" size="sm" variant="destructive" onClick={() => setLeaveModalOpen(true)} aria-label="Leave family">Leave</Button>
             )}
           </div>
         </div>
@@ -445,7 +445,7 @@ export default function FamilyDetailPage() {
 
                     <div className="flex items-center gap-2">
                       {isCreator && member.id !== user?.uid ? (
-                        <Button size="sm" variant="ghost" onClick={() => confirmRemove(member)} aria-label={`Remove ${member.name ?? 'member'}`}>Remove</Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => confirmRemove(member)} aria-label={`Remove ${member.name ?? 'member'}`}>Remove</Button>
                       ) : null}
                     </div>
                   </motion.div>
@@ -484,8 +484,8 @@ export default function FamilyDetailPage() {
           </div>
           <DialogFooter>
             <div className="flex gap-2 w-full justify-end">
-              <Button variant="outline" onClick={() => { setRemoveModalOpen(false); setRemoveTarget(null) }}>Cancel</Button>
-              <Button variant="destructive" onClick={handleRemoveMember} disabled={busy}>
+              <Button type="button" variant="outline" onClick={() => { setRemoveModalOpen(false); setRemoveTarget(null) }}>Cancel</Button>
+              <Button type="button" variant="destructive" onClick={handleRemoveMember} disabled={busy}>
                 {busy ? 'Removing…' : 'Remove'}
               </Button>
             </div>
@@ -506,8 +506,8 @@ export default function FamilyDetailPage() {
           </div>
           <DialogFooter>
             <div className="flex gap-2 w-full justify-end">
-              <Button variant="outline" onClick={() => setLeaveModalOpen(false)}>Cancel</Button>
-              <Button variant="destructive" onClick={handleLeaveFamily} disabled={busy}>
+              <Button type="button" variant="outline" onClick={() => setLeaveModalOpen(false)}>Cancel</Button>
+              <Button type="button" variant="destructive" onClick={handleLeaveFamily} disabled={busy}>
                 {busy ? 'Leaving…' : 'Leave family'}
               </Button>
             </div>

@@ -81,10 +81,10 @@ export default function SetFamilyHomeLocation({ familyId }: Props) {
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={setCurrentLocation} disabled={loading}>
+        <Button type="button" onClick={setCurrentLocation} disabled={loading}>
           {loading ? 'Saving...' : 'Use My Current Location'}
         </Button>
-        <Button variant="outline" onClick={() => setOpenMap(true)}>
+        <Button type="button" variant="outline" onClick={() => setOpenMap(true)}>
           Pick on Map
         </Button>
       </div>

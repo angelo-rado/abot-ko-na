@@ -167,6 +167,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       <nav className="fixed top-0 left-0 right-0 h-16 bg-white border-b flex items-center justify-around z-50">
         {navItems.map(({ label, href, Icon }, i) => (
           <button
+            type="button"
             key={href}
             onClick={() => router.push(href)}
             className={`flex flex-col items-center text-xs p-2 ${

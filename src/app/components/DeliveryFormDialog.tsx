@@ -770,11 +770,12 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                       </Button>
 
                       {confirmContext === 'switch' ? (
-                        <Button onClick={confirmSwitchToSingleProceed}>
+                        <Button type="button" onClick={confirmSwitchToSingleProceed}>
                           Proceed — remove all items
                         </Button>
                       ) : (
                         <Button
+                          type="button"
                           onClick={() => {
                             draftItemsRef.current = null
                             setConfirmSinglePromptOpen(false)

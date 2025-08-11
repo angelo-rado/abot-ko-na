@@ -143,6 +143,7 @@ export default function HomeLocationMap() {
             {tempPosition && (
                 <div className="absolute bottom-4 right-4 z-[1000]">
                     <Button
+                        type="button"
                         size="sm"
                         onClick={() => updateHome(tempPosition[0], tempPosition[1])}
                     >
@@ -152,7 +153,7 @@ export default function HomeLocationMap() {
             )}
 
             <div className="text-right">
-                <Button variant="outline" size="sm" onClick={flyToCurrentLocation}>
+                <Button type="button" variant="outline" size="sm" onClick={flyToCurrentLocation}>
                     Go to Current Location
                 </Button>
             </div>

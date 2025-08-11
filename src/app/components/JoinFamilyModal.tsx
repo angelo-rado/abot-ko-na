@@ -173,7 +173,8 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
           />
 
           <div className="flex gap-2">
-            <Button
+            <Button 
+              type="button"
               onClick={handleJoin}
               disabled={loading || !value.trim()}
               className="flex-1"
@@ -182,6 +183,7 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
             </Button>
 
             <Button
+              type="button"
               variant="outline"
               onClick={() => {
                 setValue('')

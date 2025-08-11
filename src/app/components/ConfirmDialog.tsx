@@ -65,6 +65,7 @@ export default function ConfirmDialog({
             <DialogFooter className="pt-4">
               <div className="flex gap-2 justify-end w-full">
                 <Button
+                  type="button"
                   variant="ghost"
                   onClick={() => {
                     onCancel?.()

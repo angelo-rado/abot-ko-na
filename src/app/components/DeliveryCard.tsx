@@ -295,7 +295,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
 
           <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
             {!isSingle && (
-              <Button variant="ghost" onClick={() => setExpanded((s) => !s)}>
+              <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
                 {expanded ? 'Collapse' : `Items (${pendingCount})`}
               </Button>
             )}

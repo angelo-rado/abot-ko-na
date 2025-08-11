@@ -50,13 +50,14 @@ export function ReceiverNoteDialog({
         </div>
         <DialogFooter className="pt-2">
           <Button
+            type="button"
             variant="ghost"
             onClick={onClose}
             disabled={loading}
           >
             Cancel
           </Button>
-          <Button onClick={handleConfirm} disabled={loading}>
+          <Button type="button" onClick={handleConfirm} disabled={loading}>
             {loading ? 'Saving…' : 'Confirm'}
           </Button>
         </DialogFooter>

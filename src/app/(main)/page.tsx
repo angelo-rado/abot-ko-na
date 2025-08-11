@@ -412,8 +412,8 @@ export default function HomePage() {
                 You don't have any families yet — create one or join with an invite link.
               </p>
               <div className="flex gap-2">
-                <Button onClick={() => setCreateOpen(true)}>Create Family</Button>
-                <Button variant="outline" onClick={() => setJoinOpen(true)}>Join Family</Button>
+                <Button type="button" onClick={() => setCreateOpen(true)}>Create Family</Button>
+                <Button type="button" variant="outline" onClick={() => setJoinOpen(true)}>Join Family</Button>
               </div>
             </div>
           ) : !familyId ? (
@@ -695,6 +695,7 @@ export default function HomePage() {
               {myStatusSource === 'geo' ? (
                 <span className="flex-1">
                   <Button
+                    type="button"
                     variant={isHome ? 'default' : 'outline'}
                     onClick={() => handlePresenceChange('home')}
                     className="w-full"
@@ -706,6 +707,7 @@ export default function HomePage() {
                 </span>
               ) : (
                 <Button
+                  type="button"
                   variant={isHome ? 'default' : 'outline'}
                   onClick={() => handlePresenceChange('home')}
                   className="flex-1"
@@ -720,6 +722,7 @@ export default function HomePage() {
               {myStatusSource === 'geo' ? (
                 <><span className="flex-1">
                   <Button
+                    type="button"
                     variant={isHome === false ? 'default' : 'outline'}
                     onClick={() => handlePresenceChange('away')}
                     className="w-full"
@@ -741,6 +744,7 @@ export default function HomePage() {
                   </HelpCircleHint></>
               ) : (
                 <Button
+                  type="button"
                   variant={isHome === false ? 'default' : 'outline'}
                   onClick={() => handlePresenceChange('away')}
                   className="flex-1"

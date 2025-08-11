@@ -59,6 +59,7 @@ export default function LoginButton() {
         {/* Login button */}
         <div className="space-y-2">
           <Button
+            type="button"
             onClick={handleLogin}
             variant="outline"
             className="w-full flex items-center gap-2 justify-center"

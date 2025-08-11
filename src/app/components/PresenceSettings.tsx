@@ -308,6 +308,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
 
         <div className="flex gap-2 mt-2">
           <Button
+            type="button"
             onClick={() => setStatusManual('home')}
             disabled={manualButtonsDisabled}
             variant={myMemberDoc?.status === 'home' ? 'default' : 'outline'}

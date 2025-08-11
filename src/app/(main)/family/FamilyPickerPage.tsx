@@ -196,7 +196,7 @@ export default function FamilyPickerPageContent() {
             )}
           </div>
           <Link href={`/family/${family.id}`}>
-            <Button variant="outline" size="sm">Open</Button>
+            <Button type="button" variant="outline" size="sm">Open</Button>
           </Link>
         </CardHeader>
       </Card>
@@ -231,7 +231,7 @@ export default function FamilyPickerPageContent() {
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-xl font-semibold">Your Families</h1>
           {ownedFamilies.length > 0 &&
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
               + Create
             </Button>
           }
@@ -259,7 +259,7 @@ export default function FamilyPickerPageContent() {
                     icon: <HomeIcon className="w-6 h-6 text-muted-foreground" />,
                     title: 'No families yet',
                     description: 'Start by creating a new family group.',
-                    cta: <Button onClick={() => setCreateOpen(true)}>Create Family</Button>,
+                    cta: <Button type="button" onClick={() => setCreateOpen(true)}>Create Family</Button>,
                   })
                   : ownedFamilies.map(renderFamilyCard)}
               </AnimatePresence>
@@ -274,7 +274,7 @@ export default function FamilyPickerPageContent() {
                     icon: <UsersIcon className="w-6 h-6 text-muted-foreground" />,
                     title: 'Not part of any family yet',
                     description: 'Join one via an invite link.',
-                    cta: <Button variant="outline" onClick={() => setJoinOpen(true)}>Join a Family</Button>,
+                    cta: <Button type="button" variant="outline" onClick={() => setJoinOpen(true)}>Join a Family</Button>,
                   })
                   : joinedFamilies
                     .filter(f => f.createdBy !== user.uid)

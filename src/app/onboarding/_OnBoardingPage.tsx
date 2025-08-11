@@ -120,6 +120,7 @@ export default function OnboardingPage() {
                             </p>
 
                             <Button
+                                type="button"
                                 onClick={handleAllowLocation}
                                 disabled={loadingPermission}
                                 className="w-full"
@@ -128,6 +129,7 @@ export default function OnboardingPage() {
                             </Button>
 
                             <Button
+                                type="button"
                                 onClick={() => setStep('next')}
                                 variant="ghost"
                                 className="w-full text-muted-foreground"
@@ -149,12 +151,14 @@ export default function OnboardingPage() {
 
                         <section className="space-y-4">
                             <Button
+                                type="button"
                                 onClick={() => router.push('/family/join')}
                                 className="w-full"
                             >
                                 Join via Invite Link
                             </Button>
                             <Button
+                                type="button"
                                 onClick={() => router.push('/family/create')}
                                 variant="outline"
                                 className="w-full"
@@ -162,6 +166,7 @@ export default function OnboardingPage() {
                                 Create a New Family
                             </Button>
                             <Button
+                                type="button"
                                 onClick={finishOnboarding}
                                 variant="ghost"
                                 className="w-full text-muted-foreground"

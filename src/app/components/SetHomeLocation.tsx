@@ -57,7 +57,7 @@ export default function SetHomeLocation() {
                     <p className="text-sm italic text-muted-foreground">Not set</p>
                 )}
             </div>
-            <Button onClick={setCurrentLocation} disabled={loading}>
+            <Button type="button" onClick={setCurrentLocation} disabled={loading}>
                 {loading ? 'Saving...' : 'Set Current Location as Home'}
             </Button>
         </div>

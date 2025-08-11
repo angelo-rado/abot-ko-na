@@ -139,6 +139,7 @@ export default function MapPickerDialog({
           {tempPosition && (
             <div className="absolute bottom-4 right-4 z-[1000]">
               <Button
+                type="button"
                 size="sm"
                 onClick={() => {
                   onConfirm(tempPosition[0], tempPosition[1]);

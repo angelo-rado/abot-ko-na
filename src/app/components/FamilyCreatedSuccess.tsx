@@ -54,7 +54,7 @@ export default function FamilyCreatedSuccess({ familyName, familyId, onClose }: 
 
 
         <DialogFooter className="pt-4 flex gap-2 justify-end">
-          <Button variant="outline" onClick={goToDashboard}>
+          <Button type="button" variant="outline" onClick={goToDashboard}>
             Dashboard
           </Button>
         </DialogFooter>

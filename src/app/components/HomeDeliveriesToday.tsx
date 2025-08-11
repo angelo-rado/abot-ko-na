@@ -739,7 +739,7 @@ export default function HomeDeliveriesToday({
                         </div>
                       </div>
                       <div>
-                        <Button size="sm" onClick={() => handleMarkDelivery(d.id, d.note)} disabled={processingId === d.id}>
+                        <Button type="button" size="sm" onClick={() => handleMarkDelivery(d.id, d.note)} disabled={processingId === d.id}>
                           {processingId === d.id ? 'Saving…' : 'Mark delivery received'}
                         </Button>
                       </div>
@@ -764,7 +764,7 @@ export default function HomeDeliveriesToday({
                             </div>
                             <div>
                               {it.status !== 'delivered' ? (
-                                <Button size="sm" onClick={() => handleMarkDeliveryItem(d.id, it.id)} disabled={processingId === it.id}>
+                                <Button type="button" size="sm" onClick={() => handleMarkDeliveryItem(d.id, it.id)} disabled={processingId === it.id}>
                                   {processingId === it.id ? 'Saving…' : 'Mark as Received'}
                                 </Button>
                               ) : (

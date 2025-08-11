@@ -102,6 +102,7 @@ export default function DeleteFamilyButton({ family, onClose }: Props) {
 
       <div>
         <Button
+          type="button"
           onClick={() => setConfirmOpen(true)}
           disabled={!isOwner || loading}
           className="bg-red-600 hover:bg-red-700 text-white"

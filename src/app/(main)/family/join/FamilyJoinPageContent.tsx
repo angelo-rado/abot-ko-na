@@ -166,7 +166,7 @@ export default function FamilyJoinPageContent() {
       <div className="max-w-xl mx-auto p-6 text-center">
         <p className="text-muted-foreground">No invite code provided. Please enter invite code below</p>
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
-        <Button className="mt-4" variant="outline" onClick={() => setJoinOpen(true)}>Enter Invite Code</Button>
+        <Button type="button" className="mt-4" variant="outline" onClick={() => setJoinOpen(true)}>Enter Invite Code</Button>
       </div>
     )
   }

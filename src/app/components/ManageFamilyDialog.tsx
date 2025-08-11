@@ -387,7 +387,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               <label className="text-sm font-medium block mb-2">Family name</label>
               <div className="flex gap-2">
                 <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
-                <Button onClick={handleSaveName} disabled={isSaving || editingName.trim() === ''}>
+                <Button type="button" onClick={handleSaveName} disabled={isSaving || editingName.trim() === ''}>
                   {isSaving ? 'Saving…' : 'Save'}
                 </Button>
               </div>
@@ -459,6 +459,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                       <div className="flex items-center gap-2">
                         {canChangeRole ? (
                           <button
+                            type="button"
                             className={cn('inline-flex items-center gap-2 text-sm px-2 py-1 rounded', 'bg-muted/10')}
                             onClick={() => toggleRole(m.id, m.role)}
                             title={m.role === 'admin' ? 'Demote to member' : 'Promote to admin'}
@@ -475,7 +476,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                           <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button variant="ghost" size="sm" onClick={() => removeMember(m.id)} aria-label={`Remove ${m.name ?? 'member'}`} disabled={busy} >
+                              <Button type="button" variant="ghost" size="sm" onClick={() => removeMember(m.id)} aria-label={`Remove ${m.name ?? 'member'}`} disabled={busy} >
                             <Trash className="w-4 h-4 text-destructive" />
                           </Button>
                             </TooltipTrigger>
@@ -508,7 +509,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                 {family ? (
                   <DeleteFamilyButton family={family} onClose={() => onOpenChange(false)} />
                 ) : (
-                  <Button variant="destructive" onClick={() => setConfirmDeleteOpen(true)} disabled={deleting}>
+                  <Button type="button" variant="destructive" onClick={() => setConfirmDeleteOpen(true)} disabled={deleting}>
                     {deleting ? 'Deleting…' : 'Delete family'}
                   </Button>
                 )}
@@ -518,7 +519,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         </div>
 
         <DialogFooter className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => { stopMembersRealtime(); stopMyRoleRealtime(); onOpenChange(false) }}>Close</Button>
+          <Button type="button" variant="outline" onClick={() => { stopMembersRealtime(); stopMyRoleRealtime(); onOpenChange(false) }}>Close</Button>
         </DialogFooter>
       </DialogContent>
 
@@ -533,8 +534,8 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               Are you sure you want to permanently delete <strong>{family?.name}</strong>? This cannot be undone.
             </p>
             <div className="flex gap-2 justify-end mt-4">
-              <Button variant="outline" onClick={() => setConfirmDeleteOpen(false)}>Cancel</Button>
-              <Button variant="destructive" onClick={handleDeleteFamily} disabled={deleting}>
+              <Button type="button" variant="outline" onClick={() => setConfirmDeleteOpen(false)}>Cancel</Button>
+              <Button type="button" variant="destructive" onClick={handleDeleteFamily} disabled={deleting}>
                 {deleting ? 'Deleting…' : 'Delete family'}
               </Button>
             </div>

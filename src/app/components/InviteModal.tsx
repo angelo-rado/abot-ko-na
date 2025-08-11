@@ -125,10 +125,10 @@ export default function InviteModal({
         />
 
         <div className="space-y-2">
-          <Button onClick={handleCopy} className="w-full">
+          <Button type="button" onClick={handleCopy} className="w-full">
             {copied ? 'Copied!' : 'Copy Link'}
           </Button>
-          <Button onClick={handleShare} variant="outline" className="w-full">
+          <Button type="button" onClick={handleShare} variant="outline" className="w-full">
             Share
           </Button>
         </div>
@@ -139,7 +139,7 @@ export default function InviteModal({
           </div>
         </div>
 
-        <Button variant="secondary" onClick={handleDownloadQR} className="w-full">
+        <Button type="button" variant="secondary" onClick={handleDownloadQR} className="w-full">
           Download QR Code
         </Button>
       </DialogContent>
