@@ -385,14 +385,12 @@ export default function FamilyDetailPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Link href="/family">
-              <Button type="button" variant="outline" size="sm">Back</Button>
-            </Link>
+            <Button type="button" variant="outline" size="sm" onClick={() => router.push('/family')}>Back</Button>
 
             {canManage ? (
               <>
-                <Button type="button" size="sm" onClick={() => setInviteOpen(true)} aria-label="Invite members">Invite</Button>
-                <Button type="button" size="sm" variant="ghost" onClick={() => setManageOpen(true)} aria-label="Manage family">Manage</Button>
+                <Button type="button" size="sm" onClick={(e) => {e.stopPropagation(); setInviteOpen(true)}} aria-label="Invite members">Invite</Button>
+                <Button type="button" size="sm" variant="ghost" onClick={(e) => {e.stopPropagation(); setManageOpen(true)}} aria-label="Manage family">Manage</Button>
               </>
             ) : (
               <Button type="button" size="sm" variant="destructive" onClick={() => setLeaveModalOpen(true)} aria-label="Leave family">Leave</Button>
