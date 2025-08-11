@@ -29,6 +29,7 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatDistanceToNow } from 'date-fns'
+import { cn } from '@/lib/utils'
 
 type Member = {
   id: string
@@ -370,148 +371,155 @@ export default function FamilyDetailPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-4 space-y-6">
-      {/* Header */}
-      <header className="sticky top-0 z-10 backdrop-blur-sm bg-background/70 pb-2 border-b">
-        <div className="flex justify-between items-center gap-4">
-          <div>
-            <h1 className="text-xl font-semibold">{family.name}</h1>
-            <div className="text-xs text-muted-foreground">
-              {family.createdAt ? `Created ${formatDistanceToNow(new Date(
-                family.createdAt.seconds ? family.createdAt.toDate() : family.createdAt
-              ), { addSuffix: true })}` : null}
-              {typeof members.length === 'number' && ` • ${members.length} member${members.length !== 1 ? 's' : ''}`}
+    <>
+      <div
+        className={cn(
+          "max-w-2xl mx-auto p-4 space-y-6",
+          (isInviteOpen || manageOpen || removeModalOpen || leaveModalOpen) && "pointer-events-none"
+        )}
+      >
+        {/* Header */}
+        <header className="sticky top-0 z-10 backdrop-blur-sm bg-background/70 pb-2 border-b">
+          <div className="flex justify-between items-center gap-4">
+            <div>
+              <h1 className="text-xl font-semibold">{family.name}</h1>
+              <div className="text-xs text-muted-foreground">
+                {family.createdAt ? `Created ${formatDistanceToNow(new Date(
+                  family.createdAt.seconds ? family.createdAt.toDate() : family.createdAt
+                ), { addSuffix: true })}` : null}
+                {typeof members.length === 'number' && ` • ${members.length} member${members.length !== 1 ? 's' : ''}`}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => router.push('/family')}>Back</Button>
+
+              {canManage ? (
+                <>
+                  <Button type="button" size="sm" onClick={(e) => { e.stopPropagation(); setInviteOpen(true) }} aria-label="Invite members">Invite</Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setManageOpen(true) }} aria-label="Manage family">Manage</Button>
+                </>
+              ) : (
+                <Button type="button" size="sm" variant="destructive" onClick={(e) => { e.stopPropagation(); setLeaveModalOpen(true) }} aria-label="Leave family">Leave</Button>
+              )}
             </div>
           </div>
+        </header>
 
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => router.push('/family')}>Back</Button>
-
-            {canManage ? (
-              <>
-                <Button type="button" size="sm" onClick={(e) => {e.stopPropagation(); setInviteOpen(true)}} aria-label="Invite members">Invite</Button>
-                <Button type="button" size="sm" variant="ghost" onClick={(e) => {e.stopPropagation(); setManageOpen(true)}} aria-label="Manage family">Manage</Button>
-              </>
+        {/* Members card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Members</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {members.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No members yet</p>
             ) : (
-              <Button type="button" size="sm" variant="destructive" onClick={() => setLeaveModalOpen(true)} aria-label="Leave family">Leave</Button>
-            )}
-          </div>
-        </div>
-      </header>
+              <div className="space-y-2">
+                <AnimatePresence>
+                  {members.map(member => (
+                    <motion.div
+                      key={member.id}
+                      layout
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      className="flex items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar>
+                          {member.photoURL ? (
+                            <AvatarImage src={member.photoURL} alt={member.name ?? 'User'} />
+                          ) : (
+                            <AvatarFallback>
+                              {(member.name ?? '?').split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase()}
+                            </AvatarFallback>
+                          )}
+                        </Avatar>
 
-      {/* Members card */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Members</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {members.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No members yet</p>
-          ) : (
-            <div className="space-y-2">
-              <AnimatePresence>
-                {members.map(member => (
-                  <motion.div
-                    key={member.id}
-                    layout
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    className="flex items-center justify-between gap-4"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar>
-                        {member.photoURL ? (
-                          <AvatarImage src={member.photoURL} alt={member.name ?? 'User'} />
-                        ) : (
-                          <AvatarFallback>
-                            {(member.name ?? '?').split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        )}
-                      </Avatar>
-
-                      <div className="min-w-0">
-                        <p className="font-medium truncate flex items-center gap-2">
-                          <span>{member.name ?? 'Unnamed user'}</span>
-                          {member.__isOwner && <Badge variant="secondary">Owner</Badge>}
-                          {member.id === user?.uid && <span className="text-xs text-muted-foreground">(You)</span>}
-                          {member.role && !member.__isOwner && <Badge variant="outline">{member.role}</Badge>}
-                        </p>
-                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                        <div className="min-w-0">
+                          <p className="font-medium truncate flex items-center gap-2">
+                            <span>{member.name ?? 'Unnamed user'}</span>
+                            {member.__isOwner && <Badge variant="secondary">Owner</Badge>}
+                            {member.id === user?.uid && <span className="text-xs text-muted-foreground">(You)</span>}
+                            {member.role && !member.__isOwner && <Badge variant="outline">{member.role}</Badge>}
+                          </p>
+                          <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      {isCreator && member.id !== user?.uid ? (
-                        <Button type="button" size="sm" variant="ghost" onClick={() => confirmRemove(member)} aria-label={`Remove ${member.name ?? 'member'}`}>Remove</Button>
-                      ) : null}
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                      <div className="flex items-center gap-2">
+                        {isCreator && member.id !== user?.uid ? (
+                          <Button type="button" size="sm" variant="ghost" onClick={() => confirmRemove(member)} aria-label={`Remove ${member.name ?? 'member'}`}>Remove</Button>
+                        ) : null}
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Modals remain clickable */}
+      <div className="pointer-events-auto">
+        {canManage && (
+          <InviteModal
+            familyId={family.id}
+            familyName={family.name}
+            open={isInviteOpen}
+            onOpenChange={setInviteOpen}
+          />
+        )}
+
+        {canManage && (
+          <ManageFamilyDialog family={family} open={manageOpen} onOpenChange={setManageOpen} />
+        )}
+
+        <Dialog open={removeModalOpen} onOpenChange={(v) => { if (!v) setRemoveTarget(null); setRemoveModalOpen(v) }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Remove member</DialogTitle>
+            </DialogHeader>
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Remove <strong>{removeTarget?.name ?? 'this member'}</strong> from the family? This action cannot be undone.
+              </p>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <DialogFooter>
+              <div className="flex gap-2 w-full justify-end">
+                <Button type="button" variant="outline" onClick={() => { setRemoveModalOpen(false); setRemoveTarget(null) }}>Cancel</Button>
+                <Button type="button" variant="destructive" onClick={handleRemoveMember} disabled={busy}>
+                  {busy ? 'Removing…' : 'Remove'}
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-      {/* Invite modal (owner/admin) */}
-      {canManage && (
-        <InviteModal
-          familyId={family.id}
-          familyName={family.name}
-          open={isInviteOpen}
-          onOpenChange={setInviteOpen}
-        />
-      )}
-
-      {/* Manage dialog (owner/admin) */}
-      {canManage && (
-        <ManageFamilyDialog family={family} open={manageOpen} onOpenChange={setManageOpen} />
-      )}
-
-      {/* Remove member confirmation modal */}
-      <Dialog open={removeModalOpen} onOpenChange={(v) => { if (!v) setRemoveTarget(null); setRemoveModalOpen(v) }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Remove member</DialogTitle>
-          </DialogHeader>
-          <div>
-            <p className="text-sm text-muted-foreground">
-              Remove <strong>{removeTarget?.name ?? 'this member'}</strong> from the family? This action cannot be undone.
-            </p>
-          </div>
-          <DialogFooter>
-            <div className="flex gap-2 w-full justify-end">
-              <Button type="button" variant="outline" onClick={() => { setRemoveModalOpen(false); setRemoveTarget(null) }}>Cancel</Button>
-              <Button type="button" variant="destructive" onClick={handleRemoveMember} disabled={busy}>
-                {busy ? 'Removing…' : 'Remove'}
-              </Button>
+        <Dialog open={leaveModalOpen} onOpenChange={setLeaveModalOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Leave family</DialogTitle>
+            </DialogHeader>
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to leave <strong>{family.name}</strong>? You will lose access to this family's features.
+              </p>
             </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Leave family confirmation modal */}
-      <Dialog open={leaveModalOpen} onOpenChange={setLeaveModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Leave family</DialogTitle>
-          </DialogHeader>
-          <div>
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to leave <strong>{family.name}</strong>? You will lose access to this family's features.
-            </p>
-          </div>
-          <DialogFooter>
-            <div className="flex gap-2 w-full justify-end">
-              <Button type="button" variant="outline" onClick={() => setLeaveModalOpen(false)}>Cancel</Button>
-              <Button type="button" variant="destructive" onClick={handleLeaveFamily} disabled={busy}>
-                {busy ? 'Leaving…' : 'Leave family'}
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            <DialogFooter>
+              <div className="flex gap-2 w-full justify-end">
+                <Button type="button" variant="outline" onClick={() => setLeaveModalOpen(false)}>Cancel</Button>
+                <Button type="button" variant="destructive" onClick={handleLeaveFamily} disabled={busy}>
+                  {busy ? 'Leaving…' : 'Leave family'}
+                </Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </>
   )
+
 }
