@@ -42,21 +42,25 @@ export default function FamilyJoinPageContent() {
       const maybe = new URL(val, typeof window !== 'undefined' ? window.location.origin : undefined)
       const p = maybe.searchParams.get('invite')
       if (p) return p
-    } catch {}
+    } catch { }
     return val.trim()
   }
 
   const invite = extractFamilyId(rawInvite)
 
   useEffect(() => {
-    if (!user && !loading && invite) {
+    // Wait until we know auth status
+    if (loading) return
+
+    if (!user && invite) {
       const currentPath = `/family/join?invite=${invite}`
       router.replace(`/login?redirect=${encodeURIComponent(currentPath)}`)
     }
   }, [user, loading, invite, router])
 
   useEffect(() => {
-    if (!invite || !user || loading) return
+    if (!invite || loading) return
+    if (!user) return
     let mounted = true
     const fetchFamily = async () => {
       setFetchingFamily(true)
@@ -149,7 +153,7 @@ export default function FamilyJoinPageContent() {
 
       try {
         localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
-      } catch {}
+      } catch { }
 
       toast.success(`You joined the family: ${family.name ?? family.id}`)
       router.replace(`/onboarding?family=${family.id}`)
@@ -171,7 +175,7 @@ export default function FamilyJoinPageContent() {
     )
   }
 
-  if (loading || !user || fetchingFamily) {
+  if (loading || fetchingFamily) {
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
         <p className="text-muted-foreground">Loading…</p>
