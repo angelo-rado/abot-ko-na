@@ -50,7 +50,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const auth = getAuth()
   const userId = auth.currentUser?.uid ?? null
 
-  const [viewportWidth, setViewportWidth] = useState<number | null>(null)
+  // initialize width immediately if possible to avoid initial "null" render
+  const initialWidth = typeof window !== 'undefined' ? window.innerWidth : 375
+  const [viewportWidth, setViewportWidth] = useState<number>(initialWidth)
 
   useEffect(() => {
     console.log('Notification.permission:', Notification.permission)
@@ -141,7 +143,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const currentIndexFromPath = findNavIndexByPath(pathname)
   const safeIndex = currentIndexFromPath === -1 ? 0 : currentIndexFromPath
 
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null)
+  // initialize currentIndex synchronously to avoid "null" rendering and infinite spinner
+  const [currentIndex, setCurrentIndex] = useState<number>(safeIndex)
   const isSyncingFromPath = useRef(false)
 
   useEffect(() => {
@@ -149,10 +152,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       isSyncingFromPath.current = true
       setCurrentIndex(safeIndex)
     }
-  }, [safeIndex])
+  }, [safeIndex, currentIndex])
 
   useEffect(() => {
-    if (currentIndex === null) return
     if (isSyncingFromPath.current) {
       isSyncingFromPath.current = false
       return
@@ -166,14 +168,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const isDragging = useRef(false)
 
   useEffect(() => {
-    if (!isDragging.current && viewportWidth !== null && currentIndex !== null) {
+    if (!isDragging.current && viewportWidth && typeof currentIndex === 'number') {
       animate(x, -currentIndex * viewportWidth, {
         type: 'spring',
         stiffness: 420,
         damping: 40,
       })
     }
-  }, [currentIndex, viewportWidth, x])
+    // keep x in sync if viewport width changes (e.g. rotation)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIndex, viewportWidth])
 
   const touchStartX = useRef<number | null>(null)
   const touchStartTime = useRef<number>(0)
@@ -206,7 +210,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   function onTouchStart(e: React.TouchEvent) {
-    if (viewportWidth === null) return
+    if (!viewportWidth) return
     isDragging.current = true
     touchStartX.current = e.touches[0].clientX
     lastTouchX.current = e.touches[0].clientX
@@ -218,7 +222,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   function onTouchMove(e: React.TouchEvent) {
-    if (!isDragging.current || viewportWidth === null || touchStartX.current === null) return
+    if (!isDragging.current || !viewportWidth || touchStartX.current === null) return
     const currentX = e.touches[0].clientX
     const now = e.timeStamp
     const dx = currentX - lastTouchX.current!
@@ -238,7 +242,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   function onTouchEnd(e: React.TouchEvent) {
-    if (viewportWidth === null) return
+    if (!viewportWidth) return
     isDragging.current = false
     stopRafLoop()
 
@@ -246,7 +250,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const vel = velocityRef.current
     const thresholdVelocity = 450
     const thresholdDistance = viewportWidth ? viewportWidth * 0.22 : 72
-    let newIndex = currentIndex ?? 0
+    let newIndex = currentIndex
     const maxIndex = navItems.length - 1
 
     const rawIndex = -offsetX / viewportWidth
@@ -259,12 +263,12 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         newIndex = Math.max(newIndex - 1, 0)
       }
     } else {
-      const distanceFromIndex = rawIndex - (currentIndex ?? 0)
+      const distanceFromIndex = rawIndex - currentIndex
       if (Math.abs(distanceFromIndex) > 0.15) {
-        if (distanceFromIndex > 0 && (currentIndex ?? 0) < maxIndex) {
-          newIndex = Math.min((currentIndex ?? 0) + 1, maxIndex)
-        } else if (distanceFromIndex < 0 && (currentIndex ?? 0) > 0) {
-          newIndex = Math.max((currentIndex ?? 0) - 1, 0)
+        if (distanceFromIndex > 0 && currentIndex < maxIndex) {
+          newIndex = Math.min(currentIndex + 1, maxIndex)
+        } else if (distanceFromIndex < 0 && currentIndex > 0) {
+          newIndex = Math.max(currentIndex - 1, 0)
         } else {
           newIndex = rounded
         }
@@ -283,31 +287,25 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     })
   }
 
+  // keep x aligned immediately when viewportWidth or currentIndex changes
   useEffect(() => {
-    if (currentIndex !== null && viewportWidth !== null) {
+    if (typeof currentIndex === 'number' && viewportWidth) {
       x.set(-currentIndex * viewportWidth)
     }
-  }, [viewportWidth])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewportWidth, currentIndex])
 
-  // preload iframes for all pages so peek shows real content (and interactive)
-  const iframeRefs = useRef<Record<number, HTMLIFrameElement | null>>({})
-  const [iframesReady, setIframesReady] = useState<Record<number, boolean>>({})
-
+  // lightweight prefetch (network + route) to make navigations faster without rendering other pages
   useEffect(() => {
-    // initialize currentIndex
-    if (currentIndex === null) setCurrentIndex(safeIndex)
-
-    // set up listeners for iframe load
-    navItems.forEach((item, idx) => {
-      const onLoad = () => {
-        setIframesReady(prev => ({ ...prev, [idx]: true }))
-      }
-      // if iframe already exists, attach handler
-      const el = iframeRefs.current[idx]
-      if (el) {
-        el.removeEventListener('load', onLoad)
-        el.addEventListener('load', onLoad)
-      }
+    navItems.forEach(item => {
+      try {
+        // warm network/cache
+        fetch(item.href, { credentials: 'include' }).catch(() => {})
+        // try router prefetch if available
+        if ((router as any)?.prefetch) {
+          try { (router as any).prefetch(item.href).catch(() => {}) } catch { }
+        }
+      } catch {}
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -317,12 +315,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     const idx = findNavIndexByPath(pathname)
     if (idx !== -1 && idx !== currentIndex) {
       setCurrentIndex(idx)
-      x.set(-idx * (viewportWidth ?? 0))
+      x.set(-idx * viewportWidth)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname])
-
-  if (viewportWidth === null || currentIndex === null) return null
 
   return (
     <div className="flex flex-col min-h-screen overflow-hidden select-none" style={{ height: '100vh' }}>
@@ -371,20 +367,10 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             {i === currentIndex ? (
               <div style={{ height: '100%' }}>{children}</div>
             ) : (
-              <iframe
-                ref={el => { iframeRefs.current[i] = el }}
-                src={href}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  border: 'none',
-                  display: 'block',
-                  background: 'transparent',
-                }}
-                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
-                loading="eager"
-                title={`nav-iframe-${i}`}
-              />
+              // lightweight placeholder for adjacent pages (keeps DOM small & avoids nested app renders)
+              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
+                <div style={{ width: '60%', height: '60%', borderRadius: 12, background: 'rgba(0,0,0,0.04)' }} />
+              </div>
             )}
           </div>
         ))}
