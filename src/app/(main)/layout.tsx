@@ -1,12 +1,11 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
-
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 
 const navItems = [
@@ -18,24 +17,12 @@ const navItems = [
 
 async function sendTokenToBackend(token: string, userId: string) {
   try {
-    const response = await fetch('/api/save-fcm-token', {
+    await fetch('/api/save-fcm-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, userId }),
     })
-    if (!response.ok) {
-      console.error('Failed to save token')
-    } else {
-      console.log('Token saved')
-    }
-  } catch (error) {
-    console.error('Error sending token:', error)
-  }
-}
-
-function isIOS() {
-  if (typeof navigator === 'undefined') return false
-  return /iP(ad|hone|od)/i.test(navigator.userAgent) && !('MSStream' in window)
+  } catch {}
 }
 
 function isIOSWebKit() {
@@ -48,145 +35,55 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const router = useRouter()
   const pathname = usePathname()
   const auth = getAuth()
-  const userId = auth.currentUser?.uid ?? null
 
-  // initialize width immediately if possible to avoid initial "null" render
-  const initialWidth = typeof window !== 'undefined' ? window.innerWidth : 375
-  const [viewportWidth, setViewportWidth] = useState<number>(initialWidth)
-
-  useEffect(() => {
-    console.log('Notification.permission:', Notification.permission)
-  }, [])
-
-  useEffect(() => {
-    const auth = getAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (!user) {
-        console.log('User signed out');
-        return;
-      }
-
-      console.log('User signed in:', user.uid);
-      if (isIOSWebKit()) {
-        try {
-          const evt = new CustomEvent('abot-safari-fallback', { detail: { uid: user.uid } })
-          window.dispatchEvent(evt)
-        } catch (e) {}
-      } else {
-        setupPushNotificationsForUser(user.uid).catch((err) => {
-          console.error('Push setup failed:', err);
-        });
-      }
-    });
-
-    async function setupPushNotificationsForUser(uid: string) {
-      if (typeof window === 'undefined') return;
-      if (!('serviceWorker' in navigator)) {
-        console.log('Service Worker not supported');
-        return;
-      }
-
-      try {
-        console.log('[Push Setup] Step 1: Registering SW...');
-        const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-        console.log('[Push Setup] Step 1 Success:', registration.scope);
-
-        console.log('[Push Setup] Step 2: Waiting for SW ready...');
-        await navigator.serviceWorker.ready;
-        console.log('[Push Setup] Step 2 Success: SW ready');
-
-        console.log('[Push Setup] Step 3: Getting Messaging instance...');
-        const messaging = getFirebaseMessaging();
-        console.log('[Push Setup] Messaging instance:', messaging);
-
-        console.log('[Push Setup] Step 4: Requesting Notification permission...');
-        const permission = await Notification.requestPermission();
-        console.log('[Push Setup] Permission result:', permission);
-        if (permission !== 'granted') return;
-
-        const vapidKey = 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
-        console.log('[Push Setup] Step 5: Getting FCM token...');
-        const token = await getToken(messaging!, {
-          vapidKey
-        });
-        console.log('[Push Setup] Token result:', token);
-
-        if (token) {
-          console.log('[Push Setup] Step 6: Sending token to backend...');
-          await sendTokenToBackend(token, uid);
-          console.log('[Push Setup] Step 6 Success: Token sent');
-        } else {
-          console.warn('[Push Setup] No FCM token retrieved');
-        }
-      } catch (error) {
-        console.error('[Push Setup] FAILED:', error);
-      }
-    }
-
-    return () => unsubscribe();
-  }, []);
-
-
-  useEffect(() => {
-    function updateWidth() {
-      setViewportWidth(window.innerWidth)
-    }
-    updateWidth()
-    window.addEventListener('resize', updateWidth)
-    return () => window.removeEventListener('resize', updateWidth)
-  }, [])
-
-  function findNavIndexByPath(path: string) {
-    return navItems.findIndex((item) => path === item.href || path.startsWith(item.href + '/'))
-  }
-  const currentIndexFromPath = findNavIndexByPath(pathname)
-  const safeIndex = currentIndexFromPath === -1 ? 0 : currentIndexFromPath
-
-  // initialize currentIndex synchronously to avoid "null" rendering and infinite spinner
-  const [currentIndex, setCurrentIndex] = useState<number>(safeIndex)
-  const isSyncingFromPath = useRef(false)
-
-  useEffect(() => {
-    if (safeIndex !== currentIndex) {
-      isSyncingFromPath.current = true
-      setCurrentIndex(safeIndex)
-    }
-  }, [safeIndex, currentIndex])
-
-  useEffect(() => {
-    if (isSyncingFromPath.current) {
-      isSyncingFromPath.current = false
-      return
-    }
-    if (currentIndex !== safeIndex) {
-      router.push(navItems[currentIndex].href)
-    }
-  }, [currentIndex, safeIndex, router])
-
+  const viewportWidth = useViewportWidth()
   const x = useMotionValue(0)
   const isDragging = useRef(false)
-
-  useEffect(() => {
-    if (!isDragging.current && viewportWidth && typeof currentIndex === 'number') {
-      animate(x, -currentIndex * viewportWidth, {
-        type: 'spring',
-        stiffness: 420,
-        damping: 40,
-      })
-    }
-    // keep x in sync if viewport width changes (e.g. rotation)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex, viewportWidth])
-
   const touchStartX = useRef<number | null>(null)
-  const touchStartTime = useRef<number>(0)
   const lastTouchX = useRef<number | null>(null)
   const lastTouchTime = useRef<number>(0)
   const velocityRef = useRef(0)
   const baseOffsetRef = useRef(0)
   const animationFrame = useRef<number | null>(null)
   const rafRunning = useRef(false)
+
+  const currentIndex = useMemo(() => {
+    const idx = navItems.findIndex(
+      (item) => pathname === item.href || pathname.startsWith(item.href + '/')
+    )
+    return idx === -1 ? 0 : idx
+  }, [pathname])
+
+  useEffect(() => {
+    x.set(-currentIndex * viewportWidth)
+  }, [currentIndex, viewportWidth, x])
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (!user) return
+      if (isIOSWebKit()) {
+        window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: user.uid } }))
+      } else {
+        setupPushNotifications(user.uid)
+      }
+    })
+    return () => unsub()
+  }, [auth])
+
+  async function setupPushNotifications(uid: string) {
+    if (!('serviceWorker' in navigator)) return
+    try {
+      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      await navigator.serviceWorker.ready
+      const messaging = getFirebaseMessaging()
+      const permission = await Notification.requestPermission()
+      if (permission !== 'granted') return
+      const vapidKey =
+        'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
+      const token = await getToken(messaging!, { vapidKey })
+      if (token) await sendTokenToBackend(token, uid)
+    } catch {}
+  }
 
   function setXSmooth(value: number) {
     if (animationFrame.current !== null) cancelAnimationFrame(animationFrame.current)
@@ -199,7 +96,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     if (rafRunning.current) return
     rafRunning.current = true
     const loop = () => {
-      rafRunning.current && (animationFrame.current = requestAnimationFrame(loop))
+      if (rafRunning.current) animationFrame.current = requestAnimationFrame(loop)
     }
     loop()
   }
@@ -210,11 +107,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   function onTouchStart(e: React.TouchEvent) {
-    if (!viewportWidth) return
     isDragging.current = true
     touchStartX.current = e.touches[0].clientX
     lastTouchX.current = e.touches[0].clientX
-    touchStartTime.current = e.timeStamp
     lastTouchTime.current = e.timeStamp
     baseOffsetRef.current = x.get()
     velocityRef.current = 0
@@ -222,16 +117,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   }
 
   function onTouchMove(e: React.TouchEvent) {
-    if (!isDragging.current || !viewportWidth || touchStartX.current === null) return
+    if (!isDragging.current || touchStartX.current === null) return
     const currentX = e.touches[0].clientX
     const now = e.timeStamp
     const dx = currentX - lastTouchX.current!
     const dt = Math.max(1, now - lastTouchTime.current)
-    const instVel = dx / dt * 1000
+    const instVel = (dx / dt) * 1000
     velocityRef.current = velocityRef.current * 0.2 + instVel * 0.8
     lastTouchX.current = currentX
     lastTouchTime.current = now
-
     const desired = baseOffsetRef.current + (currentX - touchStartX.current)
     const max = 50
     const min = -viewportWidth * (navItems.length - 1) - 50
@@ -241,84 +135,32 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     setXSmooth(newOffset)
   }
 
-  function onTouchEnd(e: React.TouchEvent) {
-    if (!viewportWidth) return
+  function onTouchEnd() {
     isDragging.current = false
     stopRafLoop()
-
     const offsetX = x.get()
     const vel = velocityRef.current
     const thresholdVelocity = 450
-    const thresholdDistance = viewportWidth ? viewportWidth * 0.22 : 72
-    let newIndex = currentIndex
+    const thresholdDistance = viewportWidth * 0.22
     const maxIndex = navItems.length - 1
-
     const rawIndex = -offsetX / viewportWidth
     const rounded = Math.round(rawIndex)
-
+    let newIndex = currentIndex
     if (Math.abs(vel) > thresholdVelocity) {
-      if (vel < 0 && newIndex < maxIndex) {
-        newIndex = Math.min(newIndex + 1, maxIndex)
-      } else if (vel > 0 && newIndex > 0) {
-        newIndex = Math.max(newIndex - 1, 0)
-      }
+      if (vel < 0 && currentIndex < maxIndex) newIndex = currentIndex + 1
+      if (vel > 0 && currentIndex > 0) newIndex = currentIndex - 1
     } else {
       const distanceFromIndex = rawIndex - currentIndex
       if (Math.abs(distanceFromIndex) > 0.15) {
-        if (distanceFromIndex > 0 && currentIndex < maxIndex) {
-          newIndex = Math.min(currentIndex + 1, maxIndex)
-        } else if (distanceFromIndex < 0 && currentIndex > 0) {
-          newIndex = Math.max(currentIndex - 1, 0)
-        } else {
-          newIndex = rounded
-        }
+        if (distanceFromIndex > 0 && currentIndex < maxIndex) newIndex = currentIndex + 1
+        else if (distanceFromIndex < 0 && currentIndex > 0) newIndex = currentIndex - 1
+        else newIndex = rounded
       } else {
         newIndex = rounded
       }
     }
-
-    setCurrentIndex(newIndex)
-
-    animate(x, -newIndex * viewportWidth, {
-      type: 'spring',
-      stiffness: 700,
-      damping: 48,
-      mass: 1,
-    })
+    router.push(navItems[newIndex].href)
   }
-
-  // keep x aligned immediately when viewportWidth or currentIndex changes
-  useEffect(() => {
-    if (typeof currentIndex === 'number' && viewportWidth) {
-      x.set(-currentIndex * viewportWidth)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewportWidth, currentIndex])
-
-  // lightweight prefetch (network + route) to make navigations faster without rendering other pages
-  useEffect(() => {
-    navItems.forEach(item => {
-      try {
-        // warm network/cache
-        fetch(item.href, { credentials: 'include' }).catch(() => {})
-        // try router prefetch if available
-        if ((router as any)?.prefetch) {
-          try { (router as any).prefetch(item.href).catch(() => {}) } catch { }
-        }
-      } catch {}
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // on route change, ensure currentIndex synced
-  useEffect(() => {
-    const idx = findNavIndexByPath(pathname)
-    if (idx !== -1 && idx !== currentIndex) {
-      setCurrentIndex(idx)
-      x.set(-idx * viewportWidth)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname])
 
   return (
     <div className="flex flex-col min-h-screen overflow-hidden select-none" style={{ height: '100vh' }}>
@@ -326,16 +168,16 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         {navItems.map(({ label, href, Icon }, i) => (
           <button
             key={href}
-            onClick={() => setCurrentIndex(i)}
-            className={`flex flex-col items-center text-xs p-2 ${i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
-              }`}
+            onClick={() => router.push(href)}
+            className={`flex flex-col items-center text-xs p-2 ${
+              i === currentIndex ? 'text-blue-600 font-semibold' : 'text-gray-600'
+            }`}
           >
             <Icon className="w-5 h-5 mb-1" />
             {label}
           </button>
         ))}
       </nav>
-
       <motion.div
         className="relative flex flex-row pt-16 overflow-hidden"
         style={{
@@ -343,7 +185,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           x,
           height: 'calc(100vh - 4rem)',
           touchAction: 'pan-y',
-          WebkitOverflowScrolling: 'touch'
+          WebkitOverflowScrolling: 'touch',
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -367,8 +209,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
             {i === currentIndex ? (
               <div style={{ height: '100%' }}>{children}</div>
             ) : (
-              // lightweight placeholder for adjacent pages (keeps DOM small & avoids nested app renders)
-              <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent' }}>
+              <div
+                style={{
+                  height: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'transparent',
+                }}
+              >
                 <div style={{ width: '60%', height: '60%', borderRadius: 12, background: 'rgba(0,0,0,0.04)' }} />
               </div>
             )}
@@ -377,4 +226,15 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
       </motion.div>
     </div>
   )
+}
+
+function useViewportWidth() {
+  const [width, setWidth] = useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 0))
+  useEffect(() => {
+    const update = () => setWidth(window.innerWidth)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  return width
 }
