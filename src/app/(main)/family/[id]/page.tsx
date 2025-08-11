@@ -373,10 +373,7 @@ export default function FamilyDetailPage() {
   return (
     <>
       <div
-        className={cn(
-          "max-w-2xl mx-auto p-4 space-y-6",
-          (isInviteOpen || manageOpen || removeModalOpen || leaveModalOpen) && "pointer-events-none"
-        )}
+          className="max-w-2xl mx-auto p-4 space-y-6"
       >
         {/* Header */}
         <header className="sticky top-0 z-10 backdrop-blur-sm bg-background/70 pb-2 border-b">
