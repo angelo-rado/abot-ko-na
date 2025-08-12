@@ -23,6 +23,7 @@ const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 export default function FamilyJoinPageContent() {
   const searchParams = useSearchParams()
   const rawInvite = searchParams.get('invite')
+  const invite = rawInvite?.trim() ?? ''
   const { user, loading } = useAuth()
   const router = useRouter()
   const isOnline = useOnlineStatus()
@@ -31,18 +32,6 @@ export default function FamilyJoinPageContent() {
   const [fetchingFamily, setFetchingFamily] = useState<boolean>(false)
   const [joining, setJoining] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
-
-  const extractFamilyId = (val: string | null) => {
-    if (!val) return ''
-    try {
-      const maybe = new URL(val, typeof window !== 'undefined' ? window.location.origin : undefined)
-      const p = maybe.searchParams.get('invite')
-      if (p) return p
-    } catch {}
-    return val.trim()
-  }
-
-  const invite = extractFamilyId(rawInvite)
 
   // Redirect to login if user not logged in but invite present
   useEffect(() => {
