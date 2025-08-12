@@ -1,11 +1,10 @@
-// app/layout.tsx
 import './globals.css'
 import { Inter } from 'next/font/google'
 import { cn } from '@/lib/utils'
 import type { Metadata } from 'next'
+import Providers from './providers'
 
-
-import Providers from './providers'const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Abot Ko Na',
@@ -22,7 +21,6 @@ export const metadata: Metadata = {
     shortcut: '/favicon.ico',
   },
   manifest: '/site.webmanifest', // PWA manifest
-
 }
 
 export default function RootLayout({
@@ -38,5 +36,3 @@ export default function RootLayout({
     </html>
   )
 }
-
-
