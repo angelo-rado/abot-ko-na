@@ -41,7 +41,6 @@ type Props = {
    ---------------------------- */
 const userNameCache: Record<string, string> = {}
 
-
 function useUserName(userId?: string) {
   const [name, setName] = useState<string>('')
 
@@ -133,28 +132,20 @@ function friendlyDeliveredLabel(raw: any) {
    Helpers for delivery meta
    ---------------------------- */
 function deliveryTypeLabel(d: any) {
-  // return 'Multiple' or 'Single'
   const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
   return isSingle ? 'Single' : 'Multiple'
 }
 
 function deliveryCodTotal(d: any, items: any[]) {
-  // For single deliveries prefer d.codAmount
-  console.log('Type', d.type)
   const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
   if (isSingle) {
     if (typeof d.codAmount === 'number') return d.codAmount
     return null
   }
-
-  // For multiple: sum item prices if available
-  console.log('items', items)
   if (items && items.length > 0) {
     const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
     return sum
   }
-
-  // Fallback to delivery-level codAmount if set
   if (typeof d.codAmount === 'number') return d.codAmount
   return null
 }
@@ -168,9 +159,6 @@ export default function HomeDeliveriesToday({
   familiesLoading,
   showAllUsers = false,
 }: Props) {
-  // console.log for debugging
-  console.log('[HomeDeliveriesToday] mounted', { familyId, presenceLoading, familiesLoading, showAllUsers })
-
   const [deliveries, setDeliveries] = useState<any[]>([]) // pending + in_transit
   const [deliveryItemsMap, setDeliveryItemsMap] = useState<Map<string, any[]>>(new Map())
   const [deliveredToday, setDeliveredToday] = useState<any[]>([])
@@ -212,18 +200,15 @@ export default function HomeDeliveriesToday({
 
     if (!familyId) {
       setLoading(false)
-      console.log('[HomeDeliveriesToday] no familyId — exiting effect early')
       return
     }
 
     const uid = auth.currentUser?.uid ?? null
     if (!showAllUsers && !uid) {
-      // not authenticated and we are requested to show only current user's deliveries:
       setDeliveries([])
       setDeliveryItemsMap(new Map())
       setDeliveredToday([])
       setLoading(false)
-      console.log('[HomeDeliveriesToday] no uid and showAllUsers=false — exiting effect early')
       return
     }
 
@@ -233,7 +218,6 @@ export default function HomeDeliveriesToday({
 
     const deliveriesCol = collection(firestore, 'families', familyId, 'deliveries')
 
-    // base constraints for pending/in_transit deliveries
     const baseConstraints: any[] = [
       where('expectedDate', '>=', startTs),
       where('expectedDate', '<', endTs),
@@ -246,80 +230,47 @@ export default function HomeDeliveriesToday({
 
     const deliveriesQ = query(deliveriesCol, ...baseConstraints, orderBy('expectedDate', 'asc'))
 
-      // diagnostic fetch (non-blocking)
-      ; (async () => {
-        try {
-          console.log('[HomeDeliveriesToday] diagnostic getDocs: fetching deliveries once (pending/in_transit)')
-          const snap: QuerySnapshot<DocumentData> = await getDocs(deliveriesQ)
-          const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-          console.log('[HomeDeliveriesToday] diagnostic getDocs result', { count: docs.length, ids: docs.map(x => x.id), docs })
-        } catch (err) {
-          console.error('[HomeDeliveriesToday] diagnostic getDocs error', err)
-        }
-      })()
-
-    // subscribe to pending/in_transit deliveries
     const deliveriesUnsub = onSnapshot(
       deliveriesQ,
       (snap) => {
         const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-        console.log('[HomeDeliveriesToday] deliveries snapshot', { count: docs.length, ids: docs.map((x) => x.id) })
         setDeliveries(docs)
         setLoading(false)
 
-        // tear down item listeners for deliveries we no longer track
         const keepIds = new Set(docs.map(d => d.id))
 
-        // remove item listeners that are not in keepIds
         Object.keys(itemUnsubsRef.current).forEach((delId) => {
           if (!keepIds.has(delId)) {
-            try { itemUnsubsRef.current[delId]() } catch (e) { /* ignore */ }
+            try { itemUnsubsRef.current[delId]() } catch {}
             delete itemUnsubsRef.current[delId]
-            console.log('[HomeDeliveriesToday] removed item listener for delivery', delId)
           }
         })
 
-        // attach listeners for current deliveries (subscribe to full items and filter client-side)
         docs.forEach((d) => {
-          // Determine single vs grouped using delivery doc's fields first
           const isSingleByDoc = d.type === 'single'
-          //const isSingleByDoc = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
-
-          // For single deliveries we do not subscribe to items (UI will show delivery-level fields)
           if (isSingleByDoc) {
-            // ensure there's no existing items listener
             if (itemUnsubsRef.current[d.id]) {
-              try { itemUnsubsRef.current[d.id]() } catch { /* ignore */ }
+              try { itemUnsubsRef.current[d.id]() } catch {}
               delete itemUnsubsRef.current[d.id]
             }
-            // set empty array so UI treats it as single
             setDeliveryItemsMap((prev) => {
               const copy = new Map(prev)
               copy.set(d.id, [])
               return copy
             })
-            console.log('[HomeDeliveriesToday] treating delivery as single (no items subscription)', d.id)
             return
           }
 
-          if (itemUnsubsRef.current[d.id]) {
-            // already listening (grouped)
-            return
-          }
+          if (itemUnsubsRef.current[d.id]) return
 
           const itemsCol = collection(firestore, 'families', familyId, 'deliveries', d.id, 'items')
-          const allItemsQ = query(itemsCol) // subscribe to all items then filter client-side
+          const allItemsQ = query(itemsCol)
 
           const itemsUnsub = onSnapshot(
             allItemsQ,
             (itemsSnap) => {
               const rawRows = itemsSnap.docs.map((it) => ({ id: it.id, ...(it.data() as any) }))
-              console.log('[HomeDeliveriesToday] raw items for delivery', d.id, {
-                count: rawRows.length,
-                sample: rawRows.slice(0, 10).map(r => ({ id: r.id, name: r.name, expectedDate: r.expectedDate, status: r.status })),
-              })
 
-              // client-side filtering: include items with no/invalid expectedDate (don't silently hide)
               const filtered = rawRows.filter((it) => {
                 if (!['pending', 'in_transit'].includes(it.status)) return false
 
@@ -333,28 +284,19 @@ export default function HomeDeliveriesToday({
                     if (!Number.isNaN(parsed)) millis = parsed
                   }
 
-                  // if expectedDate present & parseable, keep only if in range
                   if (millis) {
                     if (millis < startTs.toMillis() || millis >= endTs.toMillis()) return false
                   } else {
-                    // expectedDate present but unparseable -> include (we changed behavior to include)
                     return true
                   }
-                } else {
-                  // no expectedDate -> include
                 }
                 return true
               })
 
-              // sort filtered: expectedDate then createdAt
               filtered.sort((a, b) => {
                 const toMillis = (x: any) => {
                   if (x.expectedDate?.toDate) return x.expectedDate.toDate().getTime()
                   if (typeof x.expectedDate?.seconds === 'number') return x.expectedDate.seconds * 1000
-                  if (typeof x.expectedDate === 'string') {
-                    const p = Date.parse(x.expectedDate)
-                    if (!Number.isNaN(p)) return p
-                  }
                   if (x.createdAt?.toDate) return x.createdAt.toDate().getTime()
                   if (typeof x.createdAt?.seconds === 'number') return x.createdAt.seconds * 1000
                   return 0
@@ -367,8 +309,6 @@ export default function HomeDeliveriesToday({
                 copy.set(d.id, filtered)
                 return copy
               })
-
-              console.log('[HomeDeliveriesToday] filtered items for delivery', d.id, { count: filtered.length, ids: filtered.map(f => f.id) })
             },
             (err) => {
               console.error('[HomeDeliveriesToday] (items) snapshot error', d.id, err)
@@ -376,7 +316,6 @@ export default function HomeDeliveriesToday({
           )
 
           itemUnsubsRef.current[d.id] = itemsUnsub
-          console.log('[HomeDeliveriesToday] attached items listener for delivery', d.id)
         })
       },
       (err) => {
@@ -386,9 +325,8 @@ export default function HomeDeliveriesToday({
     )
 
     unsubsRef.current.push(deliveriesUnsub)
-    console.log('[HomeDeliveriesToday] attached deliveries listener for family', familyId)
 
-    // --- delivered today listener (separate) ---
+    // delivered today
     try {
       const deliveredQ = query(
         deliveriesCol,
@@ -401,33 +339,26 @@ export default function HomeDeliveriesToday({
       const dUnsub = onSnapshot(
         deliveredQ,
         (snap) => {
-          // ✅ Wrap async logic in an inner function
           const loadItems = async () => {
             const enriched = await Promise.all(
-              snap.docs.map(async (doc) => {
-                const data = doc.data()
+              snap.docs.map(async (docSnap) => {
+                const data = docSnap.data()
                 const itemsSnap = await getDocs(
-                  collection(firestore, 'families', familyId, 'deliveries', doc.id, 'items')
+                  collection(firestore, 'families', familyId, 'deliveries', docSnap.id, 'items')
                 )
                 const items = itemsSnap.docs.map((itemDoc) => ({
                   id: itemDoc.id,
                   ...(itemDoc.data() as any),
                 }))
                 return {
-                  id: doc.id,
+                  id: docSnap.id,
                   ...(data as any),
                   items,
                 }
               })
             )
             setDeliveredToday(enriched)
-            console.log('[HomeDeliveriesToday] deliveredToday snapshot', {
-              count: enriched.length,
-              ids: enriched.map((x) => x.id),
-            })
           }
-
-          // ✅ Call the async function
           loadItems().catch((err) => {
             console.error('[HomeDeliveriesToday] failed to load items', err)
           })
@@ -438,21 +369,19 @@ export default function HomeDeliveriesToday({
       )
 
       deliveredUnsubRef.current = dUnsub
-      console.log('[HomeDeliveriesToday] attached deliveredToday listener for family', familyId)
     } catch (err) {
       console.error('[HomeDeliveriesToday] failed to attach deliveredToday listener', err)
     }
 
     return () => {
-      console.log('[HomeDeliveriesToday] cleaning up listeners')
       unsubsRef.current.forEach((u) => u && u())
       unsubsRef.current = []
       if (deliveredUnsubRef.current) {
-        try { deliveredUnsubRef.current() } catch (e) { }
+        try { deliveredUnsubRef.current() } catch {}
         deliveredUnsubRef.current = null
       }
       Object.keys(itemUnsubsRef.current).forEach((k) => {
-        try { itemUnsubsRef.current[k]() } catch (e) { }
+        try { itemUnsubsRef.current[k]() } catch {}
       })
       itemUnsubsRef.current = {}
     }
@@ -492,11 +421,8 @@ export default function HomeDeliveriesToday({
     }
   }
 
-
-
   // Derived metrics
   const totalDeliveries = deliveries.length
-  // totalItems & totals kept for internal totals, but we don't show item counts in the summary as requested
   const totalItems = Array.from(deliveryItemsMap.values()).reduce((s, arr) => s + arr.length, 0)
   const itemsTotalPrice = Array.from(deliveryItemsMap.values()).flat().reduce((s, it) => s + (typeof it.price === 'number' ? it.price : 0), 0)
 
@@ -509,8 +435,8 @@ export default function HomeDeliveriesToday({
   if (loading) {
     return (
       <>
-        <div className="h-4 w-full mb-2 bg-gray-100 animate-pulse rounded" />
-        <div className="h-4 w-5/6 bg-gray-100 animate-pulse rounded" />
+        <div className="h-4 w-full mb-2 bg-muted animate-pulse rounded" />
+        <div className="h-4 w-5/6 bg-muted animate-pulse rounded" />
       </>
     )
   }
@@ -519,18 +445,18 @@ export default function HomeDeliveriesToday({
     return <p className="text-muted-foreground text-sm">No deliveries scheduled for today.</p>
   }
 
-  // Determine header COD display: only show if exactly 1 delivery and that delivery is single
-  const showHeaderCod = totalDeliveries === 1 && (deliveries[0].type === 'single' || (typeof deliveries[0].itemCount === 'number' && deliveries[0].itemCount <= 1))
+  const showHeaderCod =
+    totalDeliveries === 1 &&
+    (deliveries[0].type === 'single' || (typeof deliveries[0].itemCount === 'number' && deliveries[0].itemCount <= 1))
 
   return (
     <div className="space-y-4">
       {/* Summary header */}
-      <div className="flex items-center justify-between p-3 bg-muted/5 rounded">
+      <div className="flex items-center justify-between p-3 bg-card text-card-foreground border rounded">
         <div>
           <div className="text-sm font-medium">Today — Deliveries</div>
           <div className="text-xs text-muted-foreground">
             {totalDeliveries} deliver{totalDeliveries !== 1 ? 'ies' : 'y'}
-            {/* intentionally removed item counts as requested */}
             {itemsTotalPrice > 0 ? ` • Items total ₱${itemsTotalPrice.toFixed(2)}` : ''}
           </div>
         </div>
@@ -561,39 +487,28 @@ export default function HomeDeliveriesToday({
               const typeLabel = deliveryTypeLabel(d)
               const codTotal = deliveryCodTotal(d, items)
 
-              console.log('P cod total', codTotal)
-              console.log('DeliveryItemsMap', items)
-
-              console.log('Rendering delivery', d.id, {
-                hasItems: deliveryItemsMap.has(d.id),
-                items: deliveryItemsMap.get(d.id),
-              })
-
               // Grouped deliveries (show items)
               if (!isSingleByDoc && items.length > 0) {
                 return (
-                  <div key={d.id} className="border rounded p-3 bg-white">
+                  <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
                           <div className="font-semibold text-sm">{d.title ?? d.platform ?? 'Delivery'}</div>
                         </div>
 
-                        {/* Ordered by */}
                         <div className="text-xs text-muted-foreground mt-1">
                           Ordered by: <UserName userId={d.createdBy} />
                         </div>
 
-                        {/* Notes */}
                         <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
 
-                        {/* Badges: Type + COD */}
                         <div className="flex gap-2 mt-2">
                           <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                           {codTotal != null && codTotal > 0 ? (
-                            <Badge className="text-xs border-green-200 bg-emerald-50 text-emerald-800">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                            <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
                           ) : (
-                            <Badge className="text-xs border-gray-200 text-muted-foreground">COD —</Badge>
+                            <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
                           )}
                         </div>
                       </div>
@@ -638,7 +553,7 @@ export default function HomeDeliveriesToday({
                                   onClick={() => handleMarkDeliveryItem(d.id, it.id)}
                                 />
                               ) : (
-                                <div className="text-sm text-muted-foreground">{/* delivered - intentionally minimal */}</div>
+                                <div className="text-sm text-muted-foreground" />
                               )}
                             </div>
                           </div>
@@ -649,29 +564,26 @@ export default function HomeDeliveriesToday({
                 )
               }
 
-              // flat delivery rendering (single delivery or no items to show)
+              // flat delivery rendering
               return (
-                <div key={d.id} className="flex items-center justify-between bg-white border rounded p-3">
+                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
                     </div>
 
-                    {/* Ordered by */}
                     <div className="text-xs text-muted-foreground mt-1">
                       Ordered by: <UserName userId={d.createdBy} />
                     </div>
 
-                    {/* Notes */}
                     <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
 
-                    {/* Badges: Type + COD */}
                     <div className="flex gap-2 mt-2">
                       <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                       {codTotal != null && codTotal > 0 ? (
-                        <Badge className="text-xs border-green-200 bg-emerald-50 text-emerald-800">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
                       ) : (
-                        <Badge className="text-xs border-gray-200 text-muted-foreground">COD —</Badge>
+                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
                       )}
                       {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
                     </div>
@@ -718,7 +630,7 @@ export default function HomeDeliveriesToday({
 
               if (!isSingleByDoc && items.length > 0) {
                 return (
-                  <div key={d.id} className="border rounded p-3 bg-white">
+                  <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="flex items-center gap-2">
@@ -732,9 +644,9 @@ export default function HomeDeliveriesToday({
                         <div className="flex gap-2 mt-2">
                           <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                           {codTotal != null && codTotal > 0 ? (
-                            <Badge className="text-xs border-green-200 bg-emerald-50 text-emerald-800">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                            <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
                           ) : (
-                            <Badge className="text-xs border-gray-200 text-muted-foreground">COD —</Badge>
+                            <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
                           )}
                         </div>
                       </div>
@@ -768,7 +680,7 @@ export default function HomeDeliveriesToday({
                                   {processingId === it.id ? 'Saving…' : 'Mark as Received'}
                                 </Button>
                               ) : (
-                                <div className="text-sm text-muted-foreground">{/* delivered minimal */}</div>
+                                <div className="text-sm text-muted-foreground" />
                               )}
                             </div>
                           </div>
@@ -780,7 +692,7 @@ export default function HomeDeliveriesToday({
               }
 
               return (
-                <div key={d.id} className="flex items-center justify-between bg-white border rounded p-3">
+                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
@@ -795,9 +707,9 @@ export default function HomeDeliveriesToday({
                     <div className="flex gap-2 mt-2">
                       <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                       {codTotal != null && codTotal > 0 ? (
-                        <Badge className="text-xs border-green-200 bg-emerald-50 text-emerald-800">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
                       ) : (
-                        <Badge className="text-xs border-gray-200 text-muted-foreground">COD —</Badge>
+                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
                       )}
                       {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
                     </div>
@@ -835,35 +747,28 @@ export default function HomeDeliveriesToday({
               const typeLabel = deliveryTypeLabel(d)
               const codTotal = deliveryCodTotal(d, d.items)
 
-              console.log('Delivered Today', d)
-
               return (
-                <div key={d.id} className="flex items-center justify-between bg-white border rounded p-3">
+                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
                     </div>
 
-                    {/* Ordered by */}
                     <div className="text-xs text-muted-foreground mt-1">
                       Ordered by: <UserName userId={d.createdBy} />
                     </div>
 
-                    {/* Notes */}
                     <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
 
-                    {/* Badges */}
                     <div className="flex gap-2 mt-2">
                       <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-
                       {codTotal != null && codTotal > 0 ? (
-                        <Badge className="text-xs border-green-200 bg-emerald-50 text-emerald-800">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
                       ) : (
-                        <Badge className="text-xs border-gray-200 text-muted-foreground">COD —</Badge>
+                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
                       )}
                     </div>
 
-                    {/* Received by line below */}
                     <div className="text-xs text-muted-foreground mt-2">
                       {d.receivedBy
                         ? <>Received by <UserName userId={d.receivedBy} />{receivedAtStr ? ` · ${receivedAtStr}` : ''}</>
@@ -871,8 +776,7 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* keep minimal trailing info */}
-                  <div className="text-xs text-muted-foreground">{/* intentionally blank to be minimal */}</div>
+                  <div className="text-xs text-muted-foreground" />
                 </div>
               )
             })}

@@ -9,13 +9,8 @@ import {
 } from 'firebase/firestore'
 import { useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
-import {
-  HomeIcon,
-  UsersIcon,
-  Loader2,
-} from 'lucide-react'
+import { HomeIcon, UsersIcon, Loader2 } from 'lucide-react'
 
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
@@ -195,9 +190,16 @@ export default function FamilyPickerPageContent() {
               </Badge>
             )}
           </div>
-          <Link href={`/family/${family.id}`}>
-            <Button type="button" variant="outline" size="sm">Open</Button>
-          </Link>
+
+          {/* Use router.push on click; no Link wrapper */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(`/family/${family.id}`)}
+          >
+            Open
+          </Button>
         </CardHeader>
       </Card>
     </motion.div>
@@ -216,7 +218,7 @@ export default function FamilyPickerPageContent() {
   const showSkeleton = loading && !hasLoaded.current
 
   return (
-    <div className="max-w-xl mx-auto px-4 pt-6 pb-32 relative">
+    <div className="max-w-xl mx-auto px-4 pt-6 pb-32 relative bg-background text-foreground">
       <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
       {createdFamily && (
         <div className="mb-4">
@@ -227,7 +229,8 @@ export default function FamilyPickerPageContent() {
         </div>
       )}
 
-      <div className="sticky top-0 z-10 bg-white pt-2 pb-4">
+      {/* Use themed background for sticky header so it matches dark mode */}
+      <div className="sticky top-0 z-10 pt-2 pb-4 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-xl font-semibold">Your Families</h1>
           {ownedFamilies.length > 0 &&

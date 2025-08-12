@@ -41,6 +41,9 @@ export default function SettingsPage() {
 
   const [notifEnabled, setNotifEnabled] = useState(false);
   const [working, setWorking] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>('default');
+  const notificationsSupported =
+    typeof window !== 'undefined' && 'Notification' in window;
 
   // THEME
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -52,19 +55,25 @@ export default function SettingsPage() {
     return <p className="text-center text-red-500">You're offline — cached content only.</p>;
   }
 
+  // auth gate
   useEffect(() => {
     if (!loading && user === null) router.push('/login');
   }, [user, loading, router]);
 
+  // reflect permission on mount
+  useEffect(() => {
+    if (notificationsSupported) {
+      setPermission(Notification.permission);
+    }
+  }, [notificationsSupported]);
+
+  // init toggle from user doc + permission
   useEffect(() => {
     if (!user) return;
     const hasTokens = Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0;
-    const granted =
-      typeof window !== 'undefined' && 'Notification' in window
-        ? Notification.permission === 'granted'
-        : false;
+    const granted = notificationsSupported ? Notification.permission === 'granted' : false;
     setNotifEnabled(hasTokens && granted);
-  }, [user]);
+  }, [user, notificationsSupported]);
 
   if (loading || familyLoading || user === null) {
     return (
@@ -90,15 +99,16 @@ export default function SettingsPage() {
       return;
     }
     if (!VAPID_KEY) {
-      toast.error('Missing VAPID key. Set NEXT_PUBLIC_FIREBASE_VAPID_KEY (or NEXT_PUBLIC_VAPID_KEY) in env.');
+      toast.error('Missing VAPID key. Set NEXT_PUBLIC_FIREBASE_VAPID_KEY (or NEXT_PUBLIC_VAPID_KEY).');
       setNotifEnabled(false);
       return;
     }
 
     setWorking(true);
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
+      const perm = await Notification.requestPermission();
+      setPermission(perm); // keep UI in sync
+      if (perm !== 'granted') {
         toast.error('Permission was not granted.');
         setNotifEnabled(false);
         return;
@@ -155,6 +165,7 @@ export default function SettingsPage() {
     try {
       const messaging = getFirebaseMessaging();
 
+      // try to use stored token first
       let token: string | null = null;
       try {
         token = localStorage.getItem('abotko.fcmToken');
@@ -165,12 +176,14 @@ export default function SettingsPage() {
         } catch {}
       }
 
+      // delete on device
       try {
         if (messaging) await deleteToken(messaging);
       } catch (e) {
         console.warn('deleteToken failed, continuing:', e);
       }
 
+      // remove from firestore
       if (token) {
         await updateDoc(doc(firestore, 'users', user.uid), {
           fcmTokens: arrayRemove(token),
@@ -201,9 +214,6 @@ export default function SettingsPage() {
     void (next ? enableNotifications() : disableNotifications());
   };
 
-  const notificationsSupported =
-    typeof window !== 'undefined' && 'Notification' in window;
-
   return (
     <main className="max-w-xl mx-auto p-6 space-y-6">
       <div className="space-y-2">
@@ -219,7 +229,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Appearance */}
-      <section className="rounded-lg border p-4 space-y-3">
+      <section className="rounded-lg border p-4 space-y-3 bg-background">
         <Label className="text-sm font-medium">Appearance</Label>
         <div className="flex gap-2">
           <Button
@@ -252,28 +262,43 @@ export default function SettingsPage() {
         </div>
         {mounted && (
           <p className="text-xs text-muted-foreground">
-            Active theme: <strong>{currentTheme === 'system' ? `System (${resolvedTheme})` : currentTheme}</strong>
+            Active theme:{' '}
+            <strong>
+              {currentTheme === 'system' ? `System (${resolvedTheme})` : currentTheme}
+            </strong>
           </p>
         )}
       </section>
 
       {/* Notifications */}
-      <section className="rounded-lg border p-4 flex items-start justify-between gap-4">
+      <section className="rounded-lg border p-4 flex items-start justify-between gap-4 bg-background">
         <div className="space-y-1">
           <Label className="text-sm font-medium">Push notifications</Label>
           <p className="text-xs text-muted-foreground">
             Get alerts for today’s deliveries and status updates.
           </p>
-          {typeof window !== 'undefined' && !notificationsSupported && (
-            <p className="text-xs text-red-500 mt-1">Not supported by this browser.</p>
+
+          {/* Permission guidance */}
+          {notificationsSupported && permission === 'denied' && (
+            <p className="text-xs text-red-500 mt-1">
+              Notifications are <strong>blocked</strong> for this site. Please enable them
+              in your browser’s Site Settings, then try again.
+            </p>
+          )}
+          {!notificationsSupported && (
+            <p className="text-xs text-red-500 mt-1">
+              Not supported by this browser.
+            </p>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {working && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />}
+          {working && (
+            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />
+          )}
           <Switch
             checked={notifEnabled}
             onCheckedChange={onToggleChange}
-            disabled={working || !notificationsSupported}
+            disabled={working || !notificationsSupported || permission === 'denied'}
             aria-label="Toggle push notifications"
           />
         </div>

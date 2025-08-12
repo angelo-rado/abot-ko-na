@@ -2,18 +2,14 @@
 
 import React, { useEffect, useState, useRef } from 'react'
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { collection, addDoc, Timestamp, doc, updateDoc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { createDelivery, updateDelivery } from '@/lib/deliveries'
+import { createDelivery } from '@/lib/deliveries'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -43,28 +39,42 @@ type Props = {
   delivery?: any | null
 }
 
-// --- Helpers ---
+// ---- Time helpers (LOCAL) ----
 function getLocalISOStringForTime(hour: number, minute: number) {
   const date = new Date()
   date.setHours(hour, minute, 0, 0)
-  const offset = date.getTimezoneOffset()
-  const localDate = new Date(date.getTime() - offset * 60 * 1000)
-  return localDate.toISOString().slice(0, 16) // for <input type="datetime-local">
+  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
+  const y = date.getFullYear()
+  const m = pad(date.getMonth() + 1)
+  const d = pad(date.getDate())
+  const hh = pad(date.getHours())
+  const mm = pad(date.getMinutes())
+  return `${y}-${m}-${d}T${hh}:${mm}` // for <input type="datetime-local">
 }
 
-/** Clamp an input "YYYY-MM-DDTHH:mm" to end-of-day LOCAL (23:59:00.000) */
+/** Clamp an input "YYYY-MM-DDTHH:mm" to end-of-day LOCAL (23:59) */
 function endOfDayFromLocalISO(iso: string): Date {
-  const d = new Date(iso) // datetime-local is parsed as local time
+  const d = new Date(iso) // parsed as local time
   d.setHours(23, 59, 0, 0)
   return d
 }
 
-/** Preserve exact timestamp coming from Firestore (for edit mode). */
+/** Parse Firestore timestamp-like to LOCAL datetime-local string */
 function parseExpectedDate(d: any) {
   if (!d) return ''
-  if (typeof d.toDate === 'function') return d.toDate().toISOString().slice(0, 16)
-  if (typeof d.seconds === 'number') return new Date(d.seconds * 1000).toISOString().slice(0, 16)
-  return ''
+  let dt: Date
+  if (typeof d?.toDate === 'function') dt = d.toDate()
+  else if (typeof d?.seconds === 'number') dt = new Date(d.seconds * 1000)
+  else if (d instanceof Date) dt = d
+  else dt = new Date(d)
+  if (isNaN(dt.getTime())) return ''
+  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
+  const y = dt.getFullYear()
+  const m = pad(dt.getMonth() + 1)
+  const day = pad(dt.getDate())
+  const hh = pad(dt.getHours())
+  const mm = pad(dt.getMinutes())
+  return `${y}-${m}-${day}T${hh}:${mm}`
 }
 
 export default function DeliveryFormDialog({ open, onOpenChange, familyId, delivery }: Props) {
@@ -73,13 +83,15 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   const draftItemsRef = useRef<ItemRow[] | null>(null)
   const modifiedItemsRef = useRef<Set<string>>(new Set())
 
+  const initialExpectedRef = useRef<string | null>(null)
+
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const [values, setValues] = useState<DeliveryFormValues>({
     title: delivery?.title ?? '',
     expectedDate: delivery?.expectedDate
-      ? parseExpectedDate(delivery.expectedDate)          // EDIT keeps time
-      : getLocalISOStringForTime(23, 59),                 // CREATE defaults to 11:59 PM local
+      ? parseExpectedDate(delivery.expectedDate)
+      : getLocalISOStringForTime(23, 59),
     codAmount: delivery?.codAmount ?? null,
     status: (delivery?.status as DeliveryStatus) ?? 'pending',
     note: delivery?.note ?? '',
@@ -105,17 +117,19 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
   }, [items.length, formErrors.items])
 
-  // Reset values on open (CREATE only), default time = 23:59 local
+  // Reset values on open (CREATE only), default 23:59 local
   useEffect(() => {
     if (!open || isEdit) return
 
+    const defaultDate = getLocalISOStringForTime(23, 59)
     setValues({
       title: '',
-      expectedDate: getLocalISOStringForTime(23, 59),
+      expectedDate: defaultDate,
       codAmount: null,
       status: 'pending',
       note: '',
     })
+    initialExpectedRef.current = null
 
     if (draftItemsRef.current) {
       setItems(draftItemsRef.current)
@@ -132,17 +146,17 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   useEffect(() => {
     if (!delivery || !isEdit) return
 
+    const expected = parseExpectedDate(delivery.expectedDate)
     setValues({
       title: delivery.title ?? '',
-      expectedDate: parseExpectedDate(delivery.expectedDate), // keep stored time
+      expectedDate: expected,
       codAmount: delivery.codAmount ?? null,
       status: (delivery.status as DeliveryStatus) ?? 'pending',
       note: delivery.note ?? '',
     })
+    initialExpectedRef.current = expected
 
-    if (delivery.type !== 'bulk') {
-      setItems([])
-    }
+    if (delivery.type !== 'bulk') setItems([])
 
     setItemMode(delivery.type === 'bulk' ? 'multiple' : 'single')
     draftItemsRef.current = null
@@ -153,7 +167,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   useEffect(() => {
     async function fetchItems() {
       if (!delivery || !delivery.id || delivery.type !== 'bulk') return
-
       const itemsCol = collection(firestore, 'families', familyId, 'deliveries', delivery.id, 'items')
       const snap = await getDocs(itemsCol)
       const rows: ItemRow[] = snap.docs.map((doc) => {
@@ -166,13 +179,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           note: data.note ?? '',
         }
       })
-
       setItems(rows)
     }
-
-    if (open && isEdit && delivery?.type === 'bulk') {
-      fetchItems()
-    }
+    if (open && isEdit && delivery?.type === 'bulk') fetchItems()
   }, [open, isEdit, delivery, familyId])
 
   useEffect(() => {
@@ -192,7 +201,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   function addItemRow() {
     if (itemMode === 'single' && items.length >= 1) return
-
     setItems((prev) => [
       ...prev,
       {
@@ -200,8 +208,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         name: '',
         price: null,
         expectedDate: delivery?.expectedDate
-          ? parseExpectedDate(delivery.expectedDate)    // EDIT: keep existing delivery time
-          : getLocalISOStringForTime(23, 59),           // CREATE: default to 11:59 PM local
+          ? parseExpectedDate(delivery.expectedDate)
+          : getLocalISOStringForTime(23, 59),
       },
     ])
   }
@@ -227,9 +235,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   function handleSetMultipleMode() {
     setItemMode('multiple')
-    if (draftItemsRef.current) {
-      setItems(draftItemsRef.current)
-    }
+    if (draftItemsRef.current) setItems(draftItemsRef.current)
   }
 
   function confirmSwitchToSingleProceed() {
@@ -239,9 +245,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   }
 
   function confirmSwitchToSingleCancel() {
-    if (draftItemsRef.current) {
-      setItems(draftItemsRef.current)
-    }
+    if (draftItemsRef.current) setItems(draftItemsRef.current)
     setConfirmSinglePromptOpen(false)
     setItemMode('multiple')
   }
@@ -259,49 +263,30 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   const onSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault()
     setFormErrors({})
-    let errors: Record<string, string> = {}
+    const errors: Record<string, string> = {}
 
-    if (!values.title.trim()) {
-      errors.title = 'Title is required'
-    }
-
+    if (!values.title.trim()) errors.title = 'Title is required'
     if (!values.expectedDate?.trim()) {
       errors.expectedDate = 'Expected date is required'
     } else {
       const now = new Date()
       const expected = new Date(values.expectedDate)
-      if (expected < now) {
-        errors.expectedDate = 'Expected date cannot be in the past'
-      }
+      if (expected < now) errors.expectedDate = 'Expected date cannot be in the past'
     }
 
     if (itemMode === 'multiple') {
-      if (items.length < 2) {
-        errors.items = 'Please add at least two items for bulk deliveries'
-      }
-
+      if (items.length < 2) errors.items = 'Please add at least two items for bulk deliveries'
       const headerExpected = values.expectedDate ? new Date(values.expectedDate) : null
-
       items.forEach((item, index) => {
-        if (!item.name.trim()) {
-          errors[`item-${item.id}-name`] = `Item ${index + 1}: Name required`
-        }
-
-        if (item.price === null || isNaN(item.price)) {
-          errors[`item-${item.id}-price`] = `Item ${index + 1}: Price required`
-        }
-
+        if (!item.name.trim()) errors[`item-${item.id}-name`] = `Item ${index + 1}: Name required`
+        if (item.price === null || isNaN(item.price)) errors[`item-${item.id}-price`] = `Item ${index + 1}: Price required`
         if (!item.expectedDate?.trim()) {
           errors[`item-${item.id}-date`] = `Item ${index + 1}: Date required`
         } else {
           const itemDate = new Date(item.expectedDate)
           const now = new Date()
-          if (itemDate < now) {
-            errors[`item-${item.id}-date`] = `Item ${index + 1}: Date cannot be in the past`
-          }
-          if (headerExpected && itemDate < headerExpected) {
-            errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery ETA`
-          }
+          if (itemDate < now) errors[`item-${item.id}-date`] = `Item ${index + 1}: Date cannot be in the past`
+          if (headerExpected && itemDate < headerExpected) errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery ETA`
         }
       })
     }
@@ -312,19 +297,16 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
 
     setIsSaving(true)
-
     try {
       if (isEdit && delivery?.id) {
-        // === EDIT MODE: keep exact times from form (no clamping) ===
+        // EDIT MODE — keep times; don't overwrite expectedDate unless changed
         const deliveryRef = doc(firestore, 'families', familyId, 'deliveries', delivery.id)
         const itemsCol = collection(deliveryRef, 'items')
 
-        // 1. Delete existing items
         const existingItemsSnap = await getDocs(itemsCol)
         const deletePromises = existingItemsSnap.docs.map((doc) => deleteDoc(doc.ref))
         await Promise.all(deletePromises)
 
-        // 2. Add updated items (preserve item times)
         const batch = writeBatch(firestore)
         items.forEach((it) => {
           const itemRef = doc(itemsCol)
@@ -338,28 +320,31 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           })
         })
 
-        // 3. Update delivery metadata (preserve header time)
-        batch.update(deliveryRef, {
+        const updatePayload: any = {
           title: values.title.trim(),
           codAmount: values.codAmount ?? null,
           status: values.status,
-          expectedDate: values.expectedDate ? Timestamp.fromDate(new Date(values.expectedDate)) : null,
           note: values.note?.trim() || '',
           itemCount: items.length,
           type: items.length > 1 ? 'bulk' : 'single',
           updatedAt: Timestamp.now(),
-        })
+        }
+        if (values.expectedDate !== initialExpectedRef.current) {
+          updatePayload.expectedDate = values.expectedDate
+            ? Timestamp.fromDate(new Date(values.expectedDate))
+            : null
+        }
 
+        batch.update(deliveryRef, updatePayload)
         await batch.commit()
 
         draftItemsRef.current = null
         modifiedItemsRef.current.clear()
         setItems([])
-
         onOpenChange(false)
         return
       } else {
-        // === CREATE MODE: clamp ALL times to 11:59 PM LOCAL ===
+        // CREATE MODE — clamp ALL times to 23:59 local
         const headerDate = values.expectedDate ? endOfDayFromLocalISO(values.expectedDate) : undefined
 
         const determinedType = itemMode === 'multiple' || items.length > 1 ? 'bulk' : 'single'
@@ -379,12 +364,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
         if (items.length > 0) {
           for (const it of items) {
-            // Each item uses its own date clamped to 23:59 local; if none, inherit headerDate
-            const itemDate =
-              it.expectedDate?.trim()
-                ? endOfDayFromLocalISO(it.expectedDate)
-                : headerDate
-
+            const itemDate = it.expectedDate?.trim()
+              ? endOfDayFromLocalISO(it.expectedDate)
+              : headerDate
             await addDoc(itemsCol, {
               name: it.name.trim(),
               price: it.price,
@@ -401,7 +383,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
             updatedAt: Timestamp.now(),
           })
         } else {
-          // Single implicit item inherits headerDate at 23:59 local
           await addDoc(itemsCol, {
             name: values.title.trim() || 'Delivery',
             price: null,
@@ -432,18 +413,12 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
   }
 
-  const previewNames = (draftItemsRef.current ?? items)
-    .slice(0, 5)
-    .map((it) => it.name?.trim() || '(unnamed item)')
+  const previewNames = (draftItemsRef.current ?? items).slice(0, 5).map((it) => it.name?.trim() || '(unnamed item)')
 
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => {
-        if (!v) {
-          handleDialogClose()
-        } else {
-          onOpenChange(true)
-        }
+        if (!v) { handleDialogClose() } else { onOpenChange(true) }
       }}>
         <AnimatePresence>
           {open && (
@@ -460,8 +435,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                 </DialogHeader>
 
                 {isSaving && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-white/70 rounded-md">
-                    <div className="animate-spin h-6 w-6 border-2 border-gray-400 border-t-transparent rounded-full" />
+                  <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md">
+                    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
                   </div>
                 )}
 
@@ -471,7 +446,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Label>Title</Label>
                     <Input
                       value={values.title}
-                      onChange={(e) => updateField('title', e.target.value)}
+                      onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
                       required
                       autoFocus
                     />
@@ -484,7 +459,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                       type="datetime-local"
                       className="mt-1 block w-full rounded border px-2 py-1"
                       value={values.expectedDate}
-                      onChange={(e) => updateField('expectedDate', e.target.value)}
+                      onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value }))}
                     />
                     {formErrors.expectedDate && (
                       <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>
@@ -518,7 +493,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Input
                       type="number"
                       value={values.codAmount ?? ''}
-                      onChange={(e) => updateField('codAmount', e.target.value ? Number(e.target.value) : null)}
+                      onChange={(e) => setValues((v) => ({ ...v, codAmount: e.target.value ? Number(e.target.value) : null }))}
                       min={0}
                       disabled={itemMode === 'multiple' || items.length > 1}
                       title={itemMode === 'multiple' || items.length > 1 ? 'COD is calculated per item in bulk deliveries' : ''}
@@ -534,7 +509,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Label>Status</Label>
                     <select
                       value={values.status}
-                      onChange={(e) => updateField('status', e.target.value as DeliveryStatus)}
+                      onChange={(e) => setValues((v) => ({ ...v, status: e.target.value as DeliveryStatus }))}
                       className="mt-1 block w-full rounded border px-2 py-1"
                     >
                       <option value="pending">Pending</option>
@@ -549,7 +524,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Textarea
                       id="note"
                       value={values.note}
-                      onChange={(e) => setValues({ ...values, note: e.target.value })}
+                      onChange={(e) => setValues((v) => ({ ...v, note: e.target.value }))}
                     />
                   </div>
 
@@ -695,13 +670,14 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
                 <div className="py-2">
                   <p className="mb-3">
-                    You currently have{' '}
-                    <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
+                    You currently have <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
                     item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in this delivery.
                   </p>
 
                   <div className="mb-3">
-                    <p className="text-sm font-medium">Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):</p>
+                    <p className="text-sm font-medium">
+                      Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):
+                    </p>
                     <ul className="list-disc ml-5 text-sm">
                       {(draftItemsRef.current ?? items).slice(0, 5).map((it, idx) => (
                         <li key={idx}>{it.name?.trim() || '(unnamed item)'}</li>

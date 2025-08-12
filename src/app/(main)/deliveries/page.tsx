@@ -1,13 +1,4 @@
-// FILE: src/app/(whatever)/deliveries/page.tsx
-
 'use client'
-
-/** 
- * ✅ Original logic retained, UI/UX improved 
- * - Improved header structure
- * - Better spacing, visual hierarchy, and responsiveness
- * - Simplified edit/delete toggle and tab layout
- */
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
@@ -19,7 +10,7 @@ import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
-import { Plus, Loader2, MoreVertical } from 'lucide-react'
+import { Plus, Loader2 } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -36,7 +27,6 @@ const ARCHIVE_OLDER_THAN_DAYS = 30
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
-  const { loading } = useAuth()
   const [familyId, setFamilyId] = useState<string | null>(null)
   const [families, setFamilies] = useState<Family[]>([])
   const [familiesLoading, setFamiliesLoading] = useState(true)
@@ -72,7 +62,7 @@ export default function DeliveriesPage() {
 
   const isOnline = useOnlineStatus()
   if (!isOnline) {
-    return <p className="text-center text-red-500">You're offline — cached content only.</p>
+    return <p className="text-center text-destructive">You're offline — cached content only.</p>
   }
 
   const showToast = (msg: string) => {
@@ -105,12 +95,12 @@ export default function DeliveriesPage() {
     }
   }
 
+  // Auth gate
   useEffect(() => {
-    if (!loading && !user) {
-      router.replace('/login') // 👈 send to main page when not logged in
+    if (!authLoading && !user) {
+      router.replace('/login')
     }
-  }, [user, loading])
-
+  }, [user, authLoading, router])
 
   useEffect(() => {
     return () => {
@@ -255,7 +245,7 @@ export default function DeliveriesPage() {
     })
 
   const toggleSelect = (id: string) => setSelectedIds((s) => ({ ...s, [id]: !s[id] }))
-  const clearSelection = () => setSelectedIds({})
+  const clearSelection = () => setSelectedIds({ })
   const selectedCount = Object.values(selectedIds).filter(Boolean).length
 
   const bulkDelete = async () => {
@@ -306,10 +296,16 @@ export default function DeliveriesPage() {
 
   const keyFor = (d: any) => `${d.id}-${d.updatedAt?.seconds || d.createdAt?.seconds || ''}`
 
-  if (authLoading) return <main className="flex items-center justify-center h-screen"><Loader2 className="w-6 h-6 animate-spin" /></main>
+  if (authLoading) {
+    return (
+      <main className="flex items-center justify-center h-screen">
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+      </main>
+    )
+  }
 
   return (
-    <div className="px-4 py-6 max-w-4xl mx-auto space-y-6">
+    <div className="px-4 py-6 max-w-4xl mx-auto space-y-6 bg-background text-foreground">
       {/* Top controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1">
@@ -356,13 +352,14 @@ export default function DeliveriesPage() {
       {/* Filters and Tabs */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex gap-2 bg-muted rounded-md p-1">
-          {['upcoming', 'archived'].map((t) => (
+          {(['upcoming', 'archived'] as const).map((t) => (
             <button
               type="button"
               key={t}
-              onClick={() => setTab(t as any)}
-              className={`px-3 py-1 rounded text-sm font-medium ${tab === t ? 'bg-white text-black shadow-sm' : 'text-muted-foreground'
-                }`}
+              onClick={() => setTab(t)}
+              className={`px-3 py-1 rounded text-sm font-medium ${
+                tab === t ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground'
+              }`}
             >
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
@@ -374,13 +371,13 @@ export default function DeliveriesPage() {
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
           placeholder="Search deliveries..."
-          className="border px-3 py-1 rounded w-full sm:w-64"
+          className="border border-input bg-background text-foreground placeholder:text-muted-foreground px-3 py-1 rounded w-full sm:w-64"
         />
 
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value as any)}
-          className="border px-3 py-1 rounded text-sm"
+          className="border border-input bg-background text-foreground px-3 py-1 rounded text-sm"
         >
           <option value="all">All</option>
           <option value="pending">Pending</option>
@@ -403,7 +400,7 @@ export default function DeliveriesPage() {
             You haven't joined or created a family yet. Deliveries require a family group.
           </p>
           <div className="flex justify-center gap-4">
-            <Button type="button" onClick={() => router.push('/family/create')}>Go to Families</Button>
+            <Button type="button" onClick={() => router.push('/family')}>Go to Families</Button>
           </div>
         </div>
       ) : deliveries.length === 0 ? (
@@ -420,7 +417,7 @@ export default function DeliveriesPage() {
                 {applyFilters(singlesToRender).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   return (
-                    <div key={keyFor(d)} className="relative group w-full rounded border p-3 bg-white shadow-sm">
+                    <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
@@ -452,7 +449,7 @@ export default function DeliveriesPage() {
                 {applyFilters(bulksToRender).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   return (
-                    <div key={keyFor(d)} className="relative group w-full rounded border p-3 bg-white shadow-sm">
+                    <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
@@ -478,7 +475,7 @@ export default function DeliveriesPage() {
 
       {/* Bulk actions toolbar */}
       {selectionMode && (
-        <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-white border rounded shadow-md px-6 py-3 flex items-center gap-4 z-50">
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-card text-card-foreground border rounded shadow-md px-6 py-3 flex items-center gap-4 z-50">
           <span className="text-sm">{selectedCount} selected</span>
           <Button type="button" onClick={bulkArchive} disabled={processingBulk || selectedCount === 0}>Archive</Button>
           <Button type="button" variant="destructive" onClick={bulkDelete} disabled={processingBulk || selectedCount === 0}>Delete</Button>
@@ -508,12 +505,10 @@ export default function DeliveriesPage() {
 
       {/* Toast */}
       {toastMessage && (
-        <div className="fixed bottom-6 right-6 bg-black text-white px-4 py-2 rounded shadow z-50">
+        <div className="fixed bottom-6 right-6 bg-foreground text-background px-4 py-2 rounded shadow z-50">
           {toastMessage}
         </div>
       )}
     </div>
   )
-
 }
-
