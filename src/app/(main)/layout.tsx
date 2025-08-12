@@ -42,6 +42,8 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const touchStartX = useRef<number | null>(null)
   const lastTouchX = useRef<number | null>(null)
   const lastTouchTime = useRef<number>(0)
+  const edgePeek = 18
+  const velocityThreshold = 0.35
   const velocityRef = useRef(0)
   const baseOffsetRef = useRef(0)
   const animationFrame = useRef<number | null>(null)
@@ -72,6 +74,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   async function setupPushNotifications(uid: string) {
     if (!('serviceWorker' in navigator)) return
+    if (!window.Notification) return
     try {
       const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
       await navigator.serviceWorker.ready

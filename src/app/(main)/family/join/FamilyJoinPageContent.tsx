@@ -57,6 +57,7 @@ export default function FamilyJoinPageContent() {
           const data = famDoc.data() as any
           setFamily({ id: famDoc.id, name: data?.name ?? undefined })
         } else {
+          setFamily(null as any)
           toast.error('Invalid invite link: family not found')
           setFamily(null)
         }

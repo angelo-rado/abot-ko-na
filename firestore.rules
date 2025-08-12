@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function isMe(uid) { return isSignedIn() && request.auth.uid == uid; }
+    function isFamilyMember(familyId) {
+      return exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)) ||
+             (get(/databases/$(database)/documents/families/$(familyId)).data.members is list &&
+              request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.members);
+    }
+
+    // === USERS ===
+    match /users/{userId} {
+      allow create: if isMe(userId);
+      allow read: if isSignedIn() && (
+        isMe(userId) ||
+        (
+          // requester can read if they share any family with target user
+          (get(/databases/$(database)/documents/users/$(userId)).data.familiesJoined is list) &&
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.familiesJoined is list) &&
+          get(/databases/$(database)/documents/users/$(userId)).data.familiesJoined
+            .hasAny(get(/databases/$(database)/documents/users/$(request.auth.uid)).data.familiesJoined)
+        )
+      );
+      allow update, delete: if isMe(userId);
+    }
+
+    // === FAMILIES ===
+    match /families/{familyId} {
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+        request.resource.data.createdBy == request.auth.uid &&
+        request.resource.data.members is list &&
+        request.resource.data.members.hasAny([request.auth.uid]);
+
+      // Only members can read the family doc
+      allow read: if isSignedIn() && isFamilyMember(familyId);
+
+      // Update/Delete by creator or members
+      allow update, delete: if isSignedIn() && (
+        resource.data.createdBy == request.auth.uid || isFamilyMember(familyId)
+      );
+
+      // === MEMBERS SUBCOLLECTION ===
+      match /members/{memberId} {
+        allow read: if isSignedIn() && isFamilyMember(familyId);
+        allow create: if isSignedIn() && request.auth.uid == memberId && isFamilyMember(familyId);
+        allow update, delete: if isSignedIn() && (
+          request.auth.uid == memberId ||
+          get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid
+        );
+      }
+
+      // === DELIVERIES SUBCOLLECTION ===
+      match /deliveries/{deliveryId} {
+        // Read only for members
+        allow read: if isSignedIn() && isFamilyMember(familyId);
+
+        // Create must use request.resource and require membership
+        allow create: if isSignedIn() && isFamilyMember(familyId) &&
+          request.resource.data.createdBy == request.auth.uid;
+
+        // Update/Delete by creator or family owner (and must be a member)
+        allow update, delete: if isSignedIn() && isFamilyMember(familyId) && (
+          resource.data.createdBy == request.auth.uid ||
+          get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid
+        );
+
+        // === DELIVERY ITEMS SUBCOLLECTION ===
+        match /items/{itemId} {
+          allow read, create, update, delete: if isSignedIn() && isFamilyMember(familyId);
+        }
+      }
+    }
+  }
+}

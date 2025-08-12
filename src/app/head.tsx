@@ -6,7 +6,7 @@ export default function Head() {
       <meta name="description" content="Realtime family delivery + presence tracking" />
 
       {/* ✅ PWA Meta + Manifest */}
-      <link rel="manifest" href="/manifest.json" />
+      <link rel="manifest" href="/site.webmanifest" />
       <meta name="theme-color" content="#2563eb" />
       <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       <meta name="apple-mobile-web-app-capable" content="yes" />

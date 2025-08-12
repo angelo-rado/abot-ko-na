@@ -120,3 +120,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* --- Abot Ko Na: cross-platform touch and focus polish --- */
+:root {}
+html, body { height: 100%; }
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+:where(button, a, input, [role="button"]) { outline: none; }
+:where(button, a, input, [role="button"]):focus-visible {
+  box-shadow: 0 0 0 3px hsl(var(--primary)/.35);
+  border-radius: .75rem;
+}
+/* --- end --- */

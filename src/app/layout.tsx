@@ -4,7 +4,8 @@ import { Inter } from 'next/font/google'
 import { cn } from '@/lib/utils'
 import type { Metadata } from 'next'
 
-const inter = Inter({ subsets: ['latin'] })
+
+import Providers from './providers'const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'Abot Ko Na',
@@ -31,8 +32,8 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={cn(inter.className, 'bg-background text-foreground')}>
-        {children}
+      <body className={cn(inter.className, 'bg-background text-foreground antialiased')}>
+        <Providers>{children}</Providers>
       </body>
     </html>
   )
