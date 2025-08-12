@@ -165,6 +165,22 @@ export default function MainLayout({
     animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
   }
 
+  // 🔧 NEW: decide which pane should render `children` as a fallback for deep routes
+  const belongsTo = {
+    home: pathname === '/' || pathname.startsWith('/home'),
+    deliveries: pathname.startsWith('/deliveries'),
+    family: pathname.startsWith('/family'),
+    settings: pathname.startsWith('/settings'),
+  }
+
+  const panes: (React.ReactNode | null)[] = [
+    // Home pane: if no explicit `home`, render children when on a home-like route
+    home ?? (belongsTo.home ? children : null),
+    deliveries ?? (belongsTo.deliveries ? children : null),
+    family ?? (belongsTo.family ? children : null),
+    settings ?? (belongsTo.settings ? children : null),
+  ]
+
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <div className="flex flex-col min-h-screen overflow-hidden select-none bg-background text-foreground" style={{ height: '100vh' }}>
@@ -197,11 +213,11 @@ export default function MainLayout({
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
         >
-          {[home ?? children, deliveries, family, settings].map((node, i) => (
+          {panes.map((node, i) => (
             <div
               key={i}
               style={{
-                width: width,
+                width,
                 flexShrink: 0,
                 height: '100%',
                 overflowY: 'auto',
