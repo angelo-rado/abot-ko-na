@@ -11,12 +11,45 @@ const messaging = admin.messaging();
 
 const loggingWinston = new LoggingWinston();
 const logger = winston.createLogger({
-    level: 'info',
-    transports: [
-        new winston.transports.Console(),
-        loggingWinston,
-    ],
+  level: 'info',
+  transports: [new winston.transports.Console(), loggingWinston],
 });
+
+/** Util: today’s [start,end) in UTC (adjust if you store local dates) */
+function getTodayBounds(): { startOfDay: Date; endOfDay: Date } {
+  const now = new Date();
+  const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const endOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  return { startOfDay, endOfDay };
+}
+
+/** Util: YYYY-MM-DD in UTC for idempotency key */
+function formatDateKeyUTC(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Idempotency guard so we only notify a family once per day at the 8AM run.
+ * Marker path: system/dailyDeliveryNotifications/{yyyy-mm-dd}/families/ids/{familyId}
+ */
+async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Promise<boolean> {
+  const ref = firestore
+    .collection('system')
+    .doc('dailyDeliveryNotifications')
+    .collection(dateKey)
+    .doc('families')
+    .collection('ids')
+    .doc(familyId);
+
+  const snap = await ref.get();
+  if (snap.exists) return false; // already notified today
+
+  await ref.set({ at: admin.firestore.FieldValue.serverTimestamp() });
+  return true;
+}
 
 async function sendDeliveryNotificationForFamily(familyId: string, expectedDate: Date | null) {
   const now = new Date();
@@ -25,184 +58,189 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
 
   logger.info('sendDeliveryNotificationForFamily called', { familyId, expectedDate, now, tomorrow });
 
-  if (!expectedDate || expectedDate < now || expectedDate > tomorrow) {
-    logger.info('Expected date is not within now to tomorrow, no notification sent', { familyId, expectedDate });
+  // Only notify if expectedDate is within [now, tomorrow)
+  if (!expectedDate || expectedDate < now || expectedDate >= tomorrow) {
+    logger.info('Expected date not within window; skip', { familyId, expectedDate });
     return;
   }
 
   try {
-    const familyUsersSnapshot = await firestore
+    const membersSnap = await firestore
       .collection('families')
       .doc(familyId)
       .collection('members')
       .get();
 
-    const userIds = familyUsersSnapshot.docs.map((doc) => doc.id);
-    logger.info(`Found family members`, { familyId, count: userIds.length, userIds });
+    const userIds = membersSnap.docs.map((d) => d.id);
+    logger.info('Found family members', { familyId, count: userIds.length });
 
     const tokens: string[] = [];
     const safariUsers: string[] = [];
-    for (const userId of userIds) {
-      const userDoc = await firestore.collection('users').doc(userId).get();
-      const userData = userDoc.data();
-      if (userData && Array.isArray(userData.fcmTokens) && userData.fcmTokens.length > 0) {
-        logger.info(`User has FCM tokens`, { userId, tokensCount: userData.fcmTokens.length, tokens: userData.fcmTokens });
-        tokens.push(...userData.fcmTokens);
-      } else {
-        logger.info(`User has no FCM tokens`, { userId });
-        if (userData && userData.isSafari) {
-          safariUsers.push(userId);
-        }
+
+    for (const uid of userIds) {
+      const userDoc = await firestore.collection('users').doc(uid).get();
+      const u = userDoc.data() as any;
+      if (u && Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0) {
+        tokens.push(...u.fcmTokens);
+      } else if (u?.isSafari) {
+        safariUsers.push(uid);
       }
     }
 
     if (tokens.length === 0 && safariUsers.length === 0) {
-      logger.warn('No FCM tokens or Safari fallback targets found for any family members', { familyId });
+      logger.warn('No FCM tokens or Safari fallback targets', { familyId });
       return;
     }
 
-    if (tokens.length > 0) {
-      logger.info('Sending notifications individually to tokens', { familyId, tokensCount: tokens.length, tokensSample: tokens.slice(0, 5) });
-
-      for (const token of tokens) {
-        const message: admin.messaging.Message = {
+    // Send to FCM tokens
+    for (const token of tokens) {
+      const message: admin.messaging.Message = {
+        token,
+        notification: {
+          title: 'Delivery is on its way!',
+          body: 'Delivery expected today is now in transit.',
+        },
+        data: { familyId },
+      };
+      try {
+        const response = await messaging.send(message);
+        logger.info('Notification sent', { token, response });
+      } catch (err) {
+        logger.error('Failed to send notification', {
           token,
-          notification: {
-            title: 'Delivery is on its way!',
-            body: 'Delivery expected today is now in transit.',
-          },
-          data: {
-            familyId,
-          },
-        };
-
-        try {
-          const response = await messaging.send(message);
-          logger.info('Notification sent', { token, response });
-        } catch (err) {
-          logger.error('Failed to send notification', { token, error: err instanceof Error ? err.message : JSON.stringify(err) });
-        }
+          error: err instanceof Error ? err.message : JSON.stringify(err),
+        });
       }
     }
 
-    if (safariUsers.length > 0) {
-      logger.info('Adding Safari fallback notifications', { safariUsers });
-      for (const userId of safariUsers) {
-        try {
-          await firestore.collection('users').doc(userId).update({
-            pendingNotifications: admin.firestore.FieldValue.arrayUnion({
-              title: 'Delivery is on its way!',
-              body: 'Delivery expected today is now in transit.',
-              familyId,
-              timestamp: Date.now(),
-            })
-          });
-          logger.info('Safari fallback notification queued', { userId });
-        } catch (err) {
-          logger.error('Failed to queue Safari fallback notification', { userId, error: err instanceof Error ? err.message : JSON.stringify(err) });
-        }
+    // Safari fallback
+    for (const uid of safariUsers) {
+      try {
+        await firestore.collection('users').doc(uid).update({
+          pendingNotifications: admin.firestore.FieldValue.arrayUnion({
+            title: 'Delivery is on its way!',
+            body: 'Delivery expected today is now in transit.',
+            familyId,
+            timestamp: Date.now(),
+          }),
+        });
+      } catch (err) {
+        logger.error('Failed to queue Safari fallback', {
+          uid,
+          error: err instanceof Error ? err.message : JSON.stringify(err),
+        });
       }
     }
   } catch (error) {
-    logger.error('Error sending notifications', { familyId, error: error instanceof Error ? error.message : JSON.stringify(error) });
+    logger.error('Error sending notifications', {
+      familyId,
+      error: error instanceof Error ? error.message : JSON.stringify(error),
+    });
     console.error('Full error stack:', error);
   }
 }
 
+// === existing trigger: status -> in_transit (unchanged) ===
 export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
-    'families/{familyId}/deliveries/{deliveryId}',
-    async (event) => {
-        logger.info('Function triggered with params', { params: event.params });
+  'families/{familyId}/deliveries/{deliveryId}',
+  async (event) => {
+    logger.info('notifyDeliveryInTransit triggered', { params: event.params });
 
-        const beforeSnap = event.data?.before;
-        const afterSnap = event.data?.after;
-        const familyId = event.params.familyId;
+    const beforeSnap = event.data?.before;
+    const afterSnap = event.data?.after;
+    const familyId = event.params.familyId;
 
-        if (!beforeSnap || !afterSnap || !familyId) {
-            logger.warn('Missing beforeSnap, afterSnap, or familyId - exiting');
-            return;
-        }
-
-        const before = beforeSnap.data();
-        const after = afterSnap.data();
-
-        if (!before || !after) {
-            logger.warn('Missing before or after data - exiting');
-            return;
-        }
-
-        logger.info('Before status and After status', { beforeStatus: before.status, afterStatus: after.status });
-
-        if (before.status !== 'in_transit' && after.status === 'in_transit') {
-            let expectedDate: Date | null = null;
-
-            if (after.expectedDate) {
-                if (typeof after.expectedDate === 'object' && 'toDate' in after.expectedDate) {
-                    expectedDate = (after.expectedDate as admin.firestore.Timestamp).toDate();
-                    logger.info('Parsed expectedDate from Timestamp', { expectedDate });
-                } else {
-                    expectedDate = new Date(after.expectedDate);
-                    logger.info('Parsed expectedDate from string/date', { expectedDate });
-                }
-            } else {
-                logger.info('No expectedDate found on after snapshot');
-            }
-
-            logger.info('Calling sendDeliveryNotificationForFamily', { familyId, expectedDate });
-
-            await sendDeliveryNotificationForFamily(familyId, expectedDate);
-
-            logger.info('sendDeliveryNotificationForFamily call complete', { familyId });
-        } else {
-            logger.info('Status change does not meet criteria for sending notification');
-        }
-
-        return;
+    if (!beforeSnap || !afterSnap || !familyId) {
+      logger.warn('Missing before/after/familyId - exiting');
+      return;
     }
+
+    const before = beforeSnap.data() as any;
+    const after = afterSnap.data() as any;
+
+    if (!before || !after) {
+      logger.warn('Missing before/after data - exiting');
+      return;
+    }
+
+    if (before.status !== 'in_transit' && after.status === 'in_transit') {
+      let expectedDate: Date | null = null;
+
+      if (after.expectedDate) {
+        if (typeof after.expectedDate === 'object' && 'toDate' in after.expectedDate) {
+          expectedDate = (after.expectedDate as admin.firestore.Timestamp).toDate();
+        } else {
+          expectedDate = new Date(after.expectedDate);
+        }
+      }
+
+      await sendDeliveryNotificationForFamily(familyId, expectedDate);
+    }
+  }
 );
 
-export const scheduledDeliveryNotification = scheduler.onSchedule('every 1 hours', async (event) => {
-    logger.info('Scheduled delivery notification triggered');
+// === new: daily 8AM sweep for deliveries expected TODAY with status != 'delivered' ===
+export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
+  {
+    schedule: '0 8 * * *',       // every day at 8:00
+    timeZone: 'Asia/Manila',     // <- change if needed
+  },
+  async () => {
+    logger.info('Daily 8AM delivery detection start');
 
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const { startOfDay, endOfDay } = getTodayBounds();
+    const dateKey = formatDateKeyUTC(startOfDay);
 
     try {
-        const deliveriesSnap = await firestore.collectionGroup('deliveries')
-            .where('expectedDate', '>=', startOfDay)
-            .where('expectedDate', '<', endOfDay)
-            .where('status', 'in', ['pending', 'in_transit'])
-            .get();
+      const snap = await firestore
+        .collectionGroup('deliveries')
+        .where('expectedDate', '>=', startOfDay)
+        .where('expectedDate', '<', endOfDay)
+        .where('status', '!=', 'delivered')  // ✅ anything except delivered
+        .orderBy('status')                   // required with '!='
+        .get();
 
-        if (deliveriesSnap.empty) {
-            logger.info('No deliveries found for today');
-            return;
+      if (snap.empty) {
+        logger.info('No deliveries found for today', { dateKey });
+        return;
+      }
+
+      const visited = new Set<string>();
+
+      for (const docSnap of snap.docs) {
+        const familyId = docSnap.ref.parent.parent?.id;
+        if (!familyId || visited.has(familyId)) continue;
+
+        // Only notify a family once per day at the daily job
+        const shouldNotify = await markDailyNotifiedIfNeeded(familyId, dateKey);
+        if (!shouldNotify) {
+          visited.add(familyId);
+          continue;
         }
 
-        const notifiedFamilies = new Set<string>();
-
-        for (const doc of deliveriesSnap.docs) {
-            const delivery = doc.data();
-            const familyId = doc.ref.parent.parent?.id;
-            if (!familyId || notifiedFamilies.has(familyId)) continue;
-
-            let expectedDate: Date | null = null;
-            if (delivery.expectedDate) {
-                if (typeof delivery.expectedDate === 'object' && 'toDate' in delivery.expectedDate) {
-                    expectedDate = delivery.expectedDate.toDate();
-                } else {
-                    expectedDate = new Date(delivery.expectedDate);
-                }
-            }
-
-            await sendDeliveryNotificationForFamily(familyId, expectedDate);
-            notifiedFamilies.add(familyId);
+        const delivery = docSnap.data() as any;
+        let expectedDate: Date | null = null;
+        if (delivery?.expectedDate) {
+          if (typeof delivery.expectedDate === 'object' && 'toDate' in delivery.expectedDate) {
+            expectedDate = (delivery.expectedDate as admin.firestore.Timestamp).toDate();
+          } else {
+            expectedDate = new Date(delivery.expectedDate);
+          }
         }
+
+        await sendDeliveryNotificationForFamily(familyId, expectedDate);
+        visited.add(familyId);
+      }
+
+      logger.info('Daily 8AM delivery detection complete', {
+        dateKey,
+        familiesNotified: visited.size,
+      });
     } catch (error) {
-        logger.error('Error during scheduled notification', { error: error instanceof Error ? error.message : JSON.stringify(error) });
-        console.error('Full error stack:', error);
+      logger.error('Error during daily delivery detection', {
+        error: error instanceof Error ? error.message : JSON.stringify(error),
+      });
+      console.error('Full error stack:', error);
     }
-
-    return;
-});
+  }
+);

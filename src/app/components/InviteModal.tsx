@@ -16,7 +16,7 @@ type InviteModalProps = {
 
 export default function InviteModal({ familyId, familyName, open, onOpenChange }: InviteModalProps) {
   const [copied, setCopied] = useState(false)
-  const svgRef = useRef<HTMLDivElement>(null)
+  const svgWrapRef = useRef<HTMLDivElement>(null)
 
   const displayName = familyName ?? 'your family'
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
@@ -43,20 +43,22 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
       document.body.removeChild(tempInput)
     }
 
-    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(inviteLink).then(() => {
-        toast.success('Invite link copied!')
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      }).catch(fallbackCopy)
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(inviteLink)
+        .then(() => {
+          toast.success('Invite link copied!')
+          setCopied(true)
+          setTimeout(() => setCopied(false), 2000)
+        })
+        .catch(fallbackCopy)
     } else {
       fallbackCopy()
     }
   }
 
   const handleShare = () => {
-    if (typeof navigator !== 'undefined' && navigator.share) {
-      navigator.share({
+    if (typeof navigator !== 'undefined' && (navigator as any).share) {
+      (navigator as any).share({
         title: 'Join my family on Abot Ko Na',
         text: `Join ${displayName} on Abot Ko Na`,
         url: inviteLink,
@@ -68,39 +70,64 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
     }
   }
 
-  // Convert the rendered SVG QR into a PNG and download
+  // Convert <svg> QR to PNG and download (with Safari-safe fallback)
   const handleDownloadQR = () => {
-    const container = svgRef.current
+    const container = svgWrapRef.current
     if (!container) return
-    const svg = container.querySelector('svg')
+    const svg = container.querySelector('svg') as SVGSVGElement | null
     if (!svg) return
+
+    // Ensure xmlns + explicit size on the SVG before rasterizing
+    const size = 640 // output PNG size
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    svg.setAttribute('width', String(size))
+    svg.setAttribute('height', String(size))
 
     const serializer = new XMLSerializer()
     const svgStr = serializer.serializeToString(svg)
-
-    const img = new Image()
     const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
     const url = URL.createObjectURL(svgBlob)
+
+    const img = new Image()
     img.onload = () => {
-      const size = 640 // high-res PNG
+      // Draw onto canvas
       const canvas = document.createElement('canvas')
       canvas.width = size
       canvas.height = size
       const ctx = canvas.getContext('2d')
-      if (!ctx) return
+      if (!ctx) { URL.revokeObjectURL(url); return }
+      ctx.imageSmoothingEnabled = false
       ctx.fillStyle = '#ffffff'
       ctx.fillRect(0, 0, size, size)
       ctx.drawImage(img, 0, 0, size, size)
       URL.revokeObjectURL(url)
 
-      canvas.toBlob((blob) => {
-        if (!blob) return
-        const dl = document.createElement('a')
-        dl.href = URL.createObjectURL(blob)
-        dl.download = `abot-ko-na-invite-${familyId}.png`
-        dl.click()
-        setTimeout(() => URL.revokeObjectURL(dl.href), 2000)
-      }, 'image/png')
+      // Prefer toBlob; fallback to dataURL (Safari)
+      if (canvas.toBlob) {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            // Fallback if toBlob returns null
+            const dataURL = canvas.toDataURL('image/png')
+            const a = document.createElement('a')
+            a.href = dataURL
+            a.download = `abot-ko-na-invite-${familyId}.png`
+            a.click()
+            return
+          }
+          const pngUrl = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = pngUrl
+          a.download = `abot-ko-na-invite-${familyId}.png`
+          a.click()
+          setTimeout(() => URL.revokeObjectURL(pngUrl), 2000)
+        }, 'image/png')
+      } else {
+        const dataURL = canvas.toDataURL('image/png')
+        const a = document.createElement('a')
+        a.href = dataURL
+        a.download = `abot-ko-na-invite-${familyId}.png`
+        a.click()
+      }
     }
     img.onerror = () => {
       URL.revokeObjectURL(url)
@@ -130,7 +157,8 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
         </div>
 
         <div className="flex justify-center rounded bg-muted p-4">
-          <div ref={svgRef}>
+          <div ref={svgWrapRef}>
+            {/* react-qr-code renders an SVG */}
             <QRCode value={inviteLink} size={160} />
           </div>
         </div>

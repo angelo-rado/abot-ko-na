@@ -43,27 +43,43 @@ type Props = {
   delivery?: any | null
 }
 
+// --- Helpers ---
+function getLocalISOStringForTime(hour: number, minute: number) {
+  const date = new Date()
+  date.setHours(hour, minute, 0, 0)
+  const offset = date.getTimezoneOffset()
+  const localDate = new Date(date.getTime() - offset * 60 * 1000)
+  return localDate.toISOString().slice(0, 16) // for <input type="datetime-local">
+}
+
+/** Clamp an input "YYYY-MM-DDTHH:mm" to end-of-day LOCAL (23:59:00.000) */
+function endOfDayFromLocalISO(iso: string): Date {
+  const d = new Date(iso) // datetime-local is parsed as local time
+  d.setHours(23, 59, 0, 0)
+  return d
+}
+
+/** Preserve exact timestamp coming from Firestore (for edit mode). */
+function parseExpectedDate(d: any) {
+  if (!d) return ''
+  if (typeof d.toDate === 'function') return d.toDate().toISOString().slice(0, 16)
+  if (typeof d.seconds === 'number') return new Date(d.seconds * 1000).toISOString().slice(0, 16)
+  return ''
+}
+
 export default function DeliveryFormDialog({ open, onOpenChange, familyId, delivery }: Props) {
   const isEdit = !!delivery
 
   const draftItemsRef = useRef<ItemRow[] | null>(null)
-
   const modifiedItemsRef = useRef<Set<string>>(new Set())
-
-  const parseExpectedDate = (d: any) => {
-    if (!d) return ''
-    if (typeof d.toDate === 'function') return d.toDate().toISOString().slice(0, 16)
-    if (typeof d.seconds === 'number') return new Date(d.seconds * 1000).toISOString().slice(0, 16)
-    return ''
-  }
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const [values, setValues] = useState<DeliveryFormValues>({
     title: delivery?.title ?? '',
     expectedDate: delivery?.expectedDate
-      ? parseExpectedDate(delivery.expectedDate)
-      : getLocalISOStringForTime(23, 59),
+      ? parseExpectedDate(delivery.expectedDate)          // EDIT keeps time
+      : getLocalISOStringForTime(23, 59),                 // CREATE defaults to 11:59 PM local
     codAmount: delivery?.codAmount ?? null,
     status: (delivery?.status as DeliveryStatus) ?? 'pending',
     note: delivery?.note ?? '',
@@ -80,8 +96,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   const addItemDisabled = itemMode === 'single' && (!isEdit || items.length >= 1)
 
-
-
   useEffect(() => {
     if (formErrors.items && items.length > 0) {
       setFormErrors((prev) => {
@@ -91,15 +105,16 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
   }, [items.length, formErrors.items])
 
+  // Reset values on open (CREATE only), default time = 23:59 local
   useEffect(() => {
     if (!open || isEdit) return
 
     setValues({
       title: '',
-      expectedDate: delivery?.expectedDate
-        ? parseExpectedDate(delivery.expectedDate)
-        : getLocalISOStringForTime(23, 59),
-      codAmount: null, status: 'pending'
+      expectedDate: getLocalISOStringForTime(23, 59),
+      codAmount: null,
+      status: 'pending',
+      note: '',
     })
 
     if (draftItemsRef.current) {
@@ -113,19 +128,18 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setConfirmSinglePromptOpen(false)
   }, [open, isEdit])
 
-
+  // Load values for EDIT mode (preserve exact times from Firestore)
   useEffect(() => {
     if (!delivery || !isEdit) return
 
     setValues({
       title: delivery.title ?? '',
-      expectedDate: parseExpectedDate(delivery.expectedDate),
+      expectedDate: parseExpectedDate(delivery.expectedDate), // keep stored time
       codAmount: delivery.codAmount ?? null,
       status: (delivery.status as DeliveryStatus) ?? 'pending',
       note: delivery.note ?? '',
     })
 
-    // 🧠 only clear items if it's not a bulk delivery
     if (delivery.type !== 'bulk') {
       setItems([])
     }
@@ -135,6 +149,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setConfirmSinglePromptOpen(false)
   }, [delivery, isEdit])
 
+  // Fetch bulk items on edit (preserve each item's time)
   useEffect(() => {
     async function fetchItems() {
       if (!delivery || !delivery.id || delivery.type !== 'bulk') return
@@ -153,7 +168,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       })
 
       setItems(rows)
-
     }
 
     if (open && isEdit && delivery?.type === 'bulk') {
@@ -186,14 +200,14 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         name: '',
         price: null,
         expectedDate: delivery?.expectedDate
-          ? parseExpectedDate(delivery.expectedDate)
-          : getLocalISOStringForTime(23, 59), 
+          ? parseExpectedDate(delivery.expectedDate)    // EDIT: keep existing delivery time
+          : getLocalISOStringForTime(23, 59),           // CREATE: default to 11:59 PM local
       },
     ])
   }
 
   function updateItemRow(id: string, patch: Partial<ItemRow>) {
-    modifiedItemsRef.current.add(id) // 🔥 mark item as changed
+    modifiedItemsRef.current.add(id)
     setItems((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   }
 
@@ -256,7 +270,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     } else {
       const now = new Date()
       const expected = new Date(values.expectedDate)
-
       if (expected < now) {
         errors.expectedDate = 'Expected date cannot be in the past'
       }
@@ -283,11 +296,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         } else {
           const itemDate = new Date(item.expectedDate)
           const now = new Date()
-
           if (itemDate < now) {
             errors[`item-${item.id}-date`] = `Item ${index + 1}: Date cannot be in the past`
           }
-
           if (headerExpected && itemDate < headerExpected) {
             errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery ETA`
           }
@@ -304,8 +315,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
     try {
       if (isEdit && delivery?.id) {
-        // ✅ EDIT MODE
-
+        // === EDIT MODE: keep exact times from form (no clamping) ===
         const deliveryRef = doc(firestore, 'families', familyId, 'deliveries', delivery.id)
         const itemsCol = collection(deliveryRef, 'items')
 
@@ -314,7 +324,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         const deletePromises = existingItemsSnap.docs.map((doc) => deleteDoc(doc.ref))
         await Promise.all(deletePromises)
 
-        // 2. Add updated items
+        // 2. Add updated items (preserve item times)
         const batch = writeBatch(firestore)
         items.forEach((it) => {
           const itemRef = doc(itemsCol)
@@ -328,7 +338,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           })
         })
 
-        // 3. Update delivery metadata
+        // 3. Update delivery metadata (preserve header time)
         batch.update(deliveryRef, {
           title: values.title.trim(),
           codAmount: values.codAmount ?? null,
@@ -342,7 +352,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
         await batch.commit()
 
-        // ✅ cleanup
         draftItemsRef.current = null
         modifiedItemsRef.current.clear()
         setItems([])
@@ -350,7 +359,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         onOpenChange(false)
         return
       } else {
-        // ✅ CREATE MODE
+        // === CREATE MODE: clamp ALL times to 11:59 PM LOCAL ===
+        const headerDate = values.expectedDate ? endOfDayFromLocalISO(values.expectedDate) : undefined
 
         const determinedType = itemMode === 'multiple' || items.length > 1 ? 'bulk' : 'single'
         const created = await createDelivery(familyId, {
@@ -359,7 +369,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           itemCount: 0,
           type: determinedType,
           codAmount: values.codAmount ?? undefined,
-          expectedDate: values.expectedDate ? new Date(values.expectedDate) : undefined,
+          expectedDate: headerDate ?? undefined,  // 23:59 local
           note: values.note?.trim() || '',
           receiverNote: '',
         })
@@ -369,12 +379,18 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
         if (items.length > 0) {
           for (const it of items) {
+            // Each item uses its own date clamped to 23:59 local; if none, inherit headerDate
+            const itemDate =
+              it.expectedDate?.trim()
+                ? endOfDayFromLocalISO(it.expectedDate)
+                : headerDate
+
             await addDoc(itemsCol, {
               name: it.name.trim(),
               price: it.price,
               status: 'pending',
               createdAt: Timestamp.now(),
-              ...(it.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(it.expectedDate)) } : {}),
+              ...(itemDate ? { expectedDate: Timestamp.fromDate(itemDate) } : {}),
               ...(it.note ? { note: it.note.trim() } : {}),
             })
           }
@@ -385,12 +401,13 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
             updatedAt: Timestamp.now(),
           })
         } else {
+          // Single implicit item inherits headerDate at 23:59 local
           await addDoc(itemsCol, {
             name: values.title.trim() || 'Delivery',
             price: null,
             status: 'pending',
             createdAt: Timestamp.now(),
-            ...(values.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(values.expectedDate)) } : {}),
+            ...(headerDate ? { expectedDate: Timestamp.fromDate(headerDate) } : {}),
           })
 
           await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
@@ -414,7 +431,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       setIsSaving(false)
     }
   }
-
 
   const previewNames = (draftItemsRef.current ?? items)
     .slice(0, 5)
@@ -443,18 +459,14 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                   <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
                 </DialogHeader>
 
-                {/* Overlay spinner while saving */}
                 {isSaving && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-white/70 rounded-md">
                     <div className="animate-spin h-6 w-6 border-2 border-gray-400 border-t-transparent rounded-full" />
                   </div>
                 )}
 
-                <form
-                  onSubmit={onSubmit}
-                  className={`space-y-4 transition-opacity duration-200 ${isSaving ? 'opacity-50 pointer-events-none' : ''
-                    }`}
-                >
+                <form onSubmit={onSubmit}
+                  className={`space-y-4 transition-opacity duration-200 ${isSaving ? 'opacity-50 pointer-events-none' : ''}`}>
                   <div>
                     <Label>Title</Label>
                     <Input
@@ -477,25 +489,20 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     {formErrors.expectedDate && (
                       <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>
                     )}
+                    {!isEdit && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Time is auto-set to <strong>11:59 PM</strong> on create.
+                      </p>
+                    )}
                   </div>
 
                   <div>
                     <Label>Item mode</Label>
                     <div className="mt-1 flex gap-2 items-center">
-                      <Button
-                        type="button"
-                        variant={itemMode === 'single' ? 'default' : 'outline'}
-                        onClick={handleSetSingleMode}
-                        size="sm"
-                      >
+                      <Button type="button" variant={itemMode === 'single' ? 'default' : 'outline'} onClick={handleSetSingleMode} size="sm">
                         Single
                       </Button>
-                      <Button
-                        type="button"
-                        variant={itemMode === 'multiple' ? 'default' : 'outline'}
-                        onClick={handleSetMultipleMode}
-                        size="sm"
-                      >
+                      <Button type="button" variant={itemMode === 'multiple' ? 'default' : 'outline'} onClick={handleSetMultipleMode} size="sm">
                         Multiple
                       </Button>
                     </div>
@@ -511,16 +518,10 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Input
                       type="number"
                       value={values.codAmount ?? ''}
-                      onChange={(e) =>
-                        updateField('codAmount', e.target.value ? Number(e.target.value) : null)
-                      }
+                      onChange={(e) => updateField('codAmount', e.target.value ? Number(e.target.value) : null)}
                       min={0}
                       disabled={itemMode === 'multiple' || items.length > 1}
-                      title={
-                        itemMode === 'multiple' || items.length > 1
-                          ? 'COD is calculated per item in bulk deliveries'
-                          : ''
-                      }
+                      title={itemMode === 'multiple' || items.length > 1 ? 'COD is calculated per item in bulk deliveries' : ''}
                     />
                     {(itemMode === 'multiple' || items.length > 1) && (
                       <p className="text-sm text-muted-foreground mt-1">
@@ -533,9 +534,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                     <Label>Status</Label>
                     <select
                       value={values.status}
-                      onChange={(e) =>
-                        updateField('status', e.target.value as DeliveryStatus)
-                      }
+                      onChange={(e) => updateField('status', e.target.value as DeliveryStatus)}
                       className="mt-1 block w-full rounded border px-2 py-1"
                     >
                       <option value="pending">Pending</option>
@@ -544,6 +543,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                       <option value="cancelled">Cancelled</option>
                     </select>
                   </div>
+
                   <div>
                     <Label>Notes</Label>
                     <Textarea
@@ -565,11 +565,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                           size="sm"
                           onClick={addItemRow}
                           disabled={addItemDisabled}
-                          title={
-                            addItemDisabled
-                              ? 'Switch to Multiple to add items'
-                              : 'Add item'
-                          }
+                          title={addItemDisabled ? 'Switch to Multiple to add items' : 'Add item'}
                         >
                           Add item
                         </Button>
@@ -579,7 +575,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                           </span>
                         )}
                       </div>
-
                     </div>
 
                     <div className="space-y-2 mt-2">
@@ -629,9 +624,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                               <Input
                                 type="datetime-local"
                                 value={it.expectedDate}
-                                onChange={(e) =>
-                                  updateItemRow(it.id, { expectedDate: e.target.value })
-                                }
+                                onChange={(e) => updateItemRow(it.id, { expectedDate: e.target.value })}
                               />
                               {formErrors[`item-${it.id}-date`] && (
                                 <p className="text-xs text-red-500 mt-1">
@@ -664,17 +657,11 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                         </motion.p>
                       )}
                     </div>
-
                   </div>
 
                   <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-2 border-t mt-6">
                     <div className="flex gap-2 justify-end w-full">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={handleDialogClose}
-                        disabled={isSaving}
-                      >
+                      <Button type="button" variant="ghost" onClick={handleDialogClose} disabled={isSaving}>
                         Cancel
                       </Button>
                       <Button type="submit" disabled={isSaving}>
@@ -697,17 +684,12 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               initial={{ opacity: 0, y: -8, scale: 0.97 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 4, scale: 0.98 }}
-              transition={{
-                duration: 0.3,
-                ease: [0.16, 1, 0.3, 1], // softened expo-style ease
-              }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>
-                    {confirmContext === 'switch'
-                      ? 'Switch to Single delivery?'
-                      : 'Discard this delivery?'}
+                    {confirmContext === 'switch' ? 'Switch to Single delivery?' : 'Discard this delivery?'}
                   </DialogTitle>
                 </DialogHeader>
 
@@ -715,34 +697,25 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                   <p className="mb-3">
                     You currently have{' '}
                     <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
-                    item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in
-                    this delivery.
+                    item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in this delivery.
                   </p>
 
                   <div className="mb-3">
-                    <p className="text-sm font-medium">
-                      Preview (first {previewNames.length}):
-                    </p>
+                    <p className="text-sm font-medium">Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):</p>
                     <ul className="list-disc ml-5 text-sm">
-                      {previewNames.length ? (
-                        previewNames.map((n, idx) => <li key={idx}>{n}</li>)
-                      ) : (
-                        <li>(no item names)</li>
-                      )}
+                      {(draftItemsRef.current ?? items).slice(0, 5).map((it, idx) => (
+                        <li key={idx}>{it.name?.trim() || '(unnamed item)'}</li>
+                      ))}
                     </ul>
-                    {(draftItemsRef.current ?? items).length > previewNames.length && (
+                    {(draftItemsRef.current ?? items).length > 5 && (
                       <p className="text-sm text-muted-foreground mt-1">
-                        ...and{' '}
-                        {(draftItemsRef.current ?? items).length -
-                          previewNames.length}{' '}
-                        more.
+                        ...and {(draftItemsRef.current ?? items).length - 5} more.
                       </p>
                     )}
                   </div>
 
                   <p className="mb-1 text-sm text-muted-foreground">
-                    If you proceed, <strong>all items will be removed</strong> and the
-                    delivery will become a single-item delivery.
+                    If you proceed, <strong>all items will be removed</strong> and the delivery will become a single-item delivery.
                   </p>
                 </div>
 
@@ -750,11 +723,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 6 }}
-                  transition={{
-                    delay: 0.15, // comes in after the main dialog content
-                    duration: 0.25,
-                    ease: [0.16, 1, 0.3, 1],
-                  }}
+                  transition={{ delay: 0.15, duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
                 >
                   <DialogFooter className="pt-4">
                     <div className="flex gap-2 justify-end w-full">
@@ -794,18 +763,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           </Dialog>
         )}
       </AnimatePresence>
-
-
     </>
   )
-}
-
-function getLocalISOStringForTime(hour: number, minute: number) {
-  const date = new Date()
-  date.setHours(hour, minute, 0, 0)
-
-  const offset = date.getTimezoneOffset()
-  const localDate = new Date(date.getTime() - offset * 60 * 1000)
-
-  return localDate.toISOString().slice(0, 16) // for <input type="datetime-local">
 }

@@ -7,6 +7,14 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
+import { ThemeProvider } from 'next-themes'
+
+const VAPID_KEY =
+  (
+    process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
+    process.env.NEXT_PUBLIC_VAPID_KEY ||
+    ''
+  ).trim() || undefined
 
 export default function MainLayout({
   children,
@@ -58,7 +66,6 @@ export default function MainLayout({
     animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
   }, [index, width, x])
 
-  // prefetch neighbors and all once
   useEffect(() => {
     // @ts-ignore
     const prefetch = (p?: string) => p && router.prefetch?.(p)
@@ -70,14 +77,14 @@ export default function MainLayout({
     nav.forEach(n => router.prefetch?.(n.href))
   }, [router])
 
-  // push notifications (kept)
+  // push notifications (env-based VAPID)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) return
       if (isIOSWebKit()) {
         window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: u.uid } }))
       } else {
-        setupPushNotifications(u.uid)
+        setupPushNotifications(u.uid).catch(() => {})
       }
     })
     return () => unsub()
@@ -86,14 +93,15 @@ export default function MainLayout({
   async function setupPushNotifications(uid: string) {
     if (typeof window === 'undefined') return
     if (!('serviceWorker' in navigator) || !('Notification' in window)) return
+    if (!VAPID_KEY) return
     try {
-      await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
       await navigator.serviceWorker.ready
-      const messaging = getFirebaseMessaging()
       const permission = await Notification.requestPermission()
       if (permission !== 'granted') return
-      const vapidKey = 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
-      const token = await getToken(messaging!, { vapidKey })
+      const messaging = getFirebaseMessaging()
+      if (!messaging) return
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
       if (token) await sendTokenToBackend(token, uid)
     } catch {}
   }
@@ -105,7 +113,6 @@ export default function MainLayout({
     lastT.current = e.timeStamp
     baseRef.current = x.get()
     velRef.current = 0
-    // warm neighbors
     // @ts-ignore
     router.prefetch?.(nav[index - 1]?.href)
     // @ts-ignore
@@ -159,55 +166,57 @@ export default function MainLayout({
   }
 
   return (
-    <div className="flex flex-col min-h-screen overflow-hidden select-none" style={{ height: '100vh' }}>
-      <nav className="fixed top-0 left-0 right-0 h-16 bg-white border-b flex items-center justify-around z-50">
-        {nav.map(({ label, href, Icon }, i) => (
-          <button
-            key={href}
-            type="button"
-            onClick={() => router.push(href, { scroll: false })}
-            className={`flex flex-col items-center text-xs p-2 ${i === index ? 'text-blue-600 font-semibold' : 'text-gray-600'}`}
-            aria-current={i === index ? 'page' : undefined}
-          >
-            <Icon className="w-5 h-5 mb-1" />
-            {label}
-          </button>
-        ))}
-      </nav>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <div className="flex flex-col min-h-screen overflow-hidden select-none bg-background text-foreground" style={{ height: '100vh' }}>
+        <nav className="fixed top-0 left-0 right-0 h-16 bg-background border-b flex items-center justify-around z-50">
+          {nav.map(({ label, href, Icon }, i) => (
+            <button
+              key={href}
+              type="button"
+              onClick={() => router.push(href, { scroll: false })}
+              className={`flex flex-col items-center text-xs p-2 ${i === index ? 'text-primary font-semibold' : 'text-muted-foreground'}`}
+              aria-current={i === index ? 'page' : undefined}
+            >
+              <Icon className="w-5 h-5 mb-1" />
+              {label}
+            </button>
+          ))}
+        </nav>
 
-      <motion.div
-        className="relative flex flex-row pt-16 overflow-hidden"
-        style={{
-          width: width * nav.length,
-          x,
-          height: 'calc(100vh - 4rem)',
-          touchAction: 'pan-y',
-          WebkitOverflowScrolling: 'touch',
-        }}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchEnd}
-      >
-        {[home ?? children, deliveries, family, settings].map((node, i) => (
-          <div
-            key={i}
-            style={{
-              width: width,
-              flexShrink: 0,
-              height: '100%',
-              overflowY: 'auto',
-              willChange: 'transform, opacity',
-              WebkitBackfaceVisibility: 'hidden',
-              backfaceVisibility: 'hidden',
-              transform: 'translateZ(0)',
-            }}
-          >
-            {node}
-          </div>
-        ))}
-      </motion.div>
-    </div>
+        <motion.div
+          className="relative flex flex-row pt-16 overflow-hidden"
+          style={{
+            width: width * nav.length,
+            x,
+            height: 'calc(100vh - 4rem)',
+            touchAction: 'pan-y',
+            WebkitOverflowScrolling: 'touch',
+          }}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
+        >
+          {[home ?? children, deliveries, family, settings].map((node, i) => (
+            <div
+              key={i}
+              style={{
+                width: width,
+                flexShrink: 0,
+                height: '100%',
+                overflowY: 'auto',
+                willChange: 'transform, opacity',
+                WebkitBackfaceVisibility: 'hidden',
+                backfaceVisibility: 'hidden',
+                transform: 'translateZ(0)',
+              }}
+            >
+              {node}
+            </div>
+          ))}
+        </motion.div>
+      </div>
+    </ThemeProvider>
   )
 }
 

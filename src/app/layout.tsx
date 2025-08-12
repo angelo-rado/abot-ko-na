@@ -26,7 +26,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={cn(inter.className, 'bg-background text-foreground antialiased')}>
         <Suspense fallback={<div className="p-6 text-center">Loading…</div>}>
           <Providers>{children}</Providers>
