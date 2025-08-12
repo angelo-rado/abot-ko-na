@@ -15,13 +15,17 @@ const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 type FamilyLite = {
   id: string
   name?: string | null
-  // createdBy might be a string OR a Firestore DocumentReference/object
   createdBy?: unknown
 }
 
 export default function FamilyJoinPageContent() {
   const searchParams = useSearchParams()
-  const inviteId = useMemo(() => searchParams.get('invite') ?? '', [searchParams])
+  const inviteId = useMemo(() => {
+    // ensure it is always a plain string
+    const v = searchParams.get('invite')
+    return typeof v === 'string' ? v : ''
+  }, [searchParams])
+
   const router = useRouter()
   const { user, loading } = useAuth()
   const isOnline = useOnlineStatus()
@@ -30,23 +34,26 @@ export default function FamilyJoinPageContent() {
   const [joining, setJoining] = useState(false)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
 
-  // Fetch invite target
+  // Fetch invite target (with logging only to console)
   useEffect(() => {
     let alive = true
-    async function run() {
+    ;(async () => {
       if (!inviteId || !isOnline) {
         setFamily(null)
         return
       }
       try {
-        const snap = await getDoc(doc(firestore, 'families', inviteId))
+        const ref = doc(firestore, 'families', inviteId)
+        const snap = await getDoc(ref)
         if (!alive) return
         if (snap.exists()) {
           const data = snap.data() as any
+          // log but NEVER render raw objects
+          console.log('[join] family doc data:', data)
           setFamily({
             id: snap.id,
-            name: data?.name ?? null,
-            createdBy: data?.createdBy,
+            name: typeof data?.name === 'string' ? data.name : null,
+            createdBy: data?.createdBy, // kept for diagnostics, not rendered
           })
         } else {
           setFamily(null)
@@ -56,15 +63,14 @@ export default function FamilyJoinPageContent() {
         toast.error('Could not load invite.')
         setFamily(null)
       }
-    }
-    run()
+    })()
     return () => { alive = false }
   }, [inviteId, isOnline])
 
   // If signed in, check onboardingComplete
   useEffect(() => {
     let alive = true
-    async function checkOnboarding() {
+    ;(async () => {
       if (!user) { setOnboarded(null); return }
       try {
         const u = await getDoc(doc(firestore, 'users', user.uid))
@@ -73,8 +79,7 @@ export default function FamilyJoinPageContent() {
       } catch {
         if (alive) setOnboarded(false)
       }
-    }
-    checkOnboarding()
+    })()
     return () => { alive = false }
   }, [user])
 
@@ -105,7 +110,7 @@ export default function FamilyJoinPageContent() {
     }
   }
 
-  // SIGNED OUT -> ask to sign up with Google then go to onboarding (preserves invite)
+  // SIGNED OUT → ask to sign in with Google, then onboarding (preserve invite)
   if (!loading && !user) {
     const redirect = `/onboarding?invite=${encodeURIComponent(inviteId)}`
     const googleUrl = `/login?provider=google&redirect=${encodeURIComponent(redirect)}`
@@ -115,23 +120,25 @@ export default function FamilyJoinPageContent() {
           <CardHeader><CardTitle>Join this family</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-sm text-muted-foreground">Sign in to accept the invite.</p>
-            <Button className="w-full" asChild>
-              <a href={googleUrl}>Continue with Google</a>
-            </Button>
+            {/* avoid asChild just in case */}
+            <a className="w-full inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-primary-foreground hover:opacity-90"
+               href={googleUrl}>
+              Continue with Google
+            </a>
           </CardContent>
         </Card>
       </div>
     )
   }
 
-  // SIGNED IN but not onboarded -> send to onboarding (keeps invite)
+  // SIGNED IN but not onboarded → redirect to onboarding (keep invite)
   if (user && onboarded === false) {
     const url = `/onboarding?invite=${encodeURIComponent(inviteId)}`
     if (typeof window !== 'undefined') router.replace(url)
     return null
   }
 
-  // Loading states
+  // Loading / not found
   if (family === undefined) {
     return <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">Loading invite…</div>
   }
@@ -140,41 +147,29 @@ export default function FamilyJoinPageContent() {
       <div className="max-w-md mx-auto p-6">
         <Card>
           <CardHeader><CardTitle>Invite not found</CardTitle></CardHeader>
-          <CardContent className="text-sm text-muted-foreground">The family doesn’t exist or the link is invalid.</CardContent>
         </Card>
       </div>
     )
   }
 
-  // Build a safe "created by" label (createdBy may be a DocumentReference or object)
-  let createdByLabel: string | null = null
-  if (typeof family.createdBy === 'string') {
-    createdByLabel = family.createdBy
-  } else if (family.createdBy && typeof family.createdBy === 'object') {
-    // Firestore DocumentReference usually has an 'id' field
-    // We only show an id if present; otherwise hide the line entirely
-    const maybeId = (family.createdBy as any)?.id
-    createdByLabel = typeof maybeId === 'string' ? maybeId : null
-  }
-
-  // SIGNED IN & onboarded -> auto-join happens in effect; show subtle status
+  // SIGNED IN & onboarded → auto-join in effect; show subtle status
   if (user && onboarded === true) {
     return (
       <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
-        Joining {family.name ?? 'family'}…
+        Joining {typeof family.name === 'string' ? family.name : 'family'}…
       </div>
     )
   }
 
-  // Fallback: if user is signed in and onboarding is unknown yet, allow manual Accept
+  // Fallback: allow manual Accept (render only strings)
+  const safeFamilyName = typeof family.name === 'string' ? family.name : 'Family'
+
   return (
     <div className="max-w-md mx-auto p-6">
       <Card>
-        <CardHeader><CardTitle>Join {family.name ?? 'Family'}</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Join {safeFamilyName}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          {createdByLabel && (
-            <p className="text-sm">Created by: <span className="text-muted-foreground">{createdByLabel}</span></p>
-          )}
+          {/* Do NOT render createdBy at all to avoid object children */}
           <Button className="w-full" onClick={() => joinNow('button')} disabled={joining}>
             {joining ? 'Joining…' : 'Accept Invite'}
           </Button>
