@@ -1,122 +1,90 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore'
+import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
+import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 
-type FamilyLite = { id: string; name?: string | null }
+const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
 export default function FamilyJoinPageContent() {
   const searchParams = useSearchParams()
-  const router = useRouter()
+  const inviteId = searchParams.get('invite')
   const { user, loading } = useAuth()
+  const router = useRouter()
+  const isOnline = useOnlineStatus()
 
-  const inviteId = useMemo(() => searchParams.get('invite') ?? '', [searchParams])
-
-  const [family, setFamily] = useState<FamilyLite | null | undefined>(undefined)
-  const [fetching, setFetching] = useState(false)
+  const [family, setFamily] = useState<any>(null)
   const [joining, setJoining] = useState(false)
 
+  if (!user && !loading) {
+    const url = `/login?redirect=${encodeURIComponent(`/family/join?invite=${inviteId}`)}`
+    return (
+      <div className="max-w-md mx-auto p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Sign in to join</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              You need to be signed in to accept this invite.
+            </p>
+            <Button className="w-full" asChild>
+              <a href={url}>Sign in</a>
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
   useEffect(() => {
-    let alive = true
-    async function run() {
-      if (!inviteId) {
-        setFamily(null)
-        return
-      }
-      setFetching(true)
+    const loadFamily = async () => {
+      if (!inviteId || !isOnline) return
       try {
-        const snap = await getDoc(doc(firestore, 'families', inviteId))
-        if (!alive) return
+        const ref = doc(firestore, 'families', inviteId)
+        const snap = await getDoc(ref)
         if (snap.exists()) {
-          const data = snap.data() as any
-          setFamily({ id: snap.id, name: data?.name ?? null })
+          setFamily({ id: snap.id, ...snap.data() })
         } else {
-          setFamily(null)
+          toast.error('Family not found.')
         }
       } catch (err) {
-        console.error('[family/join] load error', err)
-        toast.error('Could not load invite. Please try again.')
-        setFamily(null)
-      } finally {
-        if (alive) setFetching(false)
+        console.error(err)
+        toast.error('Failed to load family.')
       }
     }
-    run()
-    return () => {
-      alive = false
-    }
-  }, [inviteId])
+    loadFamily()
+  }, [inviteId, isOnline])
 
-  async function handleJoin() {
-    if (!user) {
-      toast.error('Please sign in to accept the invite.')
-      return
-    }
-    if (!family?.id) return
+  const joinFamily = async () => {
+    if (!user || !family) return
     setJoining(true)
     try {
-      const familyId = family.id
-      const uid = user.uid
-
-      const memberRef = doc(firestore, 'families', familyId, 'members', uid)
-      await setDoc(memberRef, { uid, joinedAt: serverTimestamp() }, { merge: true })
-
-      const userRef = doc(firestore, 'users', uid)
-      await setDoc(
-        userRef,
-        { uid, updatedAt: serverTimestamp(), familiesJoined: arrayUnion(familyId) },
-        { merge: true }
-      )
-
-      const famRef = doc(firestore, 'families', familyId)
-      await updateDoc(famRef, { members: arrayUnion(uid), updatedAt: serverTimestamp() })
-        .catch(() => {})
-
-      toast.success('You’ve joined the family!')
-      router.replace(`/family/${familyId}`)
+      await setDoc(doc(firestore, 'families', inviteId!, 'members', user.uid), {
+        joinedAt: serverTimestamp(),
+        role: 'member',
+      })
+      localStorage.setItem(LOCAL_FAMILY_KEY, inviteId!)
+      toast.success(`Joined ${family.name}`)
+      router.push(`/family/${inviteId}`)
     } catch (err) {
-      console.error('[family/join] join error', err)
-      toast.error('Joining failed. Please try again.')
+      console.error(err)
+      toast.error('Failed to join family.')
     } finally {
       setJoining(false)
     }
   }
 
-  if (!inviteId) {
+  if (!family) {
     return (
-      <div className="max-w-md mx-auto p-6">
-        <Card>
-          <CardHeader><CardTitle>Invalid invite</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">Missing <code>invite</code> parameter.</p></CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  if (fetching || family === undefined) {
-    return (
-      <div className="max-w-md mx-auto p-6">
-        <Card>
-          <CardHeader><CardTitle>Checking invite…</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">Please wait.</p></CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  if (family === null) {
-    return (
-      <div className="max-w-md mx-auto p-6">
-        <Card>
-          <CardHeader><CardTitle>Invite not found</CardTitle></CardHeader>
-          <CardContent><p className="text-sm text-muted-foreground">Invalid link or family deleted.</p></CardContent>
-        </Card>
+      <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
+        Loading family…
       </div>
     )
   }
@@ -124,18 +92,12 @@ export default function FamilyJoinPageContent() {
   return (
     <div className="max-w-md mx-auto p-6">
       <Card>
-        <CardHeader><CardTitle>Join “{family.name || 'Family'}”</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Accept to become a member and see deliveries and presence with the family.
-          </p>
-          <Button
-            onClick={handleJoin}
-            disabled={joining || loading}
-            aria-disabled={joining || loading}
-            aria-busy={joining}
-            className="w-full"
-          >
+        <CardHeader>
+          <CardTitle>Join {family.name}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm">Created by: {family.createdBy}</p>
+          <Button className="w-full" onClick={joinFamily} disabled={joining}>
             {joining ? 'Joining…' : 'Accept Invite'}
           </Button>
         </CardContent>
