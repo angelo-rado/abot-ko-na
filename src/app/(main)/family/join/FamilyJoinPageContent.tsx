@@ -5,87 +5,90 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { toast } from 'sonner'
+import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
-type FamilyLite = { id: string; name: string | null; createdBy: string | null }
-
-function safeText(v: unknown): string {
-  if (v == null) return ''
-  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v)
-  // Prevent React #130 by never rendering objects/functions directly
-  console.warn('[join] prevented rendering non-primitive value:', v)
-  return ''
-}
+type FamilyLite = { id: string; name?: string | null; createdBy?: string | null }
 
 export default function FamilyJoinPageContent() {
   const searchParams = useSearchParams()
   const inviteId = useMemo(() => searchParams.get('invite') ?? '', [searchParams])
   const router = useRouter()
-  const { user, loading } = useAuth()
+  const { user, loading: authLoading } = useAuth()
+  const isOnline = useOnlineStatus()
 
   const [family, setFamily] = useState<FamilyLite | null | undefined>(undefined)
   const [joining, setJoining] = useState(false)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
+  const [familyLoaded, setFamilyLoaded] = useState(false)
+  const [alreadyMember, setAlreadyMember] = useState(false)
 
-  // Load invite
+  // Fetch invite target
   useEffect(() => {
     let alive = true
-    ;(async () => {
+    async function run() {
+      if (!inviteId || !isOnline) {
+        setFamily(null)
+        setFamilyLoaded(true)
+        return
+      }
       try {
-        if (!inviteId) { setFamily(null); return }
         const snap = await getDoc(doc(firestore, 'families', inviteId))
         if (!alive) return
-        if (!snap.exists()) { setFamily(null); return }
-
-        const data = snap.data() as any
-
-        const name =
-          typeof data?.name === 'string'
-            ? data.name
-            : data?.name?.toString?.() ?? null
-
-        // Normalize createdBy to string if it’s a DocumentReference or object
-        let createdBy: string | null = null
-        if (typeof data?.createdBy === 'string') createdBy = data.createdBy
-        else if (data?.createdBy?.id) createdBy = String(data.createdBy.id)
-        else if (data?.createdBy?.uid) createdBy = String(data.createdBy.uid)
-
-        setFamily({ id: snap.id, name, createdBy })
-      } catch (e) {
-        console.error('[join] load error', e)
+        if (snap.exists()) {
+          const data = snap.data() as any
+          setFamily({ id: snap.id, name: data?.name ?? null, createdBy: data?.createdBy ?? null })
+        } else {
+          setFamily(null)
+        }
+      } catch (err) {
+        console.error('[join] load error', err)
         toast.error('Could not load invite.')
         setFamily(null)
+      } finally {
+        if (alive) setFamilyLoaded(true)
       }
-    })()
+    }
+    run()
     return () => { alive = false }
-  }, [inviteId])
+  }, [inviteId, isOnline])
 
-  // Check onboarding
+  // If signed in, check onboardingComplete and membership
   useEffect(() => {
     let alive = true
-    ;(async () => {
+    async function checkOnboardingAndMembership() {
+      if (!user || !family?.id) {
+        setOnboarded(null)
+        return
+      }
       try {
-        if (!user) { setOnboarded(null); return }
+        // onboarding check
         const u = await getDoc(doc(firestore, 'users', user.uid))
         const ok = Boolean(u.exists() && (u.data() as any)?.onboardingComplete)
         if (alive) setOnboarded(ok)
+
+        // membership check
+        const m = await getDoc(doc(firestore, 'families', family.id, 'members', user.uid))
+        if (m.exists()) {
+          if (alive) setAlreadyMember(true)
+        }
       } catch {
-        if (alive) setOnboarded(false)
+        if (alive) {
+          setOnboarded(false)
+          setAlreadyMember(false)
+        }
       }
-    })()
+    }
+    checkOnboardingAndMembership()
     return () => { alive = false }
-  }, [user])
+  }, [user, family?.id])
 
-  // Auto-join once ready
-  useEffect(() => {
-    if (!user || onboarded !== true || !family?.id || joining) return
-    void joinNow('auto')
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, onboarded, family?.id])
-
-  async function joinNow(source: 'auto' | 'button') {
+  // Join helper
+  const joinNow = async (source: 'auto' | 'button') => {
     if (!user || !family?.id) return
     setJoining(true)
     try {
@@ -94,8 +97,8 @@ export default function FamilyJoinPageContent() {
         { joinedAt: serverTimestamp(), role: 'member' },
         { merge: true }
       )
-      try { localStorage.setItem(LOCAL_FAMILY_KEY, family.id) } catch {}
-      if (source === 'button') toast.success(`Joined ${safeText(family.name) || 'family'}`)
+      localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
+      if (source === 'button') toast.success(`Joined ${family.name ?? 'family'}`)
       router.replace(`/family/${family.id}?joined=1`)
     } catch (err) {
       console.error('[join] set member failed', err)
@@ -104,68 +107,92 @@ export default function FamilyJoinPageContent() {
     }
   }
 
-  // --- RENDER ---
+  // Auto-join or skip if already a member
+  useEffect(() => {
+    if (!user || !family?.id || joining || !familyLoaded) return
+    if (alreadyMember) {
+      // Skip join, go directly
+      localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
+      router.replace(`/family/${family.id}`)
+      return
+    }
+    if (onboarded === true) {
+      joinNow('auto')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, onboarded, family?.id, familyLoaded, alreadyMember])
 
-  // Signed out -> login flow preserving invite
-  if (!loading && !user) {
+  // SIGNED OUT
+  if (!authLoading && !user) {
     const redirect = `/onboarding?invite=${encodeURIComponent(inviteId)}`
     const googleUrl = `/login?provider=google&redirect=${encodeURIComponent(redirect)}`
     return (
       <div className="max-w-md mx-auto p-6">
-        <h1 className="text-lg font-semibold mb-2">Join this family</h1>
-        <p className="text-sm text-muted-foreground mb-3">Sign in to accept the invite.</p>
-        <a className="inline-flex h-9 items-center px-4 rounded border" href={googleUrl}>
-          Continue with Google
-        </a>
+        <Card>
+          <CardHeader><CardTitle>Join this family</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">Sign in to accept the invite.</p>
+            <Button className="w-full" asChild>
+              <a href={googleUrl}>Continue with Google</a>
+            </Button>
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
-  // Signed in but not onboarded: redirect (keeps invite)
+  // NOT onboarded yet
   if (user && onboarded === false) {
-    const url = `/onboarding?invite=${encodeURIComponent(inviteId)}`
-    if (typeof window !== 'undefined') router.replace(url)
-    return null
+    if (typeof window !== 'undefined') {
+      router.replace(`/onboarding?invite=${encodeURIComponent(inviteId)}`)
+    }
+    return (
+      <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
+        Redirecting to onboarding…
+      </div>
+    )
   }
 
-  if (family === undefined) {
+  // Loading family data
+  if (!familyLoaded) {
     return <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">Loading invite…</div>
   }
 
+  // Invite not found
   if (family === null) {
     return (
       <div className="max-w-md mx-auto p-6">
-        <h1 className="text-lg font-semibold mb-2">Invite not found</h1>
-        <p className="text-sm text-muted-foreground">The family doesn’t exist or the link is invalid.</p>
+        <Card>
+          <CardHeader><CardTitle>Invite not found</CardTitle></CardHeader>
+          <CardContent className="text-sm text-muted-foreground">
+            The family doesn’t exist or the link is invalid.
+          </CardContent>
+        </Card>
       </div>
     )
   }
 
-  // Signed in & onboarded -> auto join in effect
-  if (user && onboarded === true) {
+  // Joining state
+  if (joining) {
     return (
       <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
-        Joining {safeText(family.name) || 'family'}…
+        Joining {family?.name ?? 'family'}…
       </div>
     )
   }
 
-  // Fallback (manual accept)
+  // Manual join (fallback)
   return (
     <div className="max-w-md mx-auto p-6">
-      <h1 className="text-lg font-semibold mb-2">Join {safeText(family.name) || 'Family'}</h1>
-      {/* If you want to show who created it, render normalized string only: */}
-      {/* <p className="text-xs text-muted-foreground mb-3">
-        Created by: {safeText(family.createdBy) || 'unknown'}
-      </p> */}
-      <button
-        type="button"
-        className="inline-flex h-9 items-center px-4 rounded border"
-        onClick={() => joinNow('button')}
-        disabled={joining}
-      >
-        {joining ? 'Joining…' : 'Accept Invite'}
-      </button>
+      <Card>
+        <CardHeader><CardTitle>Join {family?.name ?? 'Family'}</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-sm">Created by: {family?.createdBy ?? 'unknown'}</p>
+          <Button className="w-full" onClick={() => joinNow('button')} disabled={joining}>
+            Accept Invite
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   )
 }
