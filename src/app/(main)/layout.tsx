@@ -1,3 +1,4 @@
+// app/(main)/layout.tsx
 'use client'
 
 import React, { useEffect, useMemo, useRef } from 'react'
@@ -33,6 +34,27 @@ export default function MainLayout({
   const pathname = usePathname()
   const auth = getAuth()
 
+  // ⛔️ Bypass the swipe layout on public/standalone routes
+  const STANDALONE_PREFIXES = useMemo(
+    () => ['/family/join', '/login', '/onboarding', '/family/create'],
+    []
+  )
+  const isStandalone = useMemo(
+    () => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)),
+    [pathname, STANDALONE_PREFIXES]
+  )
+
+  if (isStandalone) {
+    return (
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <div className="min-h-screen bg-background text-foreground">
+          {children}
+        </div>
+      </ThemeProvider>
+    )
+  }
+
+  // --- existing swipe-nav layout below unchanged ---
   const nav = [
     { label: 'Home', href: '/', Icon: HomeIcon, node: home ?? children },
     { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
@@ -77,7 +99,6 @@ export default function MainLayout({
     nav.forEach(n => router.prefetch?.(n.href))
   }, [router])
 
-  // push notifications (env-based VAPID)
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       if (!u) return
@@ -165,22 +186,6 @@ export default function MainLayout({
     animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
   }
 
-  // 🔧 NEW: decide which pane should render `children` as a fallback for deep routes
-  const belongsTo = {
-    home: pathname === '/' || pathname.startsWith('/home'),
-    deliveries: pathname.startsWith('/deliveries'),
-    family: pathname.startsWith('/family'),
-    settings: pathname.startsWith('/settings'),
-  }
-
-  const panes: (React.ReactNode | null)[] = [
-    // Home pane: if no explicit `home`, render children when on a home-like route
-    home ?? (belongsTo.home ? children : null),
-    deliveries ?? (belongsTo.deliveries ? children : null),
-    family ?? (belongsTo.family ? children : null),
-    settings ?? (belongsTo.settings ? children : null),
-  ]
-
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <div className="flex flex-col min-h-screen overflow-hidden select-none bg-background text-foreground" style={{ height: '100vh' }}>
@@ -213,11 +218,11 @@ export default function MainLayout({
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
         >
-          {panes.map((node, i) => (
+          {[home ?? children, deliveries, family, settings].map((node, i) => (
             <div
               key={i}
               style={{
-                width,
+                width: width,
                 flexShrink: 0,
                 height: '100%',
                 overflowY: 'auto',
