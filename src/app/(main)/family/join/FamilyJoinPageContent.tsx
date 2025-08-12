@@ -32,10 +32,6 @@ export default function FamilyJoinPageContent() {
   const [joining, setJoining] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
 
-  if (!isOnline) {
-    return <p className="text-center text-red-500">You're offline — cached content only.</p>
-  }
-
   const extractFamilyId = (val: string | null) => {
     if (!val) return ''
     try {
@@ -200,26 +196,36 @@ export default function FamilyJoinPageContent() {
 
 
   return (
-    <main className="max-w-xl mx-auto p-6 space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Join Family</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p>
-            You have been invited to join the family <strong>{family.name ?? family.id}</strong>.
-          </p>
-          <div className="mt-4">
-            <Button
-              onClick={handleJoin}
-              disabled={joining}
-              className="w-full"
-            >
-              {joining ? 'Joining…' : 'Accept Invite'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <main className="max-w-xl mx-auto p-6 space-y-6" role="main" aria-label="Join family invitation">
+      {!isOnline ? (
+        <p className="text-center text-red-500">
+          You're offline — cached content only.
+        </p>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Join Family</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>
+              You have been invited to join the family{' '}
+              <strong>{family.name ?? family.id}</strong>.
+            </p>
+            <div className="mt-4">
+              <Button
+                onClick={handleJoin}
+                disabled={joining}
+                className="w-full"
+                aria-disabled={joining}
+                aria-busy={joining}
+              >
+                {joining ? 'Joining…' : 'Accept Invite'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </main>
   )
+
 }
