@@ -196,7 +196,6 @@ export default function FamilyPickerPageContent() {
             type="button"
             variant="outline"
             size="sm"
-            asChild
             onMouseEnter={() => router.prefetch?.(`/family/${family.id}`)}
             onClick={() => router.push(`/family/${family.id}`)}
           >
