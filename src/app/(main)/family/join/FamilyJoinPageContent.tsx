@@ -12,20 +12,23 @@ import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
-type FamilyLite = { id: string; name?: string | null; createdBy?: string | null }
+type FamilyLite = {
+  id: string
+  name?: string | null
+  // createdBy might be a string OR a Firestore DocumentReference/object
+  createdBy?: unknown
+}
 
 export default function FamilyJoinPageContent() {
   const searchParams = useSearchParams()
   const inviteId = useMemo(() => searchParams.get('invite') ?? '', [searchParams])
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+  const { user, loading } = useAuth()
   const isOnline = useOnlineStatus()
 
   const [family, setFamily] = useState<FamilyLite | null | undefined>(undefined)
   const [joining, setJoining] = useState(false)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
-  const [familyLoaded, setFamilyLoaded] = useState(false)
-  const [alreadyMember, setAlreadyMember] = useState(false)
 
   // Fetch invite target
   useEffect(() => {
@@ -33,7 +36,6 @@ export default function FamilyJoinPageContent() {
     async function run() {
       if (!inviteId || !isOnline) {
         setFamily(null)
-        setFamilyLoaded(true)
         return
       }
       try {
@@ -41,7 +43,11 @@ export default function FamilyJoinPageContent() {
         if (!alive) return
         if (snap.exists()) {
           const data = snap.data() as any
-          setFamily({ id: snap.id, name: data?.name ?? null, createdBy: data?.createdBy ?? null })
+          setFamily({
+            id: snap.id,
+            name: data?.name ?? null,
+            createdBy: data?.createdBy,
+          })
         } else {
           setFamily(null)
         }
@@ -49,45 +55,37 @@ export default function FamilyJoinPageContent() {
         console.error('[join] load error', err)
         toast.error('Could not load invite.')
         setFamily(null)
-      } finally {
-        if (alive) setFamilyLoaded(true)
       }
     }
     run()
     return () => { alive = false }
   }, [inviteId, isOnline])
 
-  // If signed in, check onboardingComplete and membership
+  // If signed in, check onboardingComplete
   useEffect(() => {
     let alive = true
-    async function checkOnboardingAndMembership() {
-      if (!user || !family?.id) {
-        setOnboarded(null)
-        return
-      }
+    async function checkOnboarding() {
+      if (!user) { setOnboarded(null); return }
       try {
-        // onboarding check
         const u = await getDoc(doc(firestore, 'users', user.uid))
         const ok = Boolean(u.exists() && (u.data() as any)?.onboardingComplete)
         if (alive) setOnboarded(ok)
-
-        // membership check
-        const m = await getDoc(doc(firestore, 'families', family.id, 'members', user.uid))
-        if (m.exists()) {
-          if (alive) setAlreadyMember(true)
-        }
       } catch {
-        if (alive) {
-          setOnboarded(false)
-          setAlreadyMember(false)
-        }
+        if (alive) setOnboarded(false)
       }
     }
-    checkOnboardingAndMembership()
+    checkOnboarding()
     return () => { alive = false }
-  }, [user, family?.id])
+  }, [user])
 
-  // Join helper
+  // Auto-join when logged in AND already onboarded
+  useEffect(() => {
+    if (!user || onboarded !== true || !family?.id || joining) return
+    void joinNow('auto')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, onboarded, family?.id])
+
+  // Join helper (idempotent)
   const joinNow = async (source: 'auto' | 'button') => {
     if (!user || !family?.id) return
     setJoining(true)
@@ -97,7 +95,7 @@ export default function FamilyJoinPageContent() {
         { joinedAt: serverTimestamp(), role: 'member' },
         { merge: true }
       )
-      localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
+      try { localStorage.setItem(LOCAL_FAMILY_KEY, family.id) } catch {}
       if (source === 'button') toast.success(`Joined ${family.name ?? 'family'}`)
       router.replace(`/family/${family.id}?joined=1`)
     } catch (err) {
@@ -107,23 +105,8 @@ export default function FamilyJoinPageContent() {
     }
   }
 
-  // Auto-join or skip if already a member
-  useEffect(() => {
-    if (!user || !family?.id || joining || !familyLoaded) return
-    if (alreadyMember) {
-      // Skip join, go directly
-      localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
-      router.replace(`/family/${family.id}`)
-      return
-    }
-    if (onboarded === true) {
-      joinNow('auto')
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, onboarded, family?.id, familyLoaded, alreadyMember])
-
-  // SIGNED OUT
-  if (!authLoading && !user) {
+  // SIGNED OUT -> ask to sign up with Google then go to onboarding (preserves invite)
+  if (!loading && !user) {
     const redirect = `/onboarding?invite=${encodeURIComponent(inviteId)}`
     const googleUrl = `/login?provider=google&redirect=${encodeURIComponent(redirect)}`
     return (
@@ -141,55 +124,59 @@ export default function FamilyJoinPageContent() {
     )
   }
 
-  // NOT onboarded yet
+  // SIGNED IN but not onboarded -> send to onboarding (keeps invite)
   if (user && onboarded === false) {
-    if (typeof window !== 'undefined') {
-      router.replace(`/onboarding?invite=${encodeURIComponent(inviteId)}`)
-    }
-    return (
-      <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
-        Redirecting to onboarding…
-      </div>
-    )
+    const url = `/onboarding?invite=${encodeURIComponent(inviteId)}`
+    if (typeof window !== 'undefined') router.replace(url)
+    return null
   }
 
-  // Loading family data
-  if (!familyLoaded) {
+  // Loading states
+  if (family === undefined) {
     return <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">Loading invite…</div>
   }
-
-  // Invite not found
   if (family === null) {
     return (
       <div className="max-w-md mx-auto p-6">
         <Card>
           <CardHeader><CardTitle>Invite not found</CardTitle></CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            The family doesn’t exist or the link is invalid.
-          </CardContent>
+          <CardContent className="text-sm text-muted-foreground">The family doesn’t exist or the link is invalid.</CardContent>
         </Card>
       </div>
     )
   }
 
-  // Joining state
-  if (joining) {
+  // Build a safe "created by" label (createdBy may be a DocumentReference or object)
+  let createdByLabel: string | null = null
+  if (typeof family.createdBy === 'string') {
+    createdByLabel = family.createdBy
+  } else if (family.createdBy && typeof family.createdBy === 'object') {
+    // Firestore DocumentReference usually has an 'id' field
+    // We only show an id if present; otherwise hide the line entirely
+    const maybeId = (family.createdBy as any)?.id
+    createdByLabel = typeof maybeId === 'string' ? maybeId : null
+  }
+
+  // SIGNED IN & onboarded -> auto-join happens in effect; show subtle status
+  if (user && onboarded === true) {
     return (
       <div className="max-w-md mx-auto p-6 text-center text-muted-foreground">
-        Joining {family?.name ?? 'family'}…
+        Joining {family.name ?? 'family'}…
       </div>
     )
   }
 
-  // Manual join (fallback)
+  // Fallback: if user is signed in and onboarding is unknown yet, allow manual Accept
   return (
     <div className="max-w-md mx-auto p-6">
       <Card>
-        <CardHeader><CardTitle>Join {family?.name ?? 'Family'}</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Join {family.name ?? 'Family'}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm">Created by: {family?.createdBy ?? 'unknown'}</p>
+          {createdByLabel && (
+            <p className="text-sm">Created by: <span className="text-muted-foreground">{createdByLabel}</span></p>
+          )}
           <Button className="w-full" onClick={() => joinNow('button')} disabled={joining}>
-            Accept Invite
+            {joining ? 'Joining…' : 'Accept Invite'}
           </Button>
         </CardContent>
       </Card>
