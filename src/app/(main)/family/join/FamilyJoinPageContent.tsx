@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import {
   doc,
@@ -38,14 +38,14 @@ export default function FamilyJoinPageContent() {
       const maybe = new URL(val, typeof window !== 'undefined' ? window.location.origin : undefined)
       const p = maybe.searchParams.get('invite')
       if (p) return p
-    } catch { }
+    } catch {}
     return val.trim()
   }
 
   const invite = extractFamilyId(rawInvite)
 
+  // Redirect to login if user not logged in but invite present
   useEffect(() => {
-    // Wait until we know auth status
     if (loading) return
 
     if (!user && invite) {
@@ -54,6 +54,7 @@ export default function FamilyJoinPageContent() {
     }
   }, [user, loading, invite, router])
 
+  // Fetch family data based on invite
   useEffect(() => {
     if (!invite || loading) return
     if (!user) return
@@ -79,9 +80,12 @@ export default function FamilyJoinPageContent() {
       }
     }
     fetchFamily()
-    return () => { mounted = false }
+    return () => {
+      mounted = false
+    }
   }, [invite, user, loading])
 
+  // Check if already a member, redirect if yes
   useEffect(() => {
     if (!user || !family) return
     let mounted = true
@@ -99,10 +103,13 @@ export default function FamilyJoinPageContent() {
       }
     }
     checkAlreadyMember()
-    return () => { mounted = false }
+    return () => {
+      mounted = false
+    }
   }, [user, family, router])
 
-  const handleJoin = async () => {
+  // useCallback to stabilize handleJoin reference
+  const handleJoin = useCallback(async () => {
     if (!user || !family) return
     setJoining(true)
 
@@ -118,16 +125,20 @@ export default function FamilyJoinPageContent() {
         return
       }
 
-      await setDoc(memberRef, {
-        uid: user.uid,
-        role: 'member',
-        addedAt: serverTimestamp(),
-        status: 'away',
-        statusSource: 'manual',
-        updatedAt: serverTimestamp(),
-        name: (user as any).name ?? (user as any).displayName ?? 'Unknown',
-        photoURL: (user as any).photoURL ?? null,
-      }, { merge: true })
+      await setDoc(
+        memberRef,
+        {
+          uid: user.uid,
+          role: 'member',
+          addedAt: serverTimestamp(),
+          status: 'away',
+          statusSource: 'manual',
+          updatedAt: serverTimestamp(),
+          name: (user as any).name ?? (user as any).displayName ?? 'Unknown',
+          photoURL: (user as any).photoURL ?? null,
+        },
+        { merge: true }
+      )
 
       try {
         await updateDoc(familyRef, { members: arrayUnion(user.uid) })
@@ -141,15 +152,19 @@ export default function FamilyJoinPageContent() {
           preferredFamily: family.id,
         })
       } catch {
-        await setDoc(userRef, {
-          familiesJoined: [family.id],
-          preferredFamily: family.id,
-        }, { merge: true })
+        await setDoc(
+          userRef,
+          {
+            familiesJoined: [family.id],
+            preferredFamily: family.id,
+          },
+          { merge: true }
+        )
       }
 
       try {
         localStorage.setItem(LOCAL_FAMILY_KEY, family.id)
-      } catch { }
+      } catch {}
 
       toast.success(`You joined the family: ${family.name ?? family.id}`)
       router.replace(`/onboarding?family=${family.id}`)
@@ -159,14 +174,25 @@ export default function FamilyJoinPageContent() {
     } finally {
       setJoining(false)
     }
-  }
+  }, [user, family, router])
+
+  const autoJoin = searchParams.get('autoJoin')
+
+  // Auto-join effect with stable handleJoin & primitive dependency
+  useEffect(() => {
+    if (user && family && autoJoin === '1') {
+      handleJoin()
+    }
+  }, [user, family, autoJoin, handleJoin])
 
   if (!invite) {
     return (
       <div className="max-w-xl mx-auto p-6 text-center">
         <p className="text-muted-foreground">No invite code provided. Please enter invite code below</p>
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
-        <Button type="button" className="mt-4" variant="outline" onClick={() => setJoinOpen(true)}>Enter Invite Code</Button>
+        <Button type="button" className="mt-4" variant="outline" onClick={() => setJoinOpen(true)}>
+          Enter Invite Code
+        </Button>
       </div>
     )
   }
@@ -187,20 +213,10 @@ export default function FamilyJoinPageContent() {
     )
   }
 
-  // Auto-join if coming from onboarding/login
-  useEffect(() => {
-    if (user && family && searchParams.get('autoJoin') === '1') {
-      handleJoin()
-    }
-  }, [user, family, searchParams])
-
-
   return (
     <main className="max-w-xl mx-auto p-6 space-y-6" role="main" aria-label="Join family invitation">
       {!isOnline ? (
-        <p className="text-center text-red-500">
-          You're offline — cached content only.
-        </p>
+        <p className="text-center text-red-500">You're offline — cached content only.</p>
       ) : (
         <Card>
           <CardHeader>
@@ -208,17 +224,10 @@ export default function FamilyJoinPageContent() {
           </CardHeader>
           <CardContent>
             <p>
-              You have been invited to join the family{' '}
-              <strong>{family.name ?? family.id}</strong>.
+              You have been invited to join the family <strong>{family.name ?? family.id}</strong>.
             </p>
             <div className="mt-4">
-              <Button
-                onClick={handleJoin}
-                disabled={joining}
-                className="w-full"
-                aria-disabled={joining}
-                aria-busy={joining}
-              >
+              <Button onClick={handleJoin} disabled={joining} className="w-full" aria-disabled={joining} aria-busy={joining}>
                 {joining ? 'Joining…' : 'Accept Invite'}
               </Button>
             </div>
@@ -227,5 +236,4 @@ export default function FamilyJoinPageContent() {
       )}
     </main>
   )
-
 }
