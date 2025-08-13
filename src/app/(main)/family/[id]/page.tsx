@@ -10,6 +10,7 @@ import {
   getDoc,
   onSnapshot,
   setDoc,
+  updateDoc
 } from 'firebase/firestore'
 import { formatDistanceToNow } from 'date-fns'
 import { Users as UsersIcon, CalendarDays, Loader2, MoreVertical } from 'lucide-react'
@@ -23,6 +24,19 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 import InviteModal from '@/app/components/InviteModal'
 import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
+
+// NEW: shadcn AlertDialog for "Leave" confirmation
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 type Family = {
   id: string
@@ -136,20 +150,43 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
-  const isOwner = user && family?.createdBy === user.uid
+  const isOwner = !!(user && family?.createdBy === user.uid)
+  const isMember = !!(user && members?.some((m) => m.uid === user.uid))
   const memberCount = members?.length ?? 0
 
   async function handleRemoveMember(targetUid: string) {
     if (!user || !id) return
-    if (targetUid !== user.uid && !isOwner) {
+
+    // Only the owner can remove others; anyone can remove themselves
+    const removingSelf = targetUid === user.uid
+    if (!removingSelf && !isOwner) {
       toast.error('Only the owner can remove other members.')
       return
     }
+
     setBusy(targetUid)
     try {
+      // 1) Remove subcollection member doc (always allowed for owner or self by your rules)
       await deleteDoc(doc(firestore, 'families', String(id), 'members', targetUid))
-      await setDoc(doc(firestore, 'users', targetUid), { joinedFamilies: arrayRemove(String(id)) }, { merge: true })
-      if (targetUid === user.uid) {
+
+      // 2) Update the family doc's members array so list queries stay accurate
+      await updateDoc(doc(firestore, 'families', String(id)), {
+        members: arrayRemove(targetUid),
+      }).catch(() => {
+        // If the field doesn't exist yet, ignore (optional)
+      })
+
+      // 3) Only update the user's own doc when they leave themselves
+      if (removingSelf) {
+        await setDoc(
+          doc(firestore, 'users', targetUid),
+          { joinedFamilies: arrayRemove(String(id)) },
+          { merge: true }
+        ).catch(() => {
+          // If your UI no longer relies on users.joinedFamilies, this is optional
+        })
+
+        // clear local selection and navigate back
         if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) {
           localStorage.removeItem(LOCAL_FAMILY_KEY)
         }
@@ -206,13 +243,46 @@ export default function FamilyDetailPage() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {/* Owner actions */}
           {isOwner && (
             <>
               <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
               <Button onClick={() => setManageOpen(true)}>Manage</Button>
             </>
           )}
-          {isOwner && <Badge variant="outline">Owner</Badge>}
+
+          {/* Member-only action: Leave (must be to the RIGHT of the Manage button) */}
+          {!isOwner && isMember && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="destructive"
+                  onClick={(e) => e.stopPropagation()}
+                  disabled={busy === user?.uid}
+                  title="Leave this family"
+                >
+                  {busy === user?.uid ? 'Leaving…' : 'Leave'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Leave this family?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You’ll be removed from <strong>{family.name || 'this family'}</strong>. You can rejoin later if invited.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={busy === user?.uid}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => handleRemoveMember(user!.uid)}
+                    disabled={busy === user?.uid}
+                  >
+                    Yes, leave
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       </div>
 
@@ -223,7 +293,6 @@ export default function FamilyDetailPage() {
         <ul className="divide-y rounded-md border overflow-hidden">
           {members!.map(m => {
             const owner = m.uid === family.createdBy
-            const self = m.uid === user?.uid
             const role = owner ? 'Owner' : (m.role || 'Member')
             return (
               <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
@@ -244,17 +313,6 @@ export default function FamilyDetailPage() {
                     </div>
                   </div>
                 </div>
-
-                {(isOwner || self) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy === m.uid}
-                    onClick={() => handleRemoveMember(m.uid)}
-                  >
-                    {busy === m.uid ? 'Removing…' : (self ? 'Leave' : 'Remove')}
-                  </Button>
-                )}
               </li>
             )
           })}

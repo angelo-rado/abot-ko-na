@@ -12,7 +12,7 @@ import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
 import { Plus, Loader2 } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
-import DeliveryCard from '@/app/components/DeliveryCard'
+import DeliveryCard, { deliveryIsLocked } from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
 import ConfirmDialog from '@/app/components/ConfirmDialog'
@@ -197,6 +197,7 @@ export default function DeliveriesPage() {
     }
 
     setLoadingDeliveries(true)
+    // We subscribe broadly, then partition in-memory into Upcoming vs Archived.
     const q = query(
       collection(firestore, 'families', familyId, 'deliveries'),
       where('createdBy', '==', user.uid),
@@ -215,6 +216,24 @@ export default function DeliveriesPage() {
     return () => { try { unsub() } catch { } }
   }, [familyId, user?.uid])
 
+  /* ---------------- Partition & filtering ---------------- */
+  const isArchived = useCallback((d: any) => {
+    if (!d) return false
+    // Prefer explicit archived flag if present
+    if (d.archived === true) return true
+    // Consider delivered/cancelled archived
+    if (['delivered', 'cancelled'].includes(d.status)) return true
+    // Fallback: auto-archive if ETA is older than cutoff
+    const raw = d.expectedDate
+    const expected =
+      typeof raw?.toDate === 'function' ? raw.toDate()
+      : raw?.seconds ? new Date(raw.seconds * 1000)
+      : raw ? new Date(raw) : null
+    if (!expected) return false
+    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - ARCHIVE_OLDER_THAN_DAYS)
+    return expected < cutoff
+  }, [])
+
   const { singleDeliveries, bulkDeliveries } = useMemo(() => {
     const single: any[] = [], bulk: any[] = []
     for (const d of deliveries) {
@@ -225,18 +244,14 @@ export default function DeliveriesPage() {
     return { singleDeliveries: single, bulkDeliveries: bulk }
   }, [deliveries])
 
-  const isArchived = useCallback((d: any) => {
-    if (!d) return false
-    if (['delivered', 'cancelled'].includes(d.status)) return true
-    const raw = d.expectedDate
-    const expected = raw?.toDate?.() || (raw?.seconds && new Date(raw.seconds * 1000)) || new Date(raw)
-    if (!expected) return false
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - ARCHIVE_OLDER_THAN_DAYS)
-    return expected < cutoff
-  }, [])
+  // Partition by archivedness
+  const singlesUpcoming = useMemo(() => singleDeliveries.filter((d) => !isArchived(d)), [singleDeliveries, isArchived])
+  const singlesArchived = useMemo(() => singleDeliveries.filter(isArchived), [singleDeliveries, isArchived])
+  const bulksUpcoming   = useMemo(() => bulkDeliveries.filter((d) => !isArchived(d)), [bulkDeliveries, isArchived])
+  const bulksArchived   = useMemo(() => bulkDeliveries.filter(isArchived), [bulkDeliveries, isArchived])
 
-  const singlesToRender = useMemo(() => (tab === 'upcoming' ? singleDeliveries : singleDeliveries.filter(isArchived)), [tab, singleDeliveries, isArchived])
-  const bulksToRender = useMemo(() => (tab === 'upcoming' ? bulkDeliveries : bulkDeliveries.filter(isArchived)), [tab, bulkDeliveries, isArchived])
+  const singlesToRender = tab === 'upcoming' ? singlesUpcoming : singlesArchived
+  const bulksToRender   = tab === 'upcoming' ? bulksUpcoming   : bulksArchived
 
   const applyFilters = (list: any[]) =>
     list.filter((d) => {
@@ -244,6 +259,7 @@ export default function DeliveriesPage() {
       return !queryText || (d.title ?? d.platform ?? d.name ?? '').toLowerCase().includes(queryText.toLowerCase())
     })
 
+  /* ---------------- Bulk ops ---------------- */
   const toggleSelect = (id: string) => setSelectedIds((s) => ({ ...s, [id]: !s[id] }))
   const clearSelection = () => setSelectedIds({ })
   const selectedCount = Object.values(selectedIds).filter(Boolean).length
@@ -275,7 +291,11 @@ export default function DeliveriesPage() {
       const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
       await Promise.all(ids.map((id) =>
         updateDoc(doc(firestore, 'families', familyId!, 'deliveries', id), {
-          status: 'delivered', deliveredAt: Timestamp.now()
+          status: 'delivered',
+          deliveredAt: Timestamp.now(),
+          archived: true,
+          archivedAt: Timestamp.now(),
+          archivedReason: 'bulk-archive',
         }).catch((err) => console.error('archive failed', id, err))
       ))
       clearSelection(); setSelectionMode(false); showToast('Archived selected deliveries')
@@ -286,6 +306,7 @@ export default function DeliveriesPage() {
     }
   }
 
+  /* ---------------- Row actions ---------------- */
   const onEditDelivery = (d: any) => { setEditingDelivery(d); setEditDialogOpen(true) }
   const onDeleteDelivery = async (id: string) => {
     const ok = await showConfirm('Delete delivery?', 'This cannot be undone.', { danger: true, confirmLabel: 'Delete' })
@@ -416,6 +437,7 @@ export default function DeliveriesPage() {
               <div className="space-y-4">
                 {applyFilters(singlesToRender).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
+                  const locked = deliveryIsLocked(d)
                   return (
                     <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
@@ -427,7 +449,9 @@ export default function DeliveriesPage() {
                         <DeliveryCard familyId={familyId!} {...props} />
                         {!selectionMode && (
                           <div className="flex justify-end gap-2 mt-2">
-                            <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            {!locked && (
+                              <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            )}
                             <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
                           </div>
                         )}
@@ -448,6 +472,7 @@ export default function DeliveriesPage() {
               <div className="space-y-4">
                 {applyFilters(bulksToRender).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
+                  const locked = deliveryIsLocked(d)
                   return (
                     <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
@@ -459,7 +484,9 @@ export default function DeliveriesPage() {
                         <DeliveryCard familyId={familyId!} {...props} />
                         {!selectionMode && (
                           <div className="flex justify-end gap-2 mt-2">
-                            <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            {!locked && (
+                              <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                            )}
                             <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
                           </div>
                         )}

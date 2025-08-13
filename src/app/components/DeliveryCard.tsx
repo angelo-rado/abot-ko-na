@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import {
@@ -11,6 +11,17 @@ import {
 } from '@/lib/deliveries'
 import { doc, updateDoc, getDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 type Props = {
   familyId: string
@@ -20,7 +31,9 @@ type Props = {
 
 type Status = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
-/** -------- Name lookup cache & helpers (unchanged) -------- */
+/** -----------------------------------------------------------
+ *  Name lookup cache & helpers
+ *  --------------------------------------------------------- */
 const userNameCache: Record<string, string> = {}
 
 function useUserName(userId?: string) {
@@ -71,7 +84,9 @@ function UserName({ userId }: { userId?: string }) {
   return <>{name || userId}</>
 }
 
-/** -------- Date helpers -------- */
+/** -----------------------------------------------------------
+ *  Date helpers
+ *  --------------------------------------------------------- */
 function toDate(input: any): Date | null {
   if (!input) return null
   if (typeof input?.toDate === 'function') return input.toDate()
@@ -99,30 +114,22 @@ function formatTimeShort(d: Date) {
 }
 
 function shortDate(d: Date) {
-  return d.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function friendlyExpectedLabel(raw: any) {
-  const d = toDate(raw)
+  const d = raw instanceof Date ? raw : toDate(raw)
   if (!d) return ''
   const dd = daysDiff(d)
   if (dd === 0) return `Today, ${formatTimeShort(d)}`
   if (dd === 1) return `Tomorrow, ${formatTimeShort(d)}`
   if (dd === -1) return `Yesterday, ${formatTimeShort(d)}`
   if (Math.abs(dd) <= 7) {
-    return dd > 0
-      ? `In ${dd} day${dd !== 1 ? 's' : ''}`
-      : `${Math.abs(dd)} day${Math.abs(dd) !== 1 ? 's' : ''} ago`
+    return dd > 0 ? `In ${dd} day${dd !== 1 ? 's' : ''}` : `${Math.abs(dd)} day${Math.abs(dd) !== 1 ? 's' : ''} ago`
   }
   const md = monthsDiff(d)
   if (Math.abs(md) >= 1) {
-    return md > 0
-      ? `In ${md} month${md !== 1 ? 's' : ''}`
-      : `${Math.abs(md)} month${Math.abs(md) !== 1 ? 's' : ''} ago`
+    return md > 0 ? `In ${md} month${md !== 1 ? 's' : ''}` : `${Math.abs(md)} month${Math.abs(md) !== 1 ? 's' : ''} ago`
   }
   return `${shortDate(d)} at ${formatTimeShort(d)}`
 }
@@ -140,6 +147,25 @@ function friendlyDeliveredLabel(raw: any) {
   return `${shortDate(d)} at ${formatTimeShort(d)}`
 }
 
+/** -----------------------------------------------------------
+ *  Public helper for list rows (use to hide Edit outside the card)
+ *  --------------------------------------------------------- */
+export function deliveryIsLocked(parent: any, childItems?: any[]): boolean {
+  const delivered = parent?.status === 'delivered'
+  const cancelled = parent?.status === 'cancelled'
+
+  // Prefer parent.expectedDate; if absent, take the latest item ETA
+  const pEta = toDate(parent?.expectedDate)
+  let eta: Date | null = pEta
+  if (!eta && Array.isArray(childItems) && childItems.length) {
+    const dates = childItems.map((it) => toDate(it?.expectedDate)).filter(Boolean) as Date[]
+    if (dates.length) eta = new Date(Math.max(...dates.map((d) => d.getTime())))
+  }
+  const pastETA = !!eta && eta.getTime() < Date.now()
+
+  return delivered || cancelled || pastETA
+}
+
 /** ========================================================= */
 
 export default function DeliveryCard({ familyId, order, delivery }: Props) {
@@ -152,11 +178,13 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
   const [loadingItems, setLoadingItems] = useState(false)
   const [processing, setProcessing] = useState(false)
 
+  // NEW: confirmation dialog state
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
   // subscribe to items for non-single parents
   useEffect(() => {
     if (!parent?.id) return
-    const isSingle =
-      parentType === 'delivery' && (parent.type === 'single' || !parent.type)
+    const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
     if (isSingle) {
       setItems([])
       setLoadingItems(false)
@@ -178,22 +206,34 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
       'expectedDate'
     )
     return () => {
-      try {
-        unsub && unsub()
-      } catch {}
+      try { unsub && unsub() } catch {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId, parent?.id, parentCollection])
 
+  /** ------------ NEW: ETA logic & edit gating ------------ */
+  const eta: Date | null = useMemo(() => {
+    const pEta = toDate(parent?.expectedDate)
+    if (pEta) return pEta
+    if (!items?.length) return null
+    const dates = items.map((it) => toDate(it.expectedDate)).filter(Boolean) as Date[]
+    if (!dates.length) return null
+    return new Date(Math.max(...dates.map((d) => d.getTime())))
+  }, [parent?.expectedDate, items])
+
+  const isPastETA = !!eta && eta.getTime() < Date.now()
+  const delivered = parent?.status === 'delivered'
+  const cancelled = parent?.status === 'cancelled'
+
+  // Remove edit affordances once ETA has passed OR if delivered/cancelled.
+  // (Note: list-row Edit buttons live outside this component—use deliveryIsLocked() there too.)
+  const canEdit = !isPastETA && !delivered && !cancelled
+
+  /** ------------ Items helpers ------------ */
   const onMarkItem = async (itemId: string) => {
     setProcessing(true)
     try {
-      const res = await markChildItemAsReceived(
-        familyId,
-        parentCollection,
-        parent.id,
-        itemId
-      )
+      const res = await markChildItemAsReceived(familyId, parentCollection, parent.id, itemId)
       if (!res || res.success === false) alert(res?.message ?? 'Failed')
     } catch (err) {
       console.error(err)
@@ -203,39 +243,14 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
     }
   }
 
-  /** ------------ NEW: ETA logic & edit gating ------------ */
-  const eta: Date | null = useMemo(() => {
-    // Prefer parent.expectedDate; else use the latest item ETA as the overall ETA.
-    const pEta = toDate(parent?.expectedDate)
-    if (pEta) return pEta
-    if (!items?.length) return null
-    const dates = items
-      .map((it) => toDate(it.expectedDate))
-      .filter(Boolean) as Date[]
-    if (!dates.length) return null
-    return new Date(Math.max(...dates.map((d) => d.getTime())))
-  }, [parent?.expectedDate, items])
-
-  const now = Date.now()
-  const isPastETA = !!eta && eta.getTime() < now
-  const delivered = parent?.status === 'delivered'
-  const cancelled = parent?.status === 'cancelled'
-
-  // Remove edit option once ETA has passed OR if delivered/cancelled.
-  const canEdit = !isPastETA && !delivered && !cancelled
-
   /** ------------ UPDATED: mark parent delivered (archive) ------------ */
   const onMarkParent = async () => {
     if (delivered || cancelled) return
-    const confirmMsg =
-      'Mark this as delivered? This will archive it and cannot be undone.'
-    if (!confirm(confirmMsg)) return
 
     setProcessing(true)
     try {
       if (parentType === 'order') {
         await markOrderAsDelivered(familyId, parent.id)
-        // ensure archived flags (idempotent)
         const ref = doc(firestore, 'families', familyId, 'orders', parent.id)
         await updateDoc(ref, {
           status: 'delivered',
@@ -245,10 +260,10 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
           archivedReason: 'delivered',
         })
       } else {
-        const isSingle =
-          parentType === 'delivery' && (parent.type === 'single' || !parent.type)
+        const isSingle = parent.type === 'single' || !parent.type
+        const ref = doc(firestore, 'families', familyId, 'deliveries', parent.id)
+
         if (isSingle) {
-          const ref = doc(firestore, 'families', familyId, 'deliveries', parent.id)
           await updateDoc(ref, {
             status: 'delivered',
             deliveredAt: new Date(),
@@ -263,7 +278,6 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
             setProcessing(false)
             return
           }
-          const ref = doc(firestore, 'families', familyId, 'deliveries', parent.id)
           await updateDoc(ref, {
             archived: true,
             archivedAt: new Date(),
@@ -276,6 +290,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
       alert('Failed to mark as delivered')
     } finally {
       setProcessing(false)
+      setConfirmOpen(false) // always close the dialog
     }
   }
 
@@ -295,35 +310,17 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
   }
 
   const title =
-    parent.title ??
-    parent.platform ??
-    parent.name ??
-    (parentType === 'order' ? 'Order' : 'Delivery')
-  const isSingle =
-    parentType === 'delivery' && (parent.type === 'single' || !parent.type)
-  const pendingCount = items.filter(
-    (it) => it.status === 'pending' || it.status === 'in_transit'
-  ).length
+    parent.title ?? parent.platform ?? parent.name ?? (parentType === 'order' ? 'Order' : 'Delivery')
+  const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
+  const pendingCount = items.filter((it) => it.status === 'pending' || it.status === 'in_transit').length
 
   /** -------------------------- UI -------------------------- */
   function StatusBadge({ status }: { status: Status }) {
     const map: Record<Status, { label: string; className: string }> = {
-      pending: {
-        label: 'Pending',
-        className: 'bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs',
-      },
-      in_transit: {
-        label: 'In Transit',
-        className: 'bg-sky-100 text-sky-800 px-2 py-0.5 rounded text-xs',
-      },
-      delivered: {
-        label: 'Delivered',
-        className: 'bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs',
-      },
-      cancelled: {
-        label: 'Cancelled',
-        className: 'bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs',
-      },
+      pending: { label: 'Pending', className: 'bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs' },
+      in_transit: { label: 'In Transit', className: 'bg-sky-100 text-sky-800 px-2 py-0.5 rounded text-xs' },
+      delivered: { label: 'Delivered', className: 'bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs' },
+      cancelled: { label: 'Cancelled', className: 'bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs' },
     }
     const info = map[status] ?? map.pending
     return <span className={info.className}>{info.label}</span>
@@ -340,14 +337,8 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
             </div>
             <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
               {parent.platform && <span>{parent.platform}</span>}
-              {typeof parent.totalAmount === 'number' && (
-                <span>₱{Number(parent.totalAmount).toFixed(2)}</span>
-              )}
-              {!isSingle && (
-                <span>
-                  {items.length} item{items.length !== 1 ? 's' : ''}
-                </span>
-              )}
+              {typeof parent.totalAmount === 'number' && <span>₱{Number(parent.totalAmount).toFixed(2)}</span>}
+              {!isSingle && <span>{items.length} item{items.length !== 1 ? 's' : ''}</span>}
               {eta && (
                 <span>
                   ETA: {friendlyExpectedLabel(eta)}
@@ -358,23 +349,41 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
           </div>
 
           <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
-            {/* HIDE edit if past ETA or delivered/cancelled */}
-            {canEdit && (
+            {/* Hide internal expand/edit affordance if locked */}
+            {!isPastETA && !delivered && !cancelled && !isSingle && (
               <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
                 {expanded ? 'Collapse' : `Items (${pendingCount})`}
               </Button>
             )}
 
-            {/* SHOW mark-as-delivered ONLY when past ETA and not already delivered/cancelled */}
+            {/* Show Mark-as-delivered only when past ETA and not already delivered/cancelled */}
             {isPastETA && !delivered && !cancelled && (
-              <Button
-                type="button"
-                onClick={onMarkParent}
-                disabled={processing}
-                title="Mark as delivered (archives this record, cannot be undone)"
-              >
-                {processing ? 'Processing…' : 'Mark as delivered'}
-              </Button>
+              <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    type="button"
+                    disabled={processing}
+                    title="Mark as delivered (archives this record, cannot be undone)"
+                  >
+                    {processing ? 'Processing…' : 'Mark as delivered'}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Mark as delivered?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will set the status to <strong>Delivered</strong> and archive this {parentType}.
+                      This action cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={processing}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={onMarkParent} disabled={processing}>
+                      Confirm
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             )}
           </div>
         </CardTitle>
@@ -391,41 +400,13 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
               </span>
             </div>
           )}
-          {parent.recipient && (
-            <div>
-              <strong>Recipient:</strong> {parent.recipient}
-            </div>
-          )}
-          {parent.address && (
-            <div>
-              <strong>Address:</strong> {parent.address}
-            </div>
-          )}
-          {parent.location && (
-            <div>
-              <strong>Location:</strong> {parent.location}
-            </div>
-          )}
-          {typeof parent.codAmount === 'number' && (
-            <div>
-              <strong>COD:</strong> ₱{parent.codAmount.toFixed(2)}
-            </div>
-          )}
-          {typeof parent.totalAmount === 'number' && (
-            <div>
-              <strong>Total:</strong> ₱{parent.totalAmount.toFixed(2)}
-            </div>
-          )}
-          {parent.notes && (
-            <div>
-              <strong>Notes:</strong> <span className="italic">{parent.notes}</span>
-            </div>
-          )}
-          {parent.trackingNumber && (
-            <div>
-              <strong>Tracking #:</strong> {parent.trackingNumber}
-            </div>
-          )}
+          {parent.recipient && <div><strong>Recipient:</strong> {parent.recipient}</div>}
+          {parent.address && <div><strong>Address:</strong> {parent.address}</div>}
+          {parent.location && <div><strong>Location:</strong> {parent.location}</div>}
+          {typeof parent.codAmount === 'number' && <div><strong>COD:</strong> ₱{parent.codAmount.toFixed(2)}</div>}
+          {typeof parent.totalAmount === 'number' && <div><strong>Total:</strong> ₱{parent.totalAmount.toFixed(2)}</div>}
+          {parent.notes && <div><strong>Notes:</strong> <span className="italic">{parent.notes}</span></div>}
+          {parent.trackingNumber && <div><strong>Tracking #:</strong> {parent.trackingNumber}</div>}
 
           {parent.status === 'delivered' && parent.receivedBy && (
             <div className="text-sm flex flex-wrap items-center gap-2">
@@ -445,36 +426,39 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
             ) : (
               <>
                 {items.length === 0 && (
-                  <div className="text-sm text-muted-foreground">
-                    No items for this {parentType}.
-                  </div>
+                  <div className="text-sm text-muted-foreground">No items for this {parentType}.</div>
                 )}
                 {items.map((it) => {
-                  const expectedLabel = it.expectedDate
-                    ? friendlyExpectedLabel(it.expectedDate)
-                    : ''
+                  const expectedLabel = it.expectedDate ? friendlyExpectedLabel(it.expectedDate) : ''
                   return (
-                    <div
-                      key={it.id}
-                      className="flex flex-col sm:flex-row justify-between gap-3 border-b pb-2"
-                    >
+                    <div key={it.id} className="flex flex-col sm:flex-row justify-between gap-3 border-b pb-2">
                       <div className="flex-1">
                         <div className="font-medium">{it.name}</div>
                         <div className="text-xs text-muted-foreground">
                           {expectedLabel}
-                          {typeof it.price === 'number'
-                            ? ` · ₱${it.price.toFixed(2)}`
-                            : ''}
+                          {typeof it.price === 'number' ? ` · ₱${it.price.toFixed(2)}` : ''}
                         </div>
-                        {it.status === 'delivered' &&
-                          it.receivedBy &&
-                          it.receivedAt && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              <UserName userId={it.receivedBy} /> ·{' '}
-                              {friendlyDeliveredLabel(it.receivedAt)}
-                            </div>
-                          )}
+                        {it.status === 'delivered' && it.receivedBy && it.receivedAt && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            <UserName userId={it.receivedBy} /> · {friendlyDeliveredLabel(it.receivedAt)}
+                          </div>
+                        )}
                       </div>
+
+                      {/* per-item receive control stays, independent of parent locking */}
+                      {it.status !== 'delivered' && (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => onMarkItem(it.id)}
+                            disabled={processing}
+                          >
+                            {processing ? 'Please wait…' : 'Mark item received'}
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )
                 })}
