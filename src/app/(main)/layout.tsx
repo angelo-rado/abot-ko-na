@@ -272,6 +272,7 @@ function safeRenderNode(node: React.ReactNode): React.ReactNode {
   if (node == null) return null
   if (typeof node === 'string' || typeof node === 'number') return node
   if (Array.isArray(node)) return <>{node as any}</>
+  // @ts-ignore – React is already imported in this file
   if (React.isValidElement?.(node)) return node as any
   // Fallback: avoid rendering plain objects (e.g., module exports)
   return null
