@@ -3,8 +3,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import {
-  doc, onSnapshot, collection, onSnapshot as onColSnapshot,
-  updateDoc, deleteDoc, arrayRemove, getDoc
+  arrayRemove,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  onSnapshot,
+  setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
@@ -14,204 +19,174 @@ import { Badge } from '@/components/ui/badge'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 
-type Family = { id: string; name?: string; createdBy?: string; members?: string[] }
-type MemberRow = { uid: string; displayName?: string; email?: string }
+type Family = {
+  id: string
+  name?: string | null
+  createdBy?: string | null
+}
+
+type MemberRow = {
+  uid: string
+  name?: string | null
+  email?: string | null
+  role?: string | null
+}
+
+const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
 export const dynamic = 'force-dynamic'
 
 export default function FamilyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
+  const { user, loading: authLoading } = useAuth()
   const search = useSearchParams()
   const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
 
-  const { user, loading: authLoading } = useAuth()
-  const [family, setFamily] = useState<Family | null | undefined>(undefined)
-  const [members, setMembers] = useState<MemberRow[] | undefined>(undefined)
-  const [workingUid, setWorkingUid] = useState<string | null>(null)
+  const [family, setFamily] = useState<Family | null | undefined>()
+  const [members, setMembers] = useState<MemberRow[] | undefined>()
+  const [busy, setBusy] = useState<string | null>(null)
 
-  // Auth gate
+  // joined toast
   useEffect(() => {
-    if (!authLoading && !user) router.replace('/login')
-  }, [authLoading, user, router])
+    if (!joinedFlag) return
+    toast.success('Welcome to the family!')
+    const url = new URL(window.location.href)
+    url.searchParams.delete('joined')
+    router.replace(url.toString(), { scroll: false })
+  }, [joinedFlag, router])
 
-  // Live family doc
+  // family doc
   useEffect(() => {
-    if (!id) { setFamily(null); return }
-    const ref = doc(firestore, 'families', id)
+    if (!id) { setFamily(undefined); return }
+    const ref = doc(firestore, 'families', String(id))
     const unsub = onSnapshot(ref, (snap) => {
       if (!snap.exists()) { setFamily(null); return }
-      const d = snap.data() as any
-      setFamily({
-        id: snap.id,
-        name: d?.name ?? 'Family',
-        createdBy: d?.createdBy ?? '',
-        members: Array.isArray(d?.members) ? d.members : undefined,
-      })
-    }, () => setFamily(null))
+      const data = snap.data() as any
+      setFamily({ id: snap.id, name: data?.name ?? null, createdBy: data?.createdBy ?? null })
+    }, (err) => {
+      console.error('[family] family doc error', err)
+      setFamily(null)
+    })
     return () => unsub()
   }, [id])
 
-  // Live members subcollection + hydrate names/emails
+  // members subcollection
   useEffect(() => {
     if (!id) { setMembers(undefined); return }
-    const colRef = collection(firestore, 'families', id, 'members')
-    const unsub = onColSnapshot(colRef, async (snap) => {
-      // base list from subcollection doc IDs
-      const base = snap.docs.map(d => ({ uid: d.id } as MemberRow))
+    const colRef = collection(firestore, 'families', String(id), 'members')
+    const unsub = onSnapshot(colRef, async (snap) => {
+      const base = snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) } as MemberRow))
       // hydrate from users/{uid}
       const enriched = await Promise.all(base.map(async (row) => {
         try {
           const uSnap = await getDoc(doc(firestore, 'users', row.uid))
-          if (uSnap.exists()) {
-            const u = uSnap.data() as any
-            return {
-              uid: row.uid,
-              displayName: u.displayName ?? u.name ?? '',
-              email: u.email ?? '',
-            }
-          }
-        } catch {}
-        return row
+          if (!uSnap.exists()) return row
+          const u = uSnap.data() as any
+          return {
+            ...row,
+            name: typeof u?.displayName === 'string' ? u.displayName : row.name ?? null,
+            email: typeof u?.email === 'string' ? u.email : row.email ?? null,
+          } as MemberRow
+        } catch {
+          return row
+        }
       }))
       setMembers(enriched)
     }, (err) => {
-      console.warn('[family/members] listener error', err)
+      console.error('[family] members subcol error', err)
       setMembers([])
     })
     return () => unsub()
   }, [id])
 
-  const isOwner = !!(user?.uid && family?.createdBy === user.uid)
+  const isOwner = user && family?.createdBy === user.uid
 
-  async function removeMember(targetUid: string) {
-    if (!id || !user?.uid) return
-    const self = targetUid === user.uid
-
-    if (!self && !isOwner) {
+  async function handleRemoveMember(targetUid: string) {
+    if (!user || !id) return
+    if (targetUid !== user.uid && !isOwner) {
       toast.error('Only the owner can remove other members.')
       return
     }
-
-    setWorkingUid(targetUid)
+    setBusy(targetUid)
     try {
-      // 1) delete subcollection membership doc
-      await deleteDoc(doc(firestore, 'families', id, 'members', targetUid)).catch(() => {})
-
-      // 2) keep top-level members array in sync if you use it
-      try {
-        await updateDoc(doc(firestore, 'families', id), { members: arrayRemove(targetUid) })
-      } catch {} // ok if field not present / no permission
-
-      toast.success(self ? 'You left the family.' : 'Member removed.')
-      if (self) router.replace('/family')
-    } catch (err) {
-      console.error('removeMember error', err)
-      toast.error('Failed to remove member.')
+      // remove from subcollection
+      await deleteDoc(doc(firestore, 'families', String(id), 'members', targetUid))
+      // update users/{uid}.joinedFamilies
+      await setDoc(doc(firestore, 'users', targetUid), { joinedFamilies: arrayRemove(String(id)) }, { merge: true })
+      if (targetUid === user.uid) {
+        // if leaving self, clear local selection and go back
+        if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) {
+          localStorage.removeItem(LOCAL_FAMILY_KEY)
+        }
+        toast.success('You left the family.')
+        router.replace('/family')
+      } else {
+        toast.success('Member removed.')
+      }
+    } catch (e: any) {
+      console.error('[family] remove member failed', e)
+      toast.error(e?.message || 'Failed to remove member.')
     } finally {
-      setWorkingUid(null)
+      setBusy(null)
     }
   }
 
-  if (authLoading || family === undefined || members === undefined) {
+  if (!id) return null
+
+  if (family === undefined || members === undefined) {
     return (
-      <main className="max-w-xl mx-auto p-6">
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span>Loading family…</span>
-        </div>
-      </main>
+      <div className="max-w-2xl mx-auto p-6 text-muted-foreground flex items-center gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+      </div>
     )
   }
 
   if (family === null) {
     return (
-      <main className="max-w-xl mx-auto p-6 space-y-3">
-        <h1 className="text-lg font-semibold">Family not found</h1>
-        <p className="text-sm text-muted-foreground">
-          The link may be invalid or the family was removed.
-        </p>
-        <Button type="button" onClick={() => router.replace('/family')}>Back to Families</Button>
-      </main>
+      <div className="max-w-2xl mx-auto p-6">
+        <p className="text-muted-foreground">This family no longer exists or you don’t have access.</p>
+        <Button className="mt-4" onClick={() => router.push('/family')}>Back to Families</Button>
+      </div>
     )
   }
 
   return (
-    <main className="max-w-2xl mx-auto p-6 space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold">{family.name ?? 'Family'}</h1>
-        {joinedFlag && (
-          <p className="text-xs text-emerald-600 dark:text-emerald-400">
-            Joined successfully.
-          </p>
-        )}
-        <Separator />
+    <div className="max-w-2xl mx-auto p-4 space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">{family.name || 'Untitled Family'}</h1>
+        {isOwner && <Badge variant="outline">Owner</Badge>}
       </div>
-
+      <Separator />
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Members</h2>
-
-        <div className="rounded-md border divide-y bg-background">
-          {members.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">No members yet.</div>
-          ) : (
-            members.map((m) => {
-              const isSelf = m.uid === user?.uid
-              const ownerRow = m.uid === family.createdBy
-              return (
-                <div key={m.uid} className="flex items-center justify-between p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">
-                        {m.displayName || m.uid}
-                      </span>
-                      {ownerRow && <Badge variant="secondary">Owner</Badge>}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {m.email || m.uid}
-                    </div>
-                  </div>
-
-                  <div>
-                    {isSelf ? (
-                      // Leave button (self)
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => removeMember(m.uid)}
-                        disabled={workingUid === m.uid}
-                      >
-                        {workingUid === m.uid ? 'Leaving…' : 'Leave'}
-                      </Button>
-                    ) : (
-                      // Remove button (owner only)
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => removeMember(m.uid)}
-                        disabled={!isOwner || workingUid === m.uid}
-                      >
-                        {workingUid === m.uid ? 'Removing…' : 'Remove'}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )
-            })
+        <h2 className="text-lg font-semibold">Members</h2>
+        <ul className="divide-y rounded-md border">
+          {members!.map(m => (
+            <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
+              <div className="min-w-0">
+                <div className="font-medium truncate">{m.name || m.email || m.uid}</div>
+                <div className="text-muted-foreground truncate">{m.email || '—'}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                {m.uid === family.createdBy && <Badge variant="secondary">Owner</Badge>}
+                {(isOwner || m.uid === user?.uid) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy === m.uid}
+                    onClick={() => handleRemoveMember(m.uid)}
+                  >
+                    {busy === m.uid ? 'Removing…' : (m.uid === user?.uid ? 'Leave' : 'Remove')}
+                  </Button>
+                )}
+              </div>
+            </li>
+          ))}
+          {members!.length === 0 && (
+            <li className="p-3 text-muted-foreground">No members yet.</li>
           )}
-        </div>
+        </ul>
       </section>
-
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" onClick={() => router.replace('/deliveries')}>
-          Go to Deliveries
-        </Button>
-        <Button type="button" variant="outline" onClick={() => router.replace('/family')}>
-          Back to Family List
-        </Button>
-      </div>
-    </main>
+    </div>
   )
 }

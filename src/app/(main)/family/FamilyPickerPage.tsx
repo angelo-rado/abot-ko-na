@@ -1,293 +1,200 @@
 'use client'
 
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { AnimatePresence, motion } from 'framer-motion'
+import { HomeIcon, UsersIcon, Loader2, Plus } from 'lucide-react'
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   where,
+  Timestamp,
 } from 'firebase/firestore'
-import { useEffect, useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { AnimatePresence, motion } from 'framer-motion'
-import { HomeIcon, UsersIcon, Loader2 } from 'lucide-react'
 
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
-
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
-import FamilyCreatedSuccess from '@/app/components/FamilyCreatedSuccess'
+import { toast } from 'sonner'
 import JoinFamilyModal from '@/app/components/JoinFamilyModal'
 import CreateFamilyModal from '@/app/components/CreateFamilyModal'
 
 type Family = {
   id: string
-  name: string
-  createdBy: string
+  name?: string | null
+  createdBy?: string | null
   memberCount?: number
-  [key: string]: any
 }
 
-export default function FamilyPickerPageContent() {
+const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
+
+export default function FamilyPickerPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
-  const searchParams = useSearchParams()
+  const search = useSearchParams()
   const isOnline = useOnlineStatus()
+  const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
 
-  const [ownedFamilies, setOwnedFamilies] = useState<Family[]>([])
-  const [joinedFamilies, setJoinedFamilies] = useState<Family[]>([])
+  const [owned, setOwned] = useState<Family[] | undefined>()
+  const [joined, setJoined] = useState<Family[] | undefined>()
   const [loading, setLoading] = useState(true)
-  const [createdFamily, setCreatedFamily] = useState<Family | null>(null)
-
-  const createdFamilyId = searchParams.get('created')
-  const lastSeenCreatedId = useRef<string | null>(null)
-  const memberUnsubsRef = useRef<Map<string, () => void>>(new Map())
-  const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
 
-  const hasLoaded = useRef(false)
+  const cleanedJoinedToast = useRef(false)
 
+  // toast once on successful join
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.replace('/login')
+    if (cleanedJoinedToast.current) return
+    if (joinedFlag) {
+      toast.success('Joined family!')
+      // clear the URL param
+      const url = new URL(window.location.href)
+      url.searchParams.delete('joined')
+      router.replace(url.toString(), { scroll: false })
+      cleanedJoinedToast.current = true
     }
-  }, [authLoading, user, router])
+  }, [joinedFlag, router])
 
+  // load "owned" families
   useEffect(() => {
-    if (!user) return
-
-    setLoading(true)
-
-    const ownedQ = query(
-      collection(firestore, 'families'),
-      where('createdBy', '==', user.uid)
-    )
-    const joinedQ = query(
-      collection(firestore, 'families'),
-      where('members', 'array-contains', user.uid)
-    )
-
-    const unsubOwned = onSnapshot(ownedQ, (snap) => {
-      const families = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
-      families.forEach(f => ensureMemberCountListener(f.id))
-      setOwnedFamilies(families)
-      setLoading(false)
+    if (authLoading || !user?.uid) return
+    const q = query(collection(firestore, 'families'), where('createdBy', '==', user.uid))
+    const unsub = onSnapshot(q, (snap) => {
+      const list: Family[] = snap.docs.map(d => {
+        const data = d.data() as any
+        return { id: d.id, name: data?.name ?? null, createdBy: data?.createdBy ?? null }
+      })
+      setOwned(list)
+    }, (err) => {
+      console.error('[family] owned onSnapshot error', err)
+      toast.error('Failed to load your families.')
+      setOwned([])
     })
+    return () => unsub()
+  }, [authLoading, user?.uid])
 
-    const unsubJoined = onSnapshot(joinedQ, (snap) => {
-      const families = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
-      families.forEach(f => ensureMemberCountListener(f.id))
-      setJoinedFamilies(families)
-      setLoading(false)
-    })
-
-    let unsubCreated: (() => void) | undefined
-    if (createdFamilyId && createdFamilyId !== lastSeenCreatedId.current) {
-      const createdRef = doc(firestore, 'families', createdFamilyId)
-      unsubCreated = onSnapshot(createdRef, (snap) => {
-        if (snap.exists()) {
-          const data = { id: snap.id, ...(snap.data() as any) }
-          setCreatedFamily(data)
-          lastSeenCreatedId.current = data.id
+  // load "joined" families via users/{uid}.joinedFamilies
+  useEffect(() => {
+    if (authLoading || !user?.uid) return
+    const userRef = doc(firestore, 'users', user.uid)
+    const unsub = onSnapshot(userRef, async (snap) => {
+      try {
+        const data = snap.data() as any
+        const ids: string[] = Array.isArray(data?.joinedFamilies) ? data.joinedFamilies : []
+        if (ids.length === 0) {
+          setJoined([])
+          setLoading(false)
+          return
         }
-        const newParams = new URLSearchParams(searchParams.toString())
-        newParams.delete('created')
-        router.replace(`/family?${newParams.toString()}`, { scroll: false })
-      })
-    }
+        const families: Family[] = await Promise.all(ids.map(async (fid) => {
+          try {
+            const fSnap = await getDoc(doc(firestore, 'families', fid))
+            if (!fSnap.exists()) return null
+            const fData = fSnap.data() as any
+            return { id: fSnap.id, name: fData?.name ?? null, createdBy: fData?.createdBy ?? null }
+          } catch (e) {
+            console.warn('[family] failed to hydrate family', fid, e)
+            return null
+          }
+        })).then(xs => xs.filter(Boolean) as Family[])
+        setJoined(families)
+      } catch (e) {
+        console.error('[family] users doc hydrate failed', e)
+        setJoined([])
+      } finally {
+        setLoading(false)
+      }
+    }, (err) => {
+      console.error('[family] users doc listen failed', err)
+      setJoined([])
+      setLoading(false)
+    })
+    return () => unsub()
+  }, [authLoading, user?.uid])
 
-    return () => {
-      unsubOwned()
-      unsubJoined()
-      if (unsubCreated) unsubCreated()
-      memberUnsubsRef.current.forEach(u => u())
-      memberUnsubsRef.current.clear()
-    }
-  }, [user?.uid, createdFamilyId, router, searchParams])
-
-  useEffect(() => {
-    if (!loading) {
-      hasLoaded.current = true
-    }
-  }, [loading])
-
-  const ensureMemberCountListener = (familyId: string) => {
-    if (memberUnsubsRef.current.has(familyId)) return
-    try {
-      const membersRef = collection(firestore, 'families', familyId, 'members')
-      const unsub = onSnapshot(membersRef, (snap) => {
-        setOwnedFamilies(prev =>
-          prev.map(f => f.id === familyId ? { ...f, memberCount: snap.size } : f)
-        )
-        setJoinedFamilies(prev =>
-          prev.map(f => f.id === familyId ? { ...f, memberCount: snap.size } : f)
-        )
-      })
-      memberUnsubsRef.current.set(familyId, unsub)
-    } catch (err) {
-      console.warn('member listener error:', err)
-    }
-  }
-
-  const renderSkeleton = () =>
-    [...Array(2)].map((_, i) => (
-      <Card key={i} className="animate-pulse">
-        <CardHeader className="flex gap-3 items-center">
-          <Skeleton className="w-5 h-5 rounded-full" />
-          <Skeleton className="w-32 h-5" />
-        </CardHeader>
-      </Card>
-    ))
-
-  const renderEmptyState = ({
-    icon: Icon,
-    title,
-    description,
-    cta,
-  }: {
-    icon: React.ReactNode
-    title: string
-    description: string
-    cta: React.ReactNode
-  }) => (
-    <div className="text-center py-10 space-y-2">
-      <div className="flex justify-center">{Icon}</div>
-      <h3 className="text-md font-semibold">{title}</h3>
-      <p className="text-sm text-muted-foreground">{description}</p>
-      <div className="mt-4">{cta}</div>
-    </div>
-  )
-
-  const renderFamilyCard = (family: Family) => (
+  const renderFamilyCard = (f: Family) => (
     <motion.div
-      key={family.id}
-      layout
-      initial={{ opacity: 0, y: 10 }}
+      key={f.id}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2 }}
+      exit={{ opacity: 0 }}
+      transition={{ type: 'spring', stiffness: 260, damping: 22 }}
     >
-      <Card className="hover:shadow-sm transition">
-        <CardHeader className="flex flex-row justify-between items-center">
-          <div className="flex items-center gap-2">
-            {family.createdBy === user?.uid ? (
-              <HomeIcon className="w-5 h-5 text-muted-foreground" />
-            ) : (
-              <UsersIcon className="w-5 h-5 text-muted-foreground" />
-            )}
-            <CardTitle className="text-base font-medium">{family.name}</CardTitle>
-            <Badge variant="secondary">
-              {family.createdBy === user?.uid ? 'Owner' : 'Member'}
-            </Badge>
-            {typeof family.memberCount === 'number' && (
-              <Badge variant="outline">
-                {family.memberCount} member{family.memberCount !== 1 ? 's' : ''}
-              </Badge>
-            )}
-          </div>
-
-          {/* Use router.push on click; no Link wrapper */}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onMouseEnter={() => router.prefetch?.(`/family/${family.id}`)}
-            onClick={() => router.push(`/family/${family.id}`)}
-          >
-            Open
-          </Button>
+      <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => {
+        localStorage.setItem(LOCAL_FAMILY_KEY, f.id)
+        router.push(`/family/${f.id}`)
+      }}>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base font-semibold">{f.name || 'Untitled Family'}</CardTitle>
+          <Badge variant="outline">{f.createdBy === user?.uid ? 'Owner' : 'Member'}</Badge>
         </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          Tap to open
+        </CardContent>
       </Card>
     </motion.div>
   )
 
-  if (authLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (!user) return null
-
-  const showSkeleton = loading && !hasLoaded.current
-
   return (
-    <div className="max-w-xl mx-auto px-4 pt-6 pb-32 relative bg-background text-foreground">
-      <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
-      {createdFamily && (
-        <div className="mb-4">
-          <FamilyCreatedSuccess
-            familyName={createdFamily.name}
-            familyId={createdFamily.id}
-          />
+    <div className="max-w-2xl mx-auto p-4">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-2xl font-semibold">Your Families</h1>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setJoinOpen(true)}>Join</Button>
+          <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-1" /> Create</Button>
         </div>
-      )}
-
-      {/* Use themed background for sticky header so it matches dark mode */}
-      <div className="sticky top-0 z-10 pt-2 pb-4 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b">
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-xl font-semibold">Your Families</h1>
-          {ownedFamilies.length > 0 &&
-            <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
-              + Create
-            </Button>
-          }
-        </div>
-
-        <Tabs defaultValue="created">
-          <TabsList className="w-full grid grid-cols-2">
-            <TabsTrigger value="created">
-              <HomeIcon className="w-4 h-4 mr-1" />
-              Created
-            </TabsTrigger>
-            <TabsTrigger value="joined">
-              <UsersIcon className="w-4 h-4 mr-1" />
-              Joined
-            </TabsTrigger>
-          </TabsList>
-
-          <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
-
-          <TabsContent value="created" className="space-y-2 pt-4">
-            {showSkeleton ? renderSkeleton() : (
-              <AnimatePresence>
-                {ownedFamilies.length === 0
-                  ? renderEmptyState({
-                    icon: <HomeIcon className="w-6 h-6 text-muted-foreground" />,
-                    title: 'No families yet',
-                    description: 'Start by creating a new family group.',
-                    cta: <Button type="button" onClick={() => setCreateOpen(true)}>Create Family</Button>,
-                  })
-                  : ownedFamilies.map(renderFamilyCard)}
-              </AnimatePresence>
-            )}
-          </TabsContent>
-
-          <TabsContent value="joined" className="space-y-2 pt-4">
-            {showSkeleton ? renderSkeleton() : (
-              <AnimatePresence>
-                {joinedFamilies.filter(f => f.createdBy !== user.uid).length === 0
-                  ? renderEmptyState({
-                    icon: <UsersIcon className="w-6 h-6 text-muted-foreground" />,
-                    title: 'Not part of any family yet',
-                    description: 'Join one via an invite link.',
-                    cta: <Button type="button" variant="outline" onClick={() => setJoinOpen(true)}>Join a Family</Button>,
-                  })
-                  : joinedFamilies
-                    .filter(f => f.createdBy !== user.uid)
-                    .map(renderFamilyCard)}
-              </AnimatePresence>
-            )}
-          </TabsContent>
-        </Tabs>
       </div>
+
+      <Tabs defaultValue="owned" className="w-full">
+        <TabsList className="grid grid-cols-2">
+          <TabsTrigger value="owned" className="flex items-center gap-2"><HomeIcon className="w-4 h-4" /> Owned</TabsTrigger>
+          <TabsTrigger value="joined" className="flex items-center gap-2"><UsersIcon className="w-4 h-4" /> Joined</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="owned" className="mt-4">
+          {authLoading || loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          ) : (owned && owned.length > 0) ? (
+            <AnimatePresence initial={false}>
+              {owned.map(renderFamilyCard)}
+            </AnimatePresence>
+          ) : (
+            <Card>
+              <CardContent className="py-10 text-center text-muted-foreground">
+                You haven’t created a family yet.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="joined" className="mt-4">
+          {authLoading || loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          ) : (joined && joined.length > 0) ? (
+            <AnimatePresence initial={false}>
+              {joined
+                ?.filter(f => f.createdBy !== user?.uid)
+                .map(renderFamilyCard)}
+            </AnimatePresence>
+          ) : (
+            <Card>
+              <CardContent className="py-10 text-center text-muted-foreground">
+                You haven’t joined any families yet.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
+      <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   )
 }

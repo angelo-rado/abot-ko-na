@@ -1,4 +1,7 @@
+'use client'
+import Providers from '@/app/providers'
+
 export default function JoinRouteLayout({ children }: { children: React.ReactNode }) {
-  // Minimal wrapper — no global ThemeProvider/Nav/etc so we can isolate crashes
-  return <>{children}</>
+  // Ensure auth/theme/providers are available on /family/join
+  return <Providers>{children}</Providers>
 }

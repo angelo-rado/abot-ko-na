@@ -1,12 +1,14 @@
 'use client'
 
 import { Suspense } from 'react'
-import FamilyPickerPageContent from './FamilyPickerPage'
+import FamilyPickerPage from './FamilyPickerPage'
 
-export default function FamilyJoinPage() {
+export const dynamic = 'force-dynamic'
+
+export default function FamilyPage() {
   return (
     <Suspense fallback={<div className="max-w-xl mx-auto p-6 text-center">Loading…</div>}>
-      <FamilyPickerPageContent />
+      <FamilyPickerPage />
     </Suspense>
   )
 }
