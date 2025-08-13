@@ -18,11 +18,13 @@ import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import InviteModal from '@/app/components/InviteModal'
+import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
 
 type Family = {
   id: string
-  name?: string | null
-  createdBy?: string | null
+  name?: string 
+  createdBy?: string 
 }
 
 type MemberRow = {
@@ -30,6 +32,7 @@ type MemberRow = {
   name?: string | null
   email?: string | null
   role?: string | null
+  photoURL?: string | null
 }
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
@@ -39,13 +42,15 @@ export const dynamic = 'force-dynamic'
 export default function FamilyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+  const { user } = useAuth()
   const search = useSearchParams()
   const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
 
   const [family, setFamily] = useState<Family | null | undefined>()
   const [members, setMembers] = useState<MemberRow[] | undefined>()
   const [busy, setBusy] = useState<string | null>(null)
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [manageOpen, setManageOpen] = useState(false)
 
   // joined toast
   useEffect(() => {
@@ -71,27 +76,55 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
+  // helper to pick a nice display name from various schemas
+  function pickNameFrom(obj: any): string | null {
+    if (!obj) return null
+    return (
+      obj.displayName ||
+      obj.fullName ||
+      obj.name ||
+      (obj.profile && (obj.profile.displayName || obj.profile.name)) ||
+      null
+    )
+  }
+
+  function pickEmailFrom(obj: any): string | null {
+    if (!obj) return null
+    return obj.email || (obj.profile && obj.profile.email) || null
+  }
+
+  function pickPhotoFrom(obj: any): string | null {
+    if (!obj) return null
+    return obj.photoURL || (obj.profile && obj.profile.photoURL) || null
+  }
+
   // members subcollection
   useEffect(() => {
     if (!id) { setMembers(undefined); return }
     const colRef = collection(firestore, 'families', String(id), 'members')
     const unsub = onSnapshot(colRef, async (snap) => {
       const base = snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) } as MemberRow))
-      // hydrate from users/{uid}
+
       const enriched = await Promise.all(base.map(async (row) => {
         try {
           const uSnap = await getDoc(doc(firestore, 'users', row.uid))
-          if (!uSnap.exists()) return row
+          if (!uSnap.exists()) {
+            return {
+              ...row,
+              name: row.name ?? null,
+              email: row.email ?? null,
+            }
+          }
           const u = uSnap.data() as any
-          return {
-            ...row,
-            name: typeof u?.displayName === 'string' ? u.displayName : row.name ?? null,
-            email: typeof u?.email === 'string' ? u.email : row.email ?? null,
-          } as MemberRow
+          const name = pickNameFrom(u) ?? row.name ?? null
+          const email = pickEmailFrom(u) ?? row.email ?? null
+          const photoURL = pickPhotoFrom(u) ?? row.photoURL ?? null
+          return { ...row, name, email, photoURL }
         } catch {
           return row
         }
       }))
+
       setMembers(enriched)
     }, (err) => {
       console.error('[family] members subcol error', err)
@@ -155,9 +188,19 @@ export default function FamilyDetailPage() {
     <div className="max-w-2xl mx-auto p-4 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{family.name || 'Untitled Family'}</h1>
-        {isOwner && <Badge variant="outline">Owner</Badge>}
+        <div className="flex items-center gap-2">
+          {isOwner && (
+            <>
+              <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
+              <Button onClick={() => setManageOpen(true)}>Manage</Button>
+            </>
+          )}
+          {isOwner && <Badge variant="outline">Owner</Badge>}
+        </div>
       </div>
+
       <Separator />
+
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Members</h2>
         <ul className="divide-y rounded-md border">
@@ -187,6 +230,23 @@ export default function FamilyDetailPage() {
           )}
         </ul>
       </section>
+
+      {/* Corrected props for modals */}
+      {isOwner && (
+        <>
+          <InviteModal
+            open={inviteOpen}
+            onOpenChange={setInviteOpen}
+            familyId={String(id)}
+            familyName={family?.name ?? undefined}
+          />
+          <ManageFamilyDialog
+            open={manageOpen}
+            onOpenChange={setManageOpen}
+            family={family}
+          />
+        </>
+      )}
     </div>
   )
 }
