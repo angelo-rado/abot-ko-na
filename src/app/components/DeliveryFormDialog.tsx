@@ -4,6 +4,13 @@ import React, { useEffect, useState, useRef } from 'react'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -506,17 +513,23 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                   </div>
 
                   <div>
-                    <Label>Status</Label>
-                    <select
+                    <Label htmlFor="status">Status</Label>
+                    <Select
                       value={values.status}
-                      onChange={(e) => setValues((v) => ({ ...v, status: e.target.value as DeliveryStatus }))}
-                      className="mt-1 block w-full rounded border px-2 py-1"
+                      onValueChange={(val) =>
+                        setValues((v) => ({ ...v, status: val as DeliveryStatus }))
+                      }
                     >
-                      <option value="pending">Pending</option>
-                      <option value="in_transit">In Transit</option>
-                      <option value="delivered">Delivered</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
+                      <SelectTrigger id="status" className="mt-1 w-full">
+                        <SelectValue placeholder="Select status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="in_transit">In Transit</SelectItem>
+                        <SelectItem value="delivered">Delivered</SelectItem>
+                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div>

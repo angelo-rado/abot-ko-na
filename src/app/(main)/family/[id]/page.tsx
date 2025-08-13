@@ -11,26 +11,29 @@ import {
   onSnapshot,
   setDoc,
 } from 'firebase/firestore'
+import { formatDistanceToNow } from 'date-fns'
+import { Users as UsersIcon, CalendarDays, Loader2, MoreVertical } from 'lucide-react'
+
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
-import { Loader2 } from 'lucide-react'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 import InviteModal from '@/app/components/InviteModal'
 import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
 
 type Family = {
   id: string
-  name?: string 
-  createdBy?: string 
+  name?: string
+  createdBy?: string
+  createdAt?: Date | null
 }
 
 type MemberRow = {
   uid: string
   name?: string | null
-  email?: string | null
   role?: string | null
   photoURL?: string | null
 }
@@ -38,6 +41,20 @@ type MemberRow = {
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
 export const dynamic = 'force-dynamic'
+
+function toDate(v: any): Date | null {
+  if (!v) return null
+  if (v instanceof Date) return v
+  if (typeof v?.toDate === 'function') return v.toDate()
+  const d = new Date(v)
+  return isNaN(d.getTime()) ? null : d
+}
+
+function initials(name?: string | null, uid?: string) {
+  if (!name && uid) return uid.slice(0, 2).toUpperCase()
+  if (!name) return '👤'
+  return name.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
+}
 
 export default function FamilyDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -68,7 +85,12 @@ export default function FamilyDetailPage() {
     const unsub = onSnapshot(ref, (snap) => {
       if (!snap.exists()) { setFamily(null); return }
       const data = snap.data() as any
-      setFamily({ id: snap.id, name: data?.name ?? null, createdBy: data?.createdBy ?? null })
+      setFamily({
+        id: snap.id,
+        name: typeof data?.name === 'string' ? data.name : undefined,
+        createdBy: typeof data?.createdBy === 'string' ? data.createdBy : undefined,
+        createdAt: toDate(data?.createdAt ?? data?.created_on ?? data?.created_at),
+      })
     }, (err) => {
       console.error('[family] family doc error', err)
       setFamily(null)
@@ -76,26 +98,14 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
-  // helper to pick a nice display name from various schemas
+  // helper to pick a nice display name / photo
   function pickNameFrom(obj: any): string | null {
     if (!obj) return null
-    return (
-      obj.displayName ||
-      obj.fullName ||
-      obj.name ||
-      (obj.profile && (obj.profile.displayName || obj.profile.name)) ||
-      null
-    )
+    return obj.displayName || obj.fullName || obj.name || obj?.profile?.displayName || obj?.profile?.name || null
   }
-
-  function pickEmailFrom(obj: any): string | null {
-    if (!obj) return null
-    return obj.email || (obj.profile && obj.profile.email) || null
-  }
-
   function pickPhotoFrom(obj: any): string | null {
     if (!obj) return null
-    return obj.photoURL || (obj.profile && obj.profile.photoURL) || null
+    return obj.photoURL || obj?.profile?.photoURL || null
   }
 
   // members subcollection
@@ -104,27 +114,20 @@ export default function FamilyDetailPage() {
     const colRef = collection(firestore, 'families', String(id), 'members')
     const unsub = onSnapshot(colRef, async (snap) => {
       const base = snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) } as MemberRow))
-
       const enriched = await Promise.all(base.map(async (row) => {
         try {
           const uSnap = await getDoc(doc(firestore, 'users', row.uid))
-          if (!uSnap.exists()) {
-            return {
-              ...row,
-              name: row.name ?? null,
-              email: row.email ?? null,
-            }
-          }
+          if (!uSnap.exists()) return row
           const u = uSnap.data() as any
-          const name = pickNameFrom(u) ?? row.name ?? null
-          const email = pickEmailFrom(u) ?? row.email ?? null
-          const photoURL = pickPhotoFrom(u) ?? row.photoURL ?? null
-          return { ...row, name, email, photoURL }
+          return {
+            ...row,
+            name: pickNameFrom(u) ?? row.name ?? null,
+            photoURL: pickPhotoFrom(u) ?? row.photoURL ?? null,
+          } as MemberRow
         } catch {
           return row
         }
       }))
-
       setMembers(enriched)
     }, (err) => {
       console.error('[family] members subcol error', err)
@@ -134,6 +137,7 @@ export default function FamilyDetailPage() {
   }, [id])
 
   const isOwner = user && family?.createdBy === user.uid
+  const memberCount = members?.length ?? 0
 
   async function handleRemoveMember(targetUid: string) {
     if (!user || !id) return
@@ -143,12 +147,9 @@ export default function FamilyDetailPage() {
     }
     setBusy(targetUid)
     try {
-      // remove from subcollection
       await deleteDoc(doc(firestore, 'families', String(id), 'members', targetUid))
-      // update users/{uid}.joinedFamilies
       await setDoc(doc(firestore, 'users', targetUid), { joinedFamilies: arrayRemove(String(id)) }, { merge: true })
       if (targetUid === user.uid) {
-        // if leaving self, clear local selection and go back
         if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) {
           localStorage.removeItem(LOCAL_FAMILY_KEY)
         }
@@ -184,11 +185,27 @@ export default function FamilyDetailPage() {
     )
   }
 
+  const created = family.createdAt ? formatDistanceToNow(family.createdAt, { addSuffix: true }) : null
+
   return (
     <div className="max-w-2xl mx-auto p-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{family.name || 'Untitled Family'}</h1>
-        <div className="flex items-center gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold truncate">{family.name || 'Untitled Family'}</h1>
+          <div className="mt-1 text-xs text-muted-foreground flex items-center gap-3">
+            <span className="inline-flex items-center gap-1">
+              <UsersIcon className="w-3.5 h-3.5" />
+              {memberCount} {memberCount === 1 ? 'member' : 'members'}
+            </span>
+            {created && (
+              <span className="inline-flex items-center gap-1">
+                <CalendarDays className="w-3.5 h-3.5" />
+                {created}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           {isOwner && (
             <>
               <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
@@ -203,35 +220,50 @@ export default function FamilyDetailPage() {
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Members</h2>
-        <ul className="divide-y rounded-md border">
-          {members!.map(m => (
-            <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
-              <div className="min-w-0">
-                <div className="font-medium truncate">{m.name || m.email || m.uid}</div>
-                <div className="text-muted-foreground truncate">{m.email || '—'}</div>
-              </div>
-              <div className="flex items-center gap-2">
-                {m.uid === family.createdBy && <Badge variant="secondary">Owner</Badge>}
-                {(isOwner || m.uid === user?.uid) && (
+        <ul className="divide-y rounded-md border overflow-hidden">
+          {members!.map(m => {
+            const owner = m.uid === family.createdBy
+            const self = m.uid === user?.uid
+            const role = owner ? 'Owner' : (m.role || 'Member')
+            return (
+              <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar className="h-8 w-8">
+                    {m.photoURL ? (
+                      <AvatarImage src={m.photoURL} alt={m.name ?? m.uid} />
+                    ) : (
+                      <AvatarFallback>{initials(m.name, m.uid)}</AvatarFallback>
+                    )}
+                  </Avatar>
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">{m.name || m.uid}</div>
+                    <div className="mt-1">
+                      <Badge variant={owner ? 'secondary' : 'outline'} className="text-[10px]">
+                        {role}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                {(isOwner || self) && (
                   <Button
                     size="sm"
                     variant="outline"
                     disabled={busy === m.uid}
                     onClick={() => handleRemoveMember(m.uid)}
                   >
-                    {busy === m.uid ? 'Removing…' : (m.uid === user?.uid ? 'Leave' : 'Remove')}
+                    {busy === m.uid ? 'Removing…' : (self ? 'Leave' : 'Remove')}
                   </Button>
                 )}
-              </div>
-            </li>
-          ))}
+              </li>
+            )
+          })}
           {members!.length === 0 && (
             <li className="p-3 text-muted-foreground">No members yet.</li>
           )}
         </ul>
       </section>
 
-      {/* Corrected props for modals */}
       {isOwner && (
         <>
           <InviteModal
