@@ -232,7 +232,7 @@ export default function MainLayout({
                 transform: 'translateZ(0)',
               }}
             >
-              {node}
+              {safeRenderNode(node)}
             </div>
           ))}
         </motion.div>
@@ -266,4 +266,13 @@ function useViewportWidth() {
     return () => window.removeEventListener('resize', onR)
   }, [])
   return w
+}
+
+function safeRenderNode(node: React.ReactNode): React.ReactNode {
+  if (node == null) return null
+  if (typeof node === 'string' || typeof node === 'number') return node
+  if (Array.isArray(node)) return <>{node as any}</>
+  if (React.isValidElement?.(node)) return node as any
+  // Fallback: avoid rendering plain objects (e.g., module exports)
+  return null
 }
