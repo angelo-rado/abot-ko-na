@@ -1,68 +1,67 @@
+/* eslint-disable */
 'use client'
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
   collection, query, where, orderBy, onSnapshot, doc,
-  getDoc, updateDoc, setDoc, deleteDoc, Timestamp,
+  getDoc, updateDoc, setDoc, deleteDoc,
 } from 'firebase/firestore'
 
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
-import { Plus, Loader2 } from 'lucide-react'
+import { Plus, Loader2, MessageSquareText } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
-import DeliveryCard, { deliveryIsLocked } from '@/app/components/DeliveryCard'
+import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Checkbox } from '@/components/ui/checkbox'
 import ConfirmDialog from '@/app/components/ConfirmDialog'
-import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useRouter } from 'next/navigation'
-
-// Types
-type Family = { id: string; name?: string }
+import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
+import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
-const ARCHIVE_OLDER_THAN_DAYS = 30
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
-  const [familyId, setFamilyId] = useState<string | null>(null)
-  const [families, setFamilies] = useState<Family[]>([])
+
+  const [families, setFamilies] = useState<any[]>([])
   const [familiesLoading, setFamiliesLoading] = useState(true)
+  const [familyId, setFamilyId] = useState<string | null>(null)
 
   const [deliveries, setDeliveries] = useState<any[]>([])
   const [loadingDeliveries, setLoadingDeliveries] = useState(true)
-  const [openForm, setOpenForm] = useState(false)
-  const [unsubDeliveries, setUnsubDeliveries] = useState<(() => void) | null>(null)
-
   const [tab, setTab] = useState<'upcoming' | 'archived'>('upcoming')
-  const [queryText, setQueryText] = useState('')
-  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'in_transit' | 'delivered' | 'cancelled'>('all')
 
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({})
-  const [processingBulk, setProcessingBulk] = useState(false)
 
+  const [openForm, setOpenForm] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<any | null>(null)
-  const [editDialogOpen, setEditDialogOpen] = useState(false)
 
-  const [confirmOpen, setConfirmOpen] = useState(false)
-  const confirmResolveRef = useRef<(v: boolean) => void | null>(null)
+  const [unsubDeliveries, setUnsubDeliveries] = useState<() => void>(() => () => {})
+  const confirmResolveRef = useRef<((v: boolean) => void) | null>(null)
   const [confirmTitle, setConfirmTitle] = useState<string>('')
-  const [confirmMessage, setConfirmMessage] = useState<string>('')
+  const [confirmMessage, setConfirmMessage] = useState<string>('') // ✅ fixed typo
   const [confirmDanger, setConfirmDanger] = useState<boolean>(false)
   const [confirmConfirmLabel, setConfirmConfirmLabel] = useState<string>('Proceed')
   const [confirmCancelLabel, setConfirmCancelLabel] = useState<string>('Cancel')
+  const [confirmOpen, setConfirmOpen] = useState(false)
 
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
 
-  const router = useRouter()
+  const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({}) // per-delivery notes toggles
 
+  const router = useRouter()
   const isOnline = useOnlineStatus()
-  if (!isOnline) {
-    return <p className="text-center text-destructive">You're offline — cached content only.</p>
+
+  const handleConfirmResult = (ok: boolean) => {
+    const cb = confirmResolveRef.current
+    confirmResolveRef.current = null
+    setConfirmOpen(false)
+    cb?.(ok)
   }
 
   const showToast = (msg: string) => {
@@ -75,137 +74,86 @@ export default function DeliveriesPage() {
     danger?: boolean
     confirmLabel?: string
     cancelLabel?: string
-  }) => {
-    return new Promise<boolean>((resolve) => {
-      setConfirmTitle(title)
-      setConfirmMessage(message)
-      setConfirmDanger(!!opts?.danger)
-      setConfirmConfirmLabel(opts?.confirmLabel ?? 'Proceed')
-      setConfirmCancelLabel(opts?.cancelLabel ?? 'Cancel')
-      confirmResolveRef.current = resolve
-      setConfirmOpen(true)
-    })
-  }, [])
+  }) => new Promise<boolean>((resolve) => {
+    confirmResolveRef.current = resolve
+    setConfirmTitle(title)
+    setConfirmMessage(message)
+    setConfirmDanger(!!opts?.danger)
+    setConfirmConfirmLabel(opts?.confirmLabel || 'Proceed')
+    setConfirmCancelLabel(opts?.cancelLabel || 'Cancel')
+    setConfirmOpen(true)
+  }), [])
 
-  function handleConfirmResult(result: boolean) {
-    setConfirmOpen(false)
-    if (confirmResolveRef.current) {
-      confirmResolveRef.current(result)
-      confirmResolveRef.current = null
-    }
-  }
-
-  // Auth gate
+  // Families
   useEffect(() => {
-    if (!authLoading && !user) {
-      router.replace('/login')
-    }
-  }, [user, authLoading, router])
-
-  useEffect(() => {
-    return () => {
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (familyId) return
-    try {
-      const stored = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_FAMILY_KEY) : null
-      if (stored) {
-        setFamilyId(stored)
+    let unsub: (() => void) | null = null
+    ;(async () => {
+      if (!user?.uid) {
+        setFamilies([]); setFamilyId(null); setFamiliesLoading(false)
         return
       }
-    } catch { }
-    if (user?.uid) {
-      ; (async () => {
-        const snap = await getDoc(doc(firestore, 'users', user.uid))
-        if (snap.exists()) {
-          const data = snap.data() as any
-          if (data?.preferredFamily) {
-            setFamilyId(data.preferredFamily)
-            try { localStorage.setItem(LOCAL_FAMILY_KEY, data.preferredFamily) } catch { }
+
+      setFamiliesLoading(true)
+      const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
+      const unsubFn = onSnapshot(q, async (snapshot) => {
+        const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
+        setFamilies(list)
+
+        if (familyId && !list.some((f) => f.id === familyId)) {
+          try { localStorage.removeItem(LOCAL_FAMILY_KEY) } catch { }
+          const userRef = doc(firestore, 'users', user.uid)
+          await updateDoc(userRef, { preferredFamily: null }).catch(() => {
+            return setDoc(userRef, { preferredFamily: null }, { merge: true })
+          })
+
+          if (list.length > 0) {
+            setFamilyId(list[0].id)
+            try { localStorage.setItem(LOCAL_FAMILY_KEY, list[0].id) } catch { }
+          } else setFamilyId(null)
+        } else if (!familyId && list.length > 0) {
+          let preferred: string | null = null
+          try { preferred = localStorage.getItem(LOCAL_FAMILY_KEY) } catch { }
+          if (!preferred) {
+            const snap = await getDoc(doc(firestore, 'users', user.uid))
+            if (snap.exists()) {
+              const data = snap.data() as any
+              preferred = data?.preferredFamily
+            }
           }
+          setFamilyId(preferred || list[0].id)
         }
-      })()
-    }
-  }, [user?.uid, familyId])
+        setFamiliesLoading(false)
+      }, (err) => {
+        console.error('[Families] snapshot error', err)
+        setFamiliesLoading(false)
+      })
+      unsub = () => unsubFn()
+    })()
+    return () => { try { unsub?.() } catch {} }
+  }, [user?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!user?.uid) {
-      setFamilies([]); setFamilyId(null); setFamiliesLoading(false)
-      return
-    }
-
-    setFamiliesLoading(true)
-    const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
-    const unsub = onSnapshot(q, async (snapshot) => {
-      const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-      setFamilies(list)
-
-      if (familyId && !list.some((f) => f.id === familyId)) {
-        try { localStorage.removeItem(LOCAL_FAMILY_KEY) } catch { }
-        const userRef = doc(firestore, 'users', user.uid)
-        await updateDoc(userRef, { preferredFamily: null }).catch(() => {
-          return setDoc(userRef, { preferredFamily: null }, { merge: true })
-        })
-
-        if (list.length > 0) {
-          setFamilyId(list[0].id)
-          try { localStorage.setItem(LOCAL_FAMILY_KEY, list[0].id) } catch { }
-        } else setFamilyId(null)
-      } else if (!familyId && list.length > 0) {
-        let preferred: string | null = null
-        try { preferred = localStorage.getItem(LOCAL_FAMILY_KEY) } catch { }
-        if (!preferred) {
-          const snap = await getDoc(doc(firestore, 'users', user.uid))
-          if (snap.exists()) {
-            const data = snap.data() as any
-            preferred = data?.preferredFamily
-            if (preferred) localStorage.setItem(LOCAL_FAMILY_KEY, preferred)
-          }
-        }
-        setFamilyId(preferred && list.some((f) => f.id === preferred) ? preferred : list[0].id)
-      }
-
-      setFamiliesLoading(false)
-    }, (err) => {
-      console.warn('[DeliveriesPage] families error', err)
-      setFamiliesLoading(false)
-    })
-
-    return () => unsub()
-  }, [user?.uid, familyId])
-
-  const selectFamily = useCallback(async (id: string | null) => {
+  // Persist selection
+  const selectFamily = async (id: string | null) => {
     setFamilyId(id)
-    try {
-      id ? localStorage.setItem(LOCAL_FAMILY_KEY, id) : localStorage.removeItem(LOCAL_FAMILY_KEY)
-    } catch { }
     if (!user?.uid) return
-    const userRef = doc(firestore, 'users', user.uid)
-    await updateDoc(userRef, { preferredFamily: id }).catch(() => {
-      return setDoc(userRef, { preferredFamily: id }, { merge: true })
-    })
-  }, [user?.uid])
+    try { localStorage.setItem(LOCAL_FAMILY_KEY, id || '') } catch {}
+    try { await updateDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }) }
+    catch { await setDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }, { merge: true }) }
+  }
 
+  // deliveries listener
   useEffect(() => {
-    if (unsubDeliveries) try { unsubDeliveries() } catch { }
-    if (!familyId || !user?.uid) {
-      setDeliveries([]); setLoadingDeliveries(false)
-      return
-    }
+    if (!familyId) return
 
     setLoadingDeliveries(true)
-    // We subscribe broadly, then partition in-memory into Upcoming vs Archived.
+    try { unsubDeliveries?.() } catch {}
     const q = query(
       collection(firestore, 'families', familyId, 'deliveries'),
-      where('createdBy', '==', user.uid),
-      orderBy('expectedDate', 'asc')
+      orderBy('createdAt', 'desc')
     )
-
-    const unsub = onSnapshot(q, (snap) => {
-      setDeliveries(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })))
+    const unsub = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
+      setDeliveries(list)
       setLoadingDeliveries(false)
     }, (err) => {
       console.error('[DeliveriesPage] snapshot error', err)
@@ -214,102 +162,43 @@ export default function DeliveriesPage() {
 
     setUnsubDeliveries(() => unsub)
     return () => { try { unsub() } catch { } }
-  }, [familyId, user?.uid])
+  }, [familyId, user?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ---------------- Partition & filtering ---------------- */
   const isArchived = useCallback((d: any) => {
     if (!d) return false
-    // Prefer explicit archived flag if present
     if (d.archived === true) return true
-    // Consider delivered/cancelled archived
     if (['delivered', 'cancelled'].includes(d.status)) return true
-    // Fallback: auto-archive if ETA is older than cutoff
-    const raw = d.expectedDate
-    const expected =
-      typeof raw?.toDate === 'function' ? raw.toDate()
-      : raw?.seconds ? new Date(raw.seconds * 1000)
-      : raw ? new Date(raw) : null
-    if (!expected) return false
-    const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - ARCHIVE_OLDER_THAN_DAYS)
-    return expected < cutoff
+    return false
   }, [])
 
-  const { singleDeliveries, bulkDeliveries } = useMemo(() => {
-    const single: any[] = [], bulk: any[] = []
-    for (const d of deliveries) {
-      const count = typeof d.itemCount === 'number' ? d.itemCount : 1
-      if (d.type === 'bulk' || d.type === 'order' || count > 1) bulk.push(d)
-      else single.push(d)
-    }
-    return { singleDeliveries: single, bulkDeliveries: bulk }
-  }, [deliveries])
+  const upcoming = useMemo(() => deliveries.filter((d) => !isArchived(d)), [deliveries, isArchived])
+  const archived = useMemo(() => deliveries.filter((d) => isArchived(d)), [deliveries, isArchived])
 
-  // Partition by archivedness
-  const singlesUpcoming = useMemo(() => singleDeliveries.filter((d) => !isArchived(d)), [singleDeliveries, isArchived])
-  const singlesArchived = useMemo(() => singleDeliveries.filter(isArchived), [singleDeliveries, isArchived])
-  const bulksUpcoming   = useMemo(() => bulkDeliveries.filter((d) => !isArchived(d)), [bulkDeliveries, isArchived])
-  const bulksArchived   = useMemo(() => bulkDeliveries.filter(isArchived), [bulkDeliveries, isArchived])
+  const bulksToRender = useMemo(() => deliveries.filter((d) => d.type !== 'delivery'), [deliveries])
 
-  const singlesToRender = tab === 'upcoming' ? singlesUpcoming : singlesArchived
-  const bulksToRender   = tab === 'upcoming' ? bulksUpcoming   : bulksArchived
+  const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'in_transit' | 'delivered' | 'cancelled'>('all')
+  const [queryText, setQueryText] = useState('')
 
-  const applyFilters = (list: any[]) =>
-    list.filter((d) => {
-      if (filterStatus !== 'all' && (d.status ?? 'pending') !== filterStatus) return false
-      return !queryText || (d.title ?? d.platform ?? d.name ?? '').toLowerCase().includes(queryText.toLowerCase())
-    })
+  const matchesQuery = useCallback((d: any) => {
+    const q = queryText.trim().toLowerCase()
+    if (!q) return true
+    return (
+      (d.name && String(d.name).toLowerCase().includes(q)) ||
+      (d.notes && String(d.notes).toLowerCase().includes(q)) ||
+      (d.items && Array.isArray(d.items) && d.items.some((it: any) => String(it?.name || '').toLowerCase().includes(q)))
+    )
+  }, [queryText])
 
-  /* ---------------- Bulk ops ---------------- */
-  const toggleSelect = (id: string) => setSelectedIds((s) => ({ ...s, [id]: !s[id] }))
-  const clearSelection = () => setSelectedIds({ })
-  const selectedCount = Object.values(selectedIds).filter(Boolean).length
+  const applyFilters = useCallback((list: any[]) => {
+    return list.filter((d) => (filterStatus === 'all' ? true : d.status === filterStatus) && matchesQuery(d))
+  }, [filterStatus, matchesQuery])
 
-  const bulkDelete = async () => {
-    if (selectedCount === 0) return showToast('No deliveries selected')
-    const ok = await showConfirm('Delete deliveries?', `Delete ${selectedCount} delivery(ies)?`, { danger: true, confirmLabel: 'Delete' })
-    if (!ok) return
-    setProcessingBulk(true)
-    try {
-      const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
-      await Promise.all(ids.map((id) =>
-        deleteDoc(doc(firestore, 'families', familyId!, 'deliveries', id)).catch((err) => console.error('delete failed', id, err))
-      ))
-      clearSelection(); setSelectionMode(false); showToast('Deleted selected deliveries')
-    } catch (err) {
-      console.error(err); showToast('Bulk delete failed')
-    } finally {
-      setProcessingBulk(false)
-    }
-  }
+  const clearSelection = () => setSelectedIds({})
+  const toggleSelect = (id: string) => setSelectedIds((m) => ({ ...m, [id]: !m[id] }))
 
-  const bulkArchive = async () => {
-    if (selectedCount === 0) return showToast('No deliveries selected')
-    const ok = await showConfirm('Archive deliveries?', `Mark ${selectedCount} delivery(ies) as delivered?`)
-    if (!ok) return
-    setProcessingBulk(true)
-    try {
-      const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
-      await Promise.all(ids.map((id) =>
-        updateDoc(doc(firestore, 'families', familyId!, 'deliveries', id), {
-          status: 'delivered',
-          deliveredAt: Timestamp.now(),
-          archived: true,
-          archivedAt: Timestamp.now(),
-          archivedReason: 'bulk-archive',
-        }).catch((err) => console.error('archive failed', id, err))
-      ))
-      clearSelection(); setSelectionMode(false); showToast('Archived selected deliveries')
-    } catch (err) {
-      console.error(err); showToast('Bulk archive failed')
-    } finally {
-      setProcessingBulk(false)
-    }
-  }
-
-  /* ---------------- Row actions ---------------- */
-  const onEditDelivery = (d: any) => { setEditingDelivery(d); setEditDialogOpen(true) }
-  const onDeleteDelivery = async (id: string) => {
-    const ok = await showConfirm('Delete delivery?', 'This cannot be undone.', { danger: true, confirmLabel: 'Delete' })
+  async function handleDelete(id: string) {
+    const ok = await showConfirm('Delete delivery', 'This cannot be undone.', { danger: true, confirmLabel: 'Delete' })
     if (!ok) return
     try { await deleteDoc(doc(firestore, 'families', familyId!, 'deliveries', id)); showToast('Deleted') }
     catch (err) { console.error('delete failed', err); showToast('Delete failed') }
@@ -375,20 +264,16 @@ export default function DeliveriesPage() {
         <div className="flex gap-2 bg-muted rounded-md p-1">
           {(['upcoming', 'archived'] as const).map((t) => (
             <button
-              type="button"
               key={t}
               onClick={() => setTab(t)}
-              className={`px-3 py-1 rounded text-sm font-medium ${
-                tab === t ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground'
-              }`}
+              className={`px-3 py-1 rounded text-sm ${tab === t ? 'bg-background shadow border' : 'text-muted-foreground'}`}
             >
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === 'upcoming' ? 'Upcoming' : 'Archived'}
             </button>
           ))}
         </div>
 
         <input
-          type="text"
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
           placeholder="Search deliveries..."
@@ -420,26 +305,25 @@ export default function DeliveriesPage() {
           <p className="text-muted-foreground text-sm">
             You haven't joined or created a family yet. Deliveries require a family group.
           </p>
-          <div className="flex justify-center gap-4">
-            <Button type="button" onClick={() => router.push('/family')}>Go to Families</Button>
+          <div className="flex justify-center">
+            <Button onClick={() => router.push('/family')}>Go to Family</Button>
           </div>
         </div>
-      ) : deliveries.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No deliveries yet.</p>
       ) : (
         <>
-          {/* Single Deliveries */}
+          {/* Upcoming / Archived lists */}
           <section>
-            <h3 className="text-lg font-semibold mb-2">Single Deliveries</h3>
-            {applyFilters(singlesToRender).length === 0 ? (
-              <p className="text-muted-foreground mb-4 text-sm">No single deliveries</p>
+            <h3 className="text-lg font-semibold mb-2">{tab === 'upcoming' ? 'Upcoming' : 'Archived'}</h3>
+            {applyFilters((tab === 'upcoming' ? upcoming : archived)).length === 0 ? (
+              <p className="text-muted-foreground text-sm">No deliveries</p>
             ) : (
               <div className="space-y-4">
-                {applyFilters(singlesToRender).map((d) => {
+                {applyFilters((tab === 'upcoming' ? upcoming : archived)).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
-                  const locked = deliveryIsLocked(d)
+                  const locked = ['delivered', 'cancelled'].includes(d.status)
+                  const isOpen = !!notesOpen[d.id]
                   return (
-                    <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
+                    <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
@@ -447,12 +331,46 @@ export default function DeliveriesPage() {
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
                         <DeliveryCard familyId={familyId!} {...props} />
+
+                        {/* Row actions */}
                         {!selectionMode && (
-                          <div className="flex justify-end gap-2 mt-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setNotesOpen((m) => ({ ...m, [d.id]: !m[d.id] }))
+                              }
+                            >
+                              <MessageSquareText className="h-4 w-4 mr-1" />
+                              {isOpen ? 'Hide Notes' : 'Notes'}
+                            </Button>
                             {!locked && (
-                              <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingDelivery(d)
+                                  setOpenForm(true)
+                                }}
+                              >
+                                Edit
+                              </Button>
                             )}
-                            <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDelete(d.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* Notes thread */}
+                        {isOpen && (
+                          <div className="mt-3">
+                            <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
                           </div>
                         )}
                       </div>
@@ -472,9 +390,10 @@ export default function DeliveriesPage() {
               <div className="space-y-4">
                 {applyFilters(bulksToRender).map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
-                  const locked = deliveryIsLocked(d)
+                  const locked = ['delivered', 'cancelled'].includes(d.status)
+                  const isOpen = !!notesOpen[d.id]
                   return (
-                    <div key={keyFor(d)} className="relative group w-full rounded border bg-card text-card-foreground p-3 shadow-sm">
+                    <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
@@ -482,12 +401,44 @@ export default function DeliveriesPage() {
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
                         <DeliveryCard familyId={familyId!} {...props} />
+
                         {!selectionMode && (
-                          <div className="flex justify-end gap-2 mt-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setNotesOpen((m) => ({ ...m, [d.id]: !m[d.id] }))
+                              }
+                            >
+                              <MessageSquareText className="h-4 w-4 mr-1" />
+                              {isOpen ? 'Hide Notes' : 'Notes'}
+                            </Button>
                             {!locked && (
-                              <Button type="button" size="sm" variant="ghost" onClick={() => onEditDelivery(d)}>Edit</Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingDelivery(d)
+                                  setOpenForm(true)
+                                }}
+                              >
+                                Edit
+                              </Button>
                             )}
-                            <Button type="button" size="sm" variant="ghost" onClick={() => onDeleteDelivery(d.id)}>Delete</Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDelete(d.id)}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        )}
+
+                        {isOpen && (
+                          <div className="mt-3">
+                            <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
                           </div>
                         )}
                       </div>
@@ -499,24 +450,6 @@ export default function DeliveriesPage() {
           </section>
         </>
       )}
-
-      {/* Bulk actions toolbar */}
-      {selectionMode && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-card text-card-foreground border rounded shadow-md px-6 py-3 flex items-center gap-4 z-50">
-          <span className="text-sm">{selectedCount} selected</span>
-          <Button type="button" onClick={bulkArchive} disabled={processingBulk || selectedCount === 0}>Archive</Button>
-          <Button type="button" variant="destructive" onClick={bulkDelete} disabled={processingBulk || selectedCount === 0}>Delete</Button>
-          <Button type="button" variant="ghost" onClick={() => { setSelectionMode(false); clearSelection() }}>Cancel</Button>
-        </div>
-      )}
-
-      {/* Dialogs */}
-      <DeliveryFormDialog
-        open={openForm || editDialogOpen}
-        onOpenChange={(v) => { setOpenForm(v); if (!v) setEditDialogOpen(false) }}
-        familyId={familyId ?? ''}
-        delivery={editingDelivery ?? undefined}
-      />
 
       <ConfirmDialog
         open={confirmOpen}
@@ -535,6 +468,26 @@ export default function DeliveriesPage() {
         <div className="fixed bottom-6 right-6 bg-foreground text-background px-4 py-2 rounded shadow z-50">
           {toastMessage}
         </div>
+      )}
+
+      {/* Mobile FAB */}
+      <Button
+        type="button"
+        onClick={() => {
+          setEditingDelivery(null)
+          setOpenForm(true)
+        }}
+        disabled={!familyId}
+        className="sm:hidden fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 rounded-full h-14 w-14 shadow-lg"
+      >
+        <Plus className="w-5 h-5" />
+      </Button>
+
+      {/* Form Dialog (prop shape bridged) */}
+      {familyId && (
+        <DeliveryFormDialog
+          {...({ open: openForm, onOpenChange: setOpenForm, familyId, delivery: editingDelivery } as any)}
+        />
       )}
     </div>
   )

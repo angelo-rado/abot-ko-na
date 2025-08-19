@@ -19,21 +19,11 @@ const logger = winston.createLogger({
    Timezone helpers (Asia/Manila)
    ============================================================================= */
 
-/**
- * Minimal fixed-offset map. Asia/Manila is UTC+8 with no DST.
- * Extend if you need other zones.
- */
 const TZ_OFFSETS_HOURS: Record<string, number> = {
   'Asia/Manila': 8,
   UTC: 0,
 };
 
-/**
- * Returns start/end of "today" for a given time zone as UTC Date objects,
- * plus a yyyy-mm-dd date key in that zone.
- *
- * For Asia/Manila: computes midnight Manila -> converts to UTC.
- */
 function getTodayBoundsInTimeZone(timeZone: string): {
   startOfDay: Date;
   endOfDay: Date;
@@ -41,18 +31,13 @@ function getTodayBoundsInTimeZone(timeZone: string): {
 } {
   const offsetH = TZ_OFFSETS_HOURS[timeZone] ?? 0;
 
-  // Current UTC time
   const nowUtc = new Date();
-
-  // "Now" in the target zone by adding fixed offset hours
   const zonedNow = new Date(nowUtc.getTime() + offsetH * 3600_000);
 
-  // Extract date components in that zone (via UTC getters on the shifted date)
   const y = zonedNow.getUTCFullYear();
-  const m = zonedNow.getUTCMonth(); // 0-based
+  const m = zonedNow.getUTCMonth();
   const d = zonedNow.getUTCDate();
 
-  // Midnight in that zone -> convert to UTC by subtracting the offset
   const startOfDayUtc = new Date(Date.UTC(y, m, d) - offsetH * 3600_000);
   const endOfDayUtc = new Date(startOfDayUtc.getTime() + 24 * 3600_000);
 
@@ -61,14 +46,20 @@ function getTodayBoundsInTimeZone(timeZone: string): {
 }
 
 /* =============================================================================
+   Utils
+   ============================================================================= */
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  if (size <= 0) return [arr];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/* =============================================================================
    Idempotency for the daily sweep
    ============================================================================= */
 
-/**
- * Marker path:
- *   system/dailyDeliveryNotifications/{yyyy-mm-dd}/families/ids/{familyId}
- * Returns true if we wrote the marker (i.e., first time today); false if already exists.
- */
 async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Promise<boolean> {
   const ref = firestore
     .collection('system')
@@ -86,7 +77,7 @@ async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Pro
 }
 
 /* =============================================================================
-   Unified notifier for a family's members
+   Unified notifier for a family's members (multicast + Safari fallback)
    ============================================================================= */
 
 async function sendNotificationToFamilyMembers(
@@ -99,7 +90,7 @@ async function sendNotificationToFamilyMembers(
   try {
     const exclude = new Set(opts?.excludeUids ?? []);
 
-    // Get all member UIDs
+    // Get member UIDs from subcollection: families/{familyId}/members/{uid}
     const membersSnap = await firestore
       .collection('families')
       .doc(familyId)
@@ -111,7 +102,7 @@ async function sendNotificationToFamilyMembers(
     const fcmTokens: string[] = [];
     const safariFallbackUids: string[] = [];
 
-    // Collect tokens (dedupe later) and Safari fallback targets
+    // Collect tokens & Safari fallback
     for (const uid of memberUids) {
       const userDoc = await firestore.collection('users').doc(uid).get();
       const u = userDoc.data() as any;
@@ -122,23 +113,38 @@ async function sendNotificationToFamilyMembers(
       }
     }
 
-    const tokens = Array.from(new Set(fcmTokens));
+    const tokens = Array.from(new Set(fcmTokens)); // dedupe
 
-    // Send to tokens
-    for (const token of tokens) {
-      const message: admin.messaging.Message = {
-        token,
-        notification: { title, body },
-        data: { familyId, ...extraData },
-      };
-      try {
-        const res = await messaging.send(message);
-        logger.info('Push sent', { familyId, token, resId: res });
-      } catch (err) {
-        logger.error('Push failed', {
-          token,
-          error: err instanceof Error ? err.message : JSON.stringify(err),
-        });
+    // Multicast in chunks of 500 (FCM limit)
+    if (tokens.length > 0) {
+      const chunks = chunk(tokens, 500);
+      for (const part of chunks) {
+        try {
+          const res = await messaging.sendEachForMulticast({
+            tokens: part,
+            notification: { title, body },
+            data: { familyId, ...extraData },
+          });
+          logger.info('Push multicast result', {
+            familyId,
+            successCount: res.successCount,
+            failureCount: res.failureCount,
+          });
+
+          // Optional: log specific errors per token (kept concise)
+          res.responses.forEach((r, i) => {
+            if (!r.success) {
+              logger.error('Push failed', {
+                token: part[i],
+                error: r.error?.message ?? 'unknown',
+              });
+            }
+          });
+        } catch (err) {
+          logger.error('Push multicast exception', {
+            error: err instanceof Error ? err.message : JSON.stringify(err),
+          });
+        }
       }
     }
 
@@ -225,7 +231,8 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
         if (typeof after.expectedDate === 'object' && 'toDate' in after.expectedDate) {
           expectedDate = (after.expectedDate as admin.firestore.Timestamp).toDate();
         } else {
-          expectedDate = new Date(after.expectedDate);
+          const d = new Date(after.expectedDate);
+          expectedDate = isNaN(d.getTime()) ? null : d;
         }
       }
 
@@ -234,7 +241,6 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
   }
 );
 
-
 /**
  * 2) Daily 8AM (Asia/Manila) sweep:
  *    Notify once per family if there exists any delivery for TODAY
@@ -242,7 +248,7 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
  */
 export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
   {
-    schedule: '0 8 * * *',      // every day at 08:00
+    schedule: '0 8 * * *', // every day at 08:00
     timeZone: 'Asia/Manila',
   },
   async () => {
@@ -282,7 +288,8 @@ export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
           if (typeof delivery.expectedDate === 'object' && 'toDate' in delivery.expectedDate) {
             expectedDate = (delivery.expectedDate as admin.firestore.Timestamp).toDate();
           } else {
-            expectedDate = new Date(delivery.expectedDate);
+            const d = new Date(delivery.expectedDate);
+            expectedDate = isNaN(d.getTime()) ? null : d;
           }
         }
 
@@ -324,12 +331,12 @@ export const notifyDeliveryCreatedToday = functions.firestore.onDocumentCreated(
       if (typeof d.expectedDate === 'object' && 'toDate' in d.expectedDate) {
         expected = (d.expectedDate as admin.firestore.Timestamp).toDate();
       } else {
-        expected = new Date(d.expectedDate);
+        const dt = new Date(d.expectedDate);
+        expected = isNaN(dt.getTime()) ? null : dt;
       }
     }
     if (!expected) return;
 
-    // Must fall within today's Manila day
     const { startOfDay, endOfDay } = getTodayBoundsInTimeZone('Asia/Manila');
     if (expected >= startOfDay && expected < endOfDay) {
       await sendNotificationToFamilyMembers(
@@ -376,7 +383,7 @@ export const notifyPresenceStatusChange = functions.firestore.onDocumentUpdated(
       title,
       body,
       { changedUserId: userId, status: next },
-      { excludeUids: [userId] } // don't notify the person who changed status
+      { excludeUids: [userId] }
     );
   }
 );

@@ -14,38 +14,35 @@ import { doc, getDoc } from 'firebase/firestore'
 const FEATURES = [
   { title: 'Auto Presence', description: 'Automatically show when you’re home or away.', icon: MapPinIcon },
   { title: 'Delivery Tracker', description: 'Log who received a package and when.', icon: PackageIcon },
-  { title: 'House View', description: 'See who’s home in real time.', icon: HomeIcon },
-  { title: 'Privacy First', description: 'Only your family can see your presence.', icon: ShieldIcon },
+  { title: 'House View', description: 'See who’s home right now, at a glance.', icon: HomeIcon },
+  { title: 'Private & Secure', description: 'Your data stays in your family group.', icon: ShieldIcon },
 ]
 
 export default function LoginPage() {
-  const [loading, setLoading] = useState(false)           // during Google popup
-  const [redirecting, setRedirecting] = useState(false)   // after sign-in, while routing
-  const redirectedRef = useRef(false)                     // prevent double redirects
-
-  const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user, loading: authLoading } = useAuth()
 
+  const [loading, setLoading] = useState(false)
+  const [redirecting, setRedirecting] = useState(false)
   const [redirect, setRedirect] = useState<string | null>(null)
   const [invite, setInvite] = useState<string | null>(null)
+  const redirectedRef = useRef(false)
 
-  // Read query params after hydration
   useEffect(() => {
     setRedirect(searchParams.get('redirect'))
     setInvite(searchParams.get('invite'))
   }, [searchParams])
 
-  // Redirect after sign-in / if already signed-in
   useEffect(() => {
     if (authLoading) return
     if (!user) return
-    if (redirect === null && invite === null) return       // wait for params
+    if (redirect === null && invite === null) return
     if (redirectedRef.current) return
 
     const go = async () => {
       redirectedRef.current = true
-      setRedirecting(true)                                 // keep the button busy during navigation
+      setRedirecting(true)
       try {
         const snap = await getDoc(doc(firestore, 'users', user.uid))
         const data = snap.data()
@@ -59,31 +56,26 @@ export default function LoginPage() {
           }
         } else {
           if (invite) {
-            router.replace(`/onboarding?invite=${encodeURIComponent(invite)}`)
-          } else if (redirect) {
-            router.replace(`/onboarding?redirect=${encodeURIComponent(redirect)}`)
+            router.replace(`/family/join?invite=${encodeURIComponent(invite)}&autoJoin=1`)
           } else {
             router.replace('/onboarding')
           }
         }
-      } catch (e) {
-        console.error('Redirect failed:', e)
-        setRedirecting(false)
-        redirectedRef.current = false
+      } finally {
+        setTimeout(() => setRedirecting(false), 800)
       }
     }
 
     go()
-  }, [user, authLoading, router, redirect, invite])
+  }, [authLoading, user, redirect, invite, router])
 
-  const handleLogin = async () => {
+  async function handleLogin() {
     setLoading(true)
     try {
       await signInWithPopup(auth, provider)
-      // Do NOT set loading=false here; let redirect effect take over (keeps button busy)
     } catch (err) {
       console.error('Login failed:', err)
-      setLoading(false)       // re-enable if popup failed
+      setLoading(false)
     }
   }
 
@@ -91,7 +83,6 @@ export default function LoginPage() {
 
   return (
     <Providers>
-      {/* Use theme tokens for proper dark/light contrast */}
       <main className="min-h-screen flex items-center justify-center bg-background text-foreground px-6">
         <div className="space-y-8 text-center max-w-md w-full">
           <div className="space-y-2">
@@ -108,38 +99,29 @@ export default function LoginPage() {
               type="button"
               onClick={handleLogin}
               variant="outline"
-              className="w-full flex items-center gap-2 justify-center border border-input bg-card text-card-foreground shadow-sm"
               disabled={busy}
-              aria-busy={busy}
+              className="w-full h-11 gap-2"
             >
               {busy ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {redirecting ? 'Redirecting…' : 'Signing in…'}
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>{redirecting ? 'Redirecting…' : 'Signing in…'}</span>
                 </>
               ) : (
                 <>
-                  <FcGoogle className="h-5 w-5" />
-                  Continue with Google
+                  <FcGoogle className="w-5 h-5" />
+                  <span>Sign in with Google</span>
                 </>
               )}
             </Button>
-            {/* Small hint below the button */}
-            {invite && !user && (
-              <p className="mt-2 text-xs text-muted-foreground">
-                You’ll be sent back to finish joining your family after sign-in.
-              </p>
-            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4 text-left text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
             {FEATURES.map(({ title, description, icon: Icon }) => (
-              <div key={title} className="flex items-start gap-3">
-                <div className="p-2 bg-muted rounded-md">
-                  <Icon className="w-5 h-5 text-primary" />
-                </div>
+              <div key={title} className="flex gap-3 items-start p-3 rounded-lg border bg-card text-card-foreground">
+                <div className="mt-0.5"><Icon className="w-4 h-4 text-muted-foreground" /></div>
                 <div>
-                  <p className="font-medium">{title}</p>
+                  <p className="text-sm font-medium leading-none">{title}</p>
                   <p className="text-xs text-muted-foreground">{description}</p>
                 </div>
               </div>

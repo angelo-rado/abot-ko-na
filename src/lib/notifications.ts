@@ -1,39 +1,29 @@
-// src/lib/notifications.ts
+import { getApp } from 'firebase/app'
+import { getMessaging, getToken, isSupported } from 'firebase/messaging'
+import { doc, setDoc, updateDoc, arrayUnion } from 'firebase/firestore'
+import { firestore } from '@/lib/firebase'
 
-/**
- * Request notification permission from the user.
- * Returns true if permission is granted, false otherwise.
- */
-export async function requestNotificationPermission(): Promise<boolean> {
-  if (!('Notification' in window)) return false
+const VAPID_KEY = 'BGh3Isyh15lAQ_GJ19Xwluh4atLY5QbbBt3tl0bnpUt6OkTNonKcm7IwlrmbI_E--IkvB__NYXV6xjbvGIE87iI'
 
-  if (Notification.permission === 'granted') {
-    return true
+export async function enableNotifications(userId: string): Promise<string | null> {
+  if (!(await isSupported())) return null
+  const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
+  const messaging = getMessaging(getApp())
+
+  const permission = await Notification.requestPermission()
+  if (permission !== 'granted') return null
+
+  const token = await getToken(messaging, {
+    vapidKey: VAPID_KEY,
+    serviceWorkerRegistration: registration,
+  })
+  if (!token) return null
+
+  const userRef = doc(firestore, 'users', userId)
+  try {
+    await updateDoc(userRef, { fcmTokens: arrayUnion(token) })
+  } catch {
+    await setDoc(userRef, { fcmTokens: [token] }, { merge: true })
   }
-
-  if (Notification.permission !== 'denied') {
-    const permission = await Notification.requestPermission()
-    return permission === 'granted'
-  }
-
-  return false
-}
-
-/**
- * Show a notification about deliveries arriving soon.
- * Call this only after permission is granted.
- */
-export function notifyDeliveriesDue(count: number) {
-  if (!('Notification' in window)) return
-  if (Notification.permission !== 'granted') return
-
-  const title = 'Abot Ko Na'
-  const options: NotificationOptions = {
-    body: `You have ${count} delivery${count > 1 ? 'ies' : ''} arriving soon! 📦`,
-    icon: '/android-chrome-192x192.png',
-    badge: '/favicon-32x32.png',
-    // You can add data or actions here if you want
-  }
-
-  new Notification(title, options)
+  return token
 }

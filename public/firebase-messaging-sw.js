@@ -9,25 +9,37 @@ firebase.initializeApp({
   apiKey: "AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y",
   authDomain: "abot-ko-na.firebaseapp.com",
   projectId: "abot-ko-na",
-  storageBucket: "abot-ko-na.appspot.com", // ✅ fixed bucket name
+  storageBucket: "abot-ko-na.appspot.com",
   messagingSenderId: "882171741289",
   appId: "1:882171741289:web:f7b8dc68a88bdae6a5cef8",
 });
 
 const messaging = firebase.messaging();
 
+// Background messages from FCM
 messaging.onBackgroundMessage((payload) => {
-  console.log('[firebase-messaging-sw.js] Received background message ', payload);
-  const notificationTitle = payload.notification?.title || 'Abot Ko Na';
-  const notificationOptions = {
-    body: payload.notification?.body || '📦 You have a new update!',
+  console.log('[firebase-messaging-sw.js] background message', payload);
+  const title =
+    payload.notification?.title ||
+    payload.data?.title ||
+    'Abot Ko Na';
+
+  const body =
+    payload.notification?.body ||
+    payload.data?.body ||
+    '📦 You have a new update!';
+
+  const url =
+    payload.data?.url ||
+    payload.notification?.click_action ||
+    '/';
+
+  self.registration.showNotification(title, {
+    body,
     icon: '/android-chrome-192x192.png',
     badge: '/favicon-32x32.png',
-    data: {
-      url: payload.notification?.click_action || '/',
-    },
-  };
-  self.registration.showNotification(notificationTitle, notificationOptions);
+    data: { url },
+  });
 });
 
 // Now load Workbox after Firebase
@@ -41,6 +53,8 @@ self.addEventListener('message', (event) => {
   }
 });
 workbox.core.clientsClaim();
+
+// Cache Firestore reads conservatively
 workbox.routing.registerRoute(
   /^https:\/\/firestore\.googleapis\.com\/.*/i,
   new workbox.strategies.NetworkFirst({
@@ -57,33 +71,58 @@ workbox.routing.registerRoute(
   })
 );
 
-// Optional push and notificationclick handlers
-self.addEventListener('push', function (event) {
-  const data = event.data?.json?.() ?? {};
-  const title = data.notification?.title ?? 'Abot Ko Na';
-  const options = {
-    body: data.notification?.body ?? '📦 You have a new update!',
-    icon: '/android-chrome-192x192.png',
-    badge: '/favicon-32x32.png',
-    data: {
-      url: data.notification?.click_action || '/',
-    },
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
+// Optional push and notificationclick handlers (non-FCM web push, or extra safety)
+self.addEventListener('push', (event) => {
+  // Some providers send data-only pushes (no FCM SDK), handle gracefully
+  const data = event.data?.json() ?? {}; // ✅ fix: call .json()
+  const title = data.notification?.title || data.title || 'Abot Ko Na';
+  const body = data.notification?.body || data.body || '📦 You have a new update!';
+  const url =
+    data.data?.url ||
+    data.notification?.click_action ||
+    '/';
+
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      icon: '/android-chrome-192x192.png',
+      badge: '/favicon-32x32.png',
+      data: { url },
+    })
+  );
 });
 
-self.addEventListener('notificationclick', function (event) {
+self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const targetUrl = event.notification?.data?.url || '/';
+
   event.waitUntil(
-    clients.matchAll({ type: 'window' }).then((clientList) => {
-      for (const client of clientList) {
-        if (client.url === '/' && 'focus' in client) {
-          return client.focus();
+    (async () => {
+      const windowClients = await clients.matchAll({
+        type: 'window',
+        includeUncontrolled: true,
+      });
+
+      // Focus an existing tab with same origin and (if present) same path
+      for (const client of windowClients) {
+        try {
+          const clientUrl = new URL(client.url);
+          const desired = new URL(targetUrl, self.location.origin);
+          if (clientUrl.origin === desired.origin) {
+            // If already on the desired path, just focus; otherwise open a new one
+            if (clientUrl.pathname === desired.pathname) {
+              return client.focus();
+            }
+          }
+        } catch {
+          // ignore URL parsing errors, fallback to openWindow below
         }
       }
+
+      // Otherwise open a new window
       if (clients.openWindow) {
-        return clients.openWindow('/');
+        return clients.openWindow(targetUrl);
       }
-    })
+    })()
   );
 });
