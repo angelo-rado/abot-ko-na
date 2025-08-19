@@ -24,7 +24,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
-import { DeliveryNotesDialog } from './DialogBasedNotesViewer'
+// Removed dialog-based notes viewer to avoid child/slot issues
+// import { DeliveryNotesDialog } from './DialogBasedNotesViewer'
 import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
@@ -276,7 +277,7 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // ✅ Notes toggle state lives inside the component (fixes React hook error)
+  // NEW: keep note thread visibility here (fixes invalid hook usage)
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set())
   const toggleNotes = (id: string) => {
     setOpenNotesIds((prev) => {
@@ -360,7 +361,7 @@ export default function HomeDeliveriesToday({
 
         Object.keys(itemUnsubsRef.current).forEach((delId) => {
           if (!keepIds.has(delId)) {
-            try { itemUnsubsRef.current[delId]() } catch { }
+            try { itemUnsubsRef.current[delId]() } catch {}
             delete itemUnsubsRef.current[delId]
           }
         })
@@ -369,7 +370,7 @@ export default function HomeDeliveriesToday({
           const isSingleByDoc = d.type === 'single'
           if (isSingleByDoc) {
             if (itemUnsubsRef.current[d.id]) {
-              try { itemUnsubsRef.current[d.id]() } catch { }
+              try { itemUnsubsRef.current[d.id]() } catch {}
               delete itemUnsubsRef.current[d.id]
             }
             setDeliveryItemsMap((prev) => {
@@ -496,11 +497,11 @@ export default function HomeDeliveriesToday({
       unsubsRef.current.forEach((u) => u && u())
       unsubsRef.current = []
       if (deliveredUnsubRef.current) {
-        try { deliveredUnsubRef.current() } catch { }
+        try { deliveredUnsubRef.current() } catch {}
         deliveredUnsubRef.current = null
       }
       Object.keys(itemUnsubsRef.current).forEach((k) => {
-        try { itemUnsubsRef.current[k]() } catch { }
+        try { itemUnsubsRef.current[k]() } catch {}
       })
       itemUnsubsRef.current = {}
     }
@@ -620,8 +621,6 @@ export default function HomeDeliveriesToday({
                           Ordered by: <UserName userId={d.createdBy} />
                         </div>
 
-                        <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
-
                         <div className="flex gap-2 mt-2">
                           <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                           {codTotal != null && codTotal > 0 ? (
@@ -638,12 +637,6 @@ export default function HomeDeliveriesToday({
                           onClick={() => setDialogOpenId(d.id)}
                         />
                       </div>
-                      <ReceiverNoteDialog
-                        open={!!dialogOpenId}
-                        onClose={() => setDialogOpenId(null)}
-                        onSubmit={handleReceiverNoteSubmit}
-                        loading={saving}
-                      />
                     </div>
 
                     <div className="mt-3 space-y-2">
@@ -680,7 +673,7 @@ export default function HomeDeliveriesToday({
                       })}
                     </div>
 
-                    {/* Notes thread */}
+                    {/* Notes toggle + thread */}
                     {familyId ? (
                       <div className="mt-2">
                         <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
@@ -706,8 +699,6 @@ export default function HomeDeliveriesToday({
                         Ordered by: <UserName userId={d.createdBy} />
                       </div>
 
-                      <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
-
                       <div className="flex gap-2 mt-2">
                         <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                         {codTotal != null && codTotal > 0 ? (
@@ -728,7 +719,7 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes thread */}
+                  {/* Notes toggle + thread */}
                   {familyId ? (
                     <div className="mt-2">
                       <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
@@ -737,13 +728,6 @@ export default function HomeDeliveriesToday({
                       ) : null}
                     </div>
                   ) : null}
-
-                  <ReceiverNoteDialog
-                    open={!!dialogOpenId}
-                    onClose={() => setDialogOpenId(null)}
-                    onSubmit={handleReceiverNoteSubmit}
-                    loading={saving}
-                  />
                 </div>
               )
             })}
@@ -830,7 +814,7 @@ export default function HomeDeliveriesToday({
                       })}
                     </div>
 
-                    {/* Notes thread */}
+                    {/* Notes toggle + thread */}
                     {familyId ? (
                       <div className="mt-2">
                         <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
@@ -855,8 +839,6 @@ export default function HomeDeliveriesToday({
                         Ordered by: <UserName userId={d.createdBy} />
                       </div>
 
-                      <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
-
                       <div className="flex gap-2 mt-2">
                         <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
                         {codTotal != null && codTotal > 0 ? (
@@ -877,7 +859,7 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes thread */}
+                  {/* Notes toggle + thread */}
                   {familyId ? (
                     <div className="mt-2">
                       <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
@@ -886,13 +868,6 @@ export default function HomeDeliveriesToday({
                       ) : null}
                     </div>
                   ) : null}
-
-                  <ReceiverNoteDialog
-                    open={!!dialogOpenId}
-                    onClose={() => setDialogOpenId(null)}
-                    onSubmit={handleReceiverNoteSubmit}
-                    loading={saving}
-                  />
                 </div>
               )
             })}
@@ -908,9 +883,9 @@ export default function HomeDeliveriesToday({
         ) : (
           <div className="space-y-2">
             {deliveredToday.map((d) => {
-              const receivedAtStr = d.receivedAt ? friendlyDeliveredLabel(d.receivedAt) : ''
               const typeLabel = deliveryTypeLabel(d)
               const codTotal = deliveryCodTotal(d, d.items)
+              const receivedAtStr = d.receivedAt ? friendlyDeliveredLabel(d.receivedAt) : ''
 
               return (
                 <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
@@ -922,8 +897,6 @@ export default function HomeDeliveriesToday({
                     <div className="text-xs text-muted-foreground mt-1">
                       Ordered by: <UserName userId={d.createdBy} />
                     </div>
-
-                    <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
 
                     <div className="flex gap-2 mt-2">
                       <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
@@ -941,7 +914,7 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes thread (read/write stays enabled after delivery) */}
+                  {/* Notes thread persists after delivery */}
                   {familyId ? (
                     <div className="mt-2">
                       <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
@@ -956,6 +929,14 @@ export default function HomeDeliveriesToday({
           </div>
         )}
       </section>
+
+      {/* Single controlled dialog instance to avoid Children.only issues */}
+      <ReceiverNoteDialog
+        open={!!dialogOpenId}
+        onClose={() => setDialogOpenId(null)}
+        onSubmit={handleReceiverNoteSubmit}
+        loading={saving}
+      />
     </div>
   )
 }
