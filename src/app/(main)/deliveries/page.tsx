@@ -11,17 +11,63 @@ import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
-import { Plus, Loader2, MessageSquareText } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Plus, Loader2, MessageSquareText, ChevronDown, ChevronRight, Package } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
-import ConfirmDialog from '@/app/components/ConfirmDialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { useRouter } from 'next/navigation'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
 
+// ✅ Controlled AlertDialog (no Trigger) – avoids Children.only crash
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+
+/* ---------------------------
+   Helpers
+---------------------------- */
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
+
+function isMultiple(d: any) {
+  if (!d) return false
+  if (d.type === 'single') return false
+  if (typeof d.itemCount === 'number') return d.itemCount > 1
+  if (Array.isArray(d.items)) return d.items.length > 1
+  // some datasets use 'order' for grouped/multiple
+  if (d.type === 'order') return true
+  return false
+}
+function isSingle(d: any) {
+  return !isMultiple(d)
+}
+function currency(n?: number | null) {
+  if (typeof n !== 'number') return '—'
+  return `₱${n.toFixed(2)}`
+}
+function itemsTotal(items?: any[]) {
+  if (!Array.isArray(items)) return 0
+  return items.reduce((s, it) => s + (typeof it?.price === 'number' ? it.price : 0), 0)
+}
+function etaLabel(raw: any) {
+  if (!raw) return ''
+  try {
+    if (raw?.toDate) return raw.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (typeof raw?.seconds === 'number') return new Date(raw.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const d = new Date(raw)
+    if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  } catch {}
+  return ''
+}
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
@@ -43,7 +89,7 @@ export default function DeliveriesPage() {
   const [unsubDeliveries, setUnsubDeliveries] = useState<() => void>(() => () => {})
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null)
   const [confirmTitle, setConfirmTitle] = useState<string>('')
-  const [confirmMessage, setConfirmMessage] = useState<string>('') // ✅ fixed typo
+  const [confirmMessage, setConfirmMessage] = useState<string>('')
   const [confirmDanger, setConfirmDanger] = useState<boolean>(false)
   const [confirmConfirmLabel, setConfirmConfirmLabel] = useState<string>('Proceed')
   const [confirmCancelLabel, setConfirmCancelLabel] = useState<string>('Cancel')
@@ -53,6 +99,7 @@ export default function DeliveriesPage() {
   const toastTimerRef = useRef<number | null>(null)
 
   const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({}) // per-delivery notes toggles
+  const [itemsOpen, setItemsOpen] = useState<Record<string, boolean>>({}) // per-multiple-delivery expand/collapse
 
   const router = useRouter()
   const isOnline = useOnlineStatus()
@@ -175,8 +222,6 @@ export default function DeliveriesPage() {
   const upcoming = useMemo(() => deliveries.filter((d) => !isArchived(d)), [deliveries, isArchived])
   const archived = useMemo(() => deliveries.filter((d) => isArchived(d)), [deliveries, isArchived])
 
-  const bulksToRender = useMemo(() => deliveries.filter((d) => d.type !== 'delivery'), [deliveries])
-
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'in_transit' | 'delivered' | 'cancelled'>('all')
   const [queryText, setQueryText] = useState('')
 
@@ -205,6 +250,12 @@ export default function DeliveriesPage() {
   }
 
   const keyFor = (d: any) => `${d.id}-${d.updatedAt?.seconds || d.createdAt?.seconds || ''}`
+
+  /* ---------------- Derived groups for current tab ---------------- */
+  const sourceList = tab === 'upcoming' ? upcoming : archived
+  const filtered = applyFilters(sourceList)
+  const singles = filtered.filter(isSingle)
+  const multiples = filtered.filter(isMultiple)
 
   if (authLoading) {
     return (
@@ -311,17 +362,21 @@ export default function DeliveriesPage() {
         </div>
       ) : (
         <>
-          {/* Upcoming / Archived lists */}
+          {/* ---------------- Single Deliveries ---------------- */}
           <section>
-            <h3 className="text-lg font-semibold mb-2">{tab === 'upcoming' ? 'Upcoming' : 'Archived'}</h3>
-            {applyFilters((tab === 'upcoming' ? upcoming : archived)).length === 0 ? (
-              <p className="text-muted-foreground text-sm">No deliveries</p>
+            <div className="mb-2 flex items-center gap-2">
+              <h3 className="text-lg font-semibold">Single Deliveries</h3>
+              <Badge variant="secondary">{singles.length}</Badge>
+            </div>
+
+            {singles.length === 0 ? (
+              <p className="text-muted-foreground text-sm">No single deliveries</p>
             ) : (
               <div className="space-y-4">
-                {applyFilters((tab === 'upcoming' ? upcoming : archived)).map((d) => {
+                {singles.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
-                  const isOpen = !!notesOpen[d.id]
+                  const openNotes = !!notesOpen[d.id]
                   return (
                     <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
@@ -330,6 +385,15 @@ export default function DeliveriesPage() {
                         </div>
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <Badge variant="outline" className="text-xs">Single</Badge>
+                          {d.codAmount != null && (
+                            <div className="text-xs text-muted-foreground">
+                              COD <span className="font-medium">{currency(Number(d.codAmount))}</span>
+                            </div>
+                          )}
+                        </div>
+
                         <DeliveryCard familyId={familyId!} {...props} />
 
                         {/* Row actions */}
@@ -343,7 +407,7 @@ export default function DeliveriesPage() {
                               }
                             >
                               <MessageSquareText className="h-4 w-4 mr-1" />
-                              {isOpen ? 'Hide Notes' : 'Notes'}
+                              {openNotes ? 'Hide Notes' : 'Notes'}
                             </Button>
                             {!locked && (
                               <Button
@@ -368,7 +432,7 @@ export default function DeliveriesPage() {
                         )}
 
                         {/* Notes thread */}
-                        {isOpen && (
+                        {openNotes && (
                           <div className="mt-3">
                             <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
                           </div>
@@ -381,17 +445,25 @@ export default function DeliveriesPage() {
             )}
           </section>
 
-          {/* Bulk Deliveries */}
+          {/* ---------------- Multiple Deliveries ---------------- */}
           <section className="mt-8">
-            <h3 className="text-lg font-semibold mb-2">Bulk Deliveries</h3>
-            {applyFilters(bulksToRender).length === 0 ? (
-              <p className="text-muted-foreground text-sm">No bulk deliveries</p>
+            <div className="mb-2 flex items-center gap-2">
+              <h3 className="text-lg font-semibold">Multiple Deliveries</h3>
+              <Badge variant="secondary">{multiples.length}</Badge>
+            </div>
+
+            {multiples.length === 0 ? (
+              <p className="text-muted-foreground text-sm">No multiple deliveries</p>
             ) : (
               <div className="space-y-4">
-                {applyFilters(bulksToRender).map((d) => {
+                {multiples.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
-                  const isOpen = !!notesOpen[d.id]
+                  const openNotes = !!notesOpen[d.id]
+                  const openItems = !!itemsOpen[d.id]
+                  const items = Array.isArray(d.items) ? d.items : []
+                  const total = itemsTotal(items) || (typeof d.codAmount === 'number' ? d.codAmount : 0)
+
                   return (
                     <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
                       {selectionMode && (
@@ -400,8 +472,65 @@ export default function DeliveriesPage() {
                         </div>
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">Multiple</Badge>
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Package className="h-3.5 w-3.5" />
+                              {items.length || d.itemCount || 0} item{(items.length || d.itemCount || 0) === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Total <span className="font-medium">{currency(total)}</span>
+                          </div>
+                        </div>
+
                         <DeliveryCard familyId={familyId!} {...props} />
 
+                        {/* Items toggle & list */}
+                        <div className="mt-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs"
+                            onClick={() => setItemsOpen((m) => ({ ...m, [d.id]: !m[d.id] }))}
+                          >
+                            {openItems ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
+                            {openItems ? 'Hide items' : 'View items'}
+                          </Button>
+
+                          {openItems && (
+                            <div className="mt-2 rounded border bg-muted/30">
+                              {items.length === 0 ? (
+                                <div className="text-xs text-muted-foreground px-3 py-2">No item details</div>
+                              ) : (
+                                <ul className="divide-y">
+                                  {items.map((it: any, idx: number) => {
+                                    const eta = etaLabel(it?.expectedDate || d?.expectedDate)
+                                    return (
+                                      <li key={`${it.id || idx}`} className="px-3 py-2 flex items-start justify-between">
+                                        <div>
+                                          <div className="text-sm font-medium">{it?.name || `Item ${idx + 1}`}</div>
+                                          <div className="text-xs text-muted-foreground">
+                                            {it?.status ? <span className="mr-2 capitalize">{it.status.replace('_', ' ')}</span> : null}
+                                            {eta ? <span>· ETA {eta}</span> : null}
+                                          </div>
+                                        </div>
+                                        <div className="text-sm">{currency(typeof it?.price === 'number' ? it.price : null)}</div>
+                                      </li>
+                                    )
+                                  })}
+                                  <li className="px-3 py-2 flex items-center justify-between text-sm font-medium">
+                                    <span>Items total</span>
+                                    <span>{currency(total)}</span>
+                                  </li>
+                                </ul>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Row actions */}
                         {!selectionMode && (
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
@@ -412,7 +541,7 @@ export default function DeliveriesPage() {
                               }
                             >
                               <MessageSquareText className="h-4 w-4 mr-1" />
-                              {isOpen ? 'Hide Notes' : 'Notes'}
+                              {openNotes ? 'Hide Notes' : 'Notes'}
                             </Button>
                             {!locked && (
                               <Button
@@ -436,7 +565,8 @@ export default function DeliveriesPage() {
                           </div>
                         )}
 
-                        {isOpen && (
+                        {/* Notes thread */}
+                        {openNotes && (
                           <div className="mt-3">
                             <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
                           </div>
@@ -451,17 +581,32 @@ export default function DeliveriesPage() {
         </>
       )}
 
-      <ConfirmDialog
+      {/* 🔁 Controlled AlertDialog replacement — no Trigger, no Children.only */}
+      <AlertDialog
         open={confirmOpen}
-        onOpenChange={(v) => { setConfirmOpen(v); if (!v) handleConfirmResult(false) }}
-        title={confirmTitle}
-        description={confirmMessage}
-        danger={confirmDanger}
-        confirmLabel={confirmConfirmLabel}
-        cancelLabel={confirmCancelLabel}
-        onConfirm={() => handleConfirmResult(true)}
-        onCancel={() => handleConfirmResult(false)}
-      />
+        onOpenChange={(v) => {
+          setConfirmOpen(v)
+          if (!v) handleConfirmResult(false) // treat outside click/esc as cancel
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmTitle}</AlertDialogTitle>
+            <AlertDialogDescription>{confirmMessage}</AlertDialogDescription>
+          </AlertDialogHeader>
+        <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => handleConfirmResult(false)}>
+              {confirmCancelLabel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className={confirmDanger ? 'bg-destructive text-destructive-foreground hover:bg-destructive/90' : ''}
+              onClick={() => handleConfirmResult(true)}
+            >
+              {confirmConfirmLabel}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Toast */}
       {toastMessage && (

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -9,9 +9,18 @@ import { Pencil, Trash2, Save, X } from 'lucide-react'
 import { Timestamp, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
-import ConfirmDialog from '@/app/components/ConfirmDialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 export type DeliveryNoteDoc = {
   id: string
@@ -44,10 +53,10 @@ function formatRelative(from: Date, to: Date) {
   if (abs < 60) return `${abs} seconds ago`
   const m = Math.floor(abs / 60)
   if (m === 1) return 'a minute ago'
-  if (m < 60) return '${m} minutes ago'
+  if (m < 60) return `${m} minutes ago`
   const h = Math.floor(m / 60)
   if (h === 1) return 'an hour ago'
-  if (h < 24) return '${h} hours ago'
+  if (h < 24) return `${h} hours ago`
   const d = Math.floor(h / 24)
   if (d === 1) return 'a day ago'
   return `${d} days ago`
@@ -63,9 +72,8 @@ function useRelativeTime(rawDate: any) {
       setLabel('just now')
       return
     }
-    // Narrow to Date for TS:
     const dd: Date = dMaybe
-    function update() { setLabel(formatRelative(new Date(), dd)) }
+    const update = () => setLabel(formatRelative(new Date(), dd))
     update()
     const diffSec = Math.abs((Date.now() - dd.getTime()) / 1000)
     let interval = 1000
@@ -93,6 +101,10 @@ export default function DeliveryNoteItem({
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(note.text)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const mounted = useRef(true)
+  useEffect(() => () => { mounted.current = false }, [])
 
   const createdLabel = useRelativeTime(note.createdAt)
   const editedLabel = useRelativeTime(note.editedAt)
@@ -119,10 +131,17 @@ export default function DeliveryNoteItem({
 
   async function deleteNote() {
     try {
+      setDeleting(true)
       await deleteDoc(doc(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes', note.id))
+      // Component will unmount after snapshot updates; avoid setting state if unmounted
+      if (mounted.current) {
+        setConfirmOpen(false)
+        setDeleting(false)
+      }
       toast.success('Note deleted')
     } catch (e) {
       console.error(e)
+      if (mounted.current) setDeleting(false)
       toast.error('Delete failed')
     }
   }
@@ -149,7 +168,7 @@ export default function DeliveryNoteItem({
           </Avatar>
 
           <div className="flex-1">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium">{displayName}</span>
               <span className="text-xs text-muted-foreground">• {createdLabel}</span>
               {note.editedAt ? <span className="text-xs text-muted-foreground">(edited {editedLabel})</span> : null}
@@ -205,19 +224,27 @@ export default function DeliveryNoteItem({
         </div>
       </motion.div>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title="Delete note?"
-        description="This action cannot be undone."
-        danger
-        confirmLabel="Delete"
-        onConfirm={() => {
-          setConfirmOpen(false)
-          deleteNote()
-        }}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      {/* Controlled AlertDialog: no Trigger, so no React.Children.only */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete note?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={deleteNote}
+              disabled={deleting}
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }
