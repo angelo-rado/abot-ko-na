@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 
-export default function ConfirmDialog(props: {
+export type ConfirmDialogProps = {
   open: boolean
   onOpenChange: (v: boolean) => void
   title: string
@@ -20,13 +20,27 @@ export default function ConfirmDialog(props: {
   confirmLabel?: string
   cancelLabel?: string
   onConfirm: () => void
-  onCancel: () => void
-}) {
+  /** Optional; defaults to closing the dialog */
+  onCancel?: () => void
+}
+
+export default function ConfirmDialog(props: ConfirmDialogProps) {
   const {
-    open, onOpenChange, title, description,
-    danger, confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-    onConfirm, onCancel
+    open,
+    onOpenChange,
+    title,
+    description,
+    danger,
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    onConfirm,
+    onCancel, // may be undefined
   } = props
+
+  const handleCancel = () => {
+    if (onCancel) onCancel()
+    else onOpenChange(false)
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -43,8 +57,11 @@ export default function ConfirmDialog(props: {
                 <DialogTitle>{title}</DialogTitle>
                 {description ? <DialogDescription>{description}</DialogDescription> : null}
               </DialogHeader>
+
               <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={onCancel}>{cancelLabel}</Button>
+                <Button variant="outline" onClick={handleCancel}>
+                  {cancelLabel}
+                </Button>
                 <Button variant={danger ? 'destructive' : 'default'} onClick={onConfirm}>
                   {confirmLabel}
                 </Button>
