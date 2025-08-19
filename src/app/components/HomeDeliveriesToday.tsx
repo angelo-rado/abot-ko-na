@@ -11,10 +11,10 @@ import {
   orderBy,
   Unsubscribe,
   getDocs,
-  QuerySnapshot,
-  DocumentData,
   doc,
   getDoc,
+  addDoc,
+  serverTimestamp,
 } from 'firebase/firestore'
 import { firestore, auth } from '@/lib/firebase'
 import {
@@ -23,6 +23,7 @@ import {
 } from '@/lib/deliveries'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Textarea } from '@/components/ui/textarea'
 import { DeliveryNotesDialog } from './DialogBasedNotesViewer'
 import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
@@ -148,6 +149,100 @@ function deliveryCodTotal(d: any, items: any[]) {
   }
   if (typeof d.codAmount === 'number') return d.codAmount
   return null
+}
+
+/* ----------------------------
+   Inline Delivery Notes Thread
+   ---------------------------- */
+function NoteRow({ note }: { note: any }) {
+  const createdAt = toDate(note?.createdAt)
+  return (
+    <div className="text-xs">
+      <span className="font-medium"><UserName userId={note?.createdBy} /></span>
+      {createdAt ? <span className="text-muted-foreground">{` · ${formatTimeShort(createdAt)}`}</span> : null}
+      <div className="whitespace-pre-wrap break-words">{note?.text}</div>
+    </div>
+  )
+}
+
+function DeliveryNotesThreadInline({
+  familyId,
+  deliveryId,
+}: {
+  familyId: string
+  deliveryId: string
+}) {
+  const [notes, setNotes] = useState<any[]>([])
+  const [text, setText] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!familyId || !deliveryId) return
+    const notesCol = collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes')
+    const qy = query(notesCol, orderBy('createdAt', 'asc'))
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        setLoadError(null)
+        setNotes(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })))
+      },
+      (err) => {
+        console.error('DeliveryNotes snapshot error', err)
+        setLoadError('Missing or insufficient permissions')
+      }
+    )
+    return () => unsub()
+  }, [familyId, deliveryId])
+
+  const handleAdd = async () => {
+    const me = auth.currentUser
+    if (!me || !text.trim()) return
+    setAdding(true)
+    try {
+      await addDoc(collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes'), {
+        text: text.trim(),
+        createdAt: serverTimestamp(),
+        createdBy: me.uid,
+      })
+      setText('')
+    } catch (e) {
+      console.error('Failed to add note', e)
+      alert('Failed to add note')
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 border rounded p-2 bg-muted/30">
+      <div className="text-xs font-semibold mb-2">Notes</div>
+
+      {loadError ? (
+        <div className="text-xs text-red-500">{loadError}</div>
+      ) : notes.length === 0 ? (
+        <div className="text-xs text-muted-foreground">No notes yet</div>
+      ) : (
+        <div className="space-y-2">
+          {notes.map((n) => (
+            <NoteRow key={n.id} note={n} />
+          ))}
+        </div>
+      )}
+
+      <div className="mt-2 flex items-start gap-2">
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Add a note…"
+          className="min-h-[60px]"
+        />
+        <Button size="sm" onClick={handleAdd} disabled={adding || !text.trim()}>
+          {adding ? 'Posting…' : 'Post'}
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 /* ----------------------------
@@ -560,42 +655,55 @@ export default function HomeDeliveriesToday({
                         )
                       })}
                     </div>
+
+                    {/* Notes thread */}
+                    {familyId ? (
+                      <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                    ) : null}
                   </div>
                 )
               }
 
               // flat delivery rendering
               return (
-                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
+                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Ordered by: <UserName userId={d.createdBy} />
+                      </div>
+
+                      <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
+
+                      <div className="flex gap-2 mt-2">
+                        <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
+                        {codTotal != null && codTotal > 0 ? (
+                          <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
+                        )}
+                        {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
+                      </div>
                     </div>
 
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Ordered by: <UserName userId={d.createdBy} />
-                    </div>
-
-                    <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
-
-                    <div className="flex gap-2 mt-2">
-                      <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                      {codTotal != null && codTotal > 0 ? (
-                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                      )}
-                      {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
+                    <div>
+                      <MarkDeliveryButton
+                        id={d.id}
+                        isProcessing={processingId === d.id}
+                        onClick={() => setDialogOpenId(d.id)}
+                      />
                     </div>
                   </div>
 
-                  <div>
-                    <MarkDeliveryButton
-                      id={d.id}
-                      isProcessing={processingId === d.id}
-                      onClick={() => setDialogOpenId(d.id)}
-                    />
-                  </div>
+                  {/* Notes thread */}
+                  {familyId ? (
+                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                  ) : null}
+
                   <ReceiverNoteDialog
                     open={!!dialogOpenId}
                     onClose={() => setDialogOpenId(null)}
@@ -687,41 +795,54 @@ export default function HomeDeliveriesToday({
                         )
                       })}
                     </div>
+
+                    {/* Notes thread */}
+                    {familyId ? (
+                      <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                    ) : null}
                   </div>
                 )
               }
 
               return (
-                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
+                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
+                      </div>
+
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Ordered by: <UserName userId={d.createdBy} />
+                      </div>
+
+                      <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
+
+                      <div className="flex gap-2 mt-2">
+                        <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
+                        {codTotal != null && codTotal > 0 ? (
+                          <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
+                        )}
+                        {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
+                      </div>
                     </div>
 
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Ordered by: <UserName userId={d.createdBy} />
-                    </div>
-
-                    <DeliveryNotesDialog note={d.note} receiverNote={d.receiverNote} />
-
-                    <div className="flex gap-2 mt-2">
-                      <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                      {codTotal != null && codTotal > 0 ? (
-                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                      )}
-                      {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
+                    <div>
+                      <MarkDeliveryButton
+                        id={d.id}
+                        isProcessing={processingId === d.id}
+                        onClick={() => setDialogOpenId(d.id)}
+                      />
                     </div>
                   </div>
 
-                  <div>
-                    <MarkDeliveryButton
-                      id={d.id}
-                      isProcessing={processingId === d.id}
-                      onClick={() => setDialogOpenId(d.id)}
-                    />
-                  </div>
+                  {/* Notes thread */}
+                  {familyId ? (
+                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                  ) : null}
+
                   <ReceiverNoteDialog
                     open={!!dialogOpenId}
                     onClose={() => setDialogOpenId(null)}
@@ -748,7 +869,7 @@ export default function HomeDeliveriesToday({
               const codTotal = deliveryCodTotal(d, d.items)
 
               return (
-                <div key={d.id} className="flex items-center justify-between bg-card text-card-foreground border rounded p-3">
+                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
                   <div>
                     <div className="flex items-center gap-2">
                       <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
@@ -776,7 +897,10 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  <div className="text-xs text-muted-foreground" />
+                  {/* Notes thread (read/write stays enabled after delivery) */}
+                  {familyId ? (
+                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                  ) : null}
                 </div>
               )
             })}
