@@ -165,6 +165,20 @@ function NoteRow({ note }: { note: any }) {
   )
 }
 
+function NotesToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 text-xs"
+      onClick={onClick}
+    >
+      {open ? 'Hide notes' : 'Show notes'}
+    </Button>
+  )
+}
+
 function DeliveryNotesThreadInline({
   familyId,
   deliveryId,
@@ -243,6 +257,16 @@ function DeliveryNotesThreadInline({
       </div>
     </div>
   )
+}
+
+const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set())
+
+const toggleNotes = (id: string) => {
+  setOpenNotesIds((prev) => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
 }
 
 /* ----------------------------
@@ -336,7 +360,7 @@ export default function HomeDeliveriesToday({
 
         Object.keys(itemUnsubsRef.current).forEach((delId) => {
           if (!keepIds.has(delId)) {
-            try { itemUnsubsRef.current[delId]() } catch {}
+            try { itemUnsubsRef.current[delId]() } catch { }
             delete itemUnsubsRef.current[delId]
           }
         })
@@ -345,7 +369,7 @@ export default function HomeDeliveriesToday({
           const isSingleByDoc = d.type === 'single'
           if (isSingleByDoc) {
             if (itemUnsubsRef.current[d.id]) {
-              try { itemUnsubsRef.current[d.id]() } catch {}
+              try { itemUnsubsRef.current[d.id]() } catch { }
               delete itemUnsubsRef.current[d.id]
             }
             setDeliveryItemsMap((prev) => {
@@ -472,11 +496,11 @@ export default function HomeDeliveriesToday({
       unsubsRef.current.forEach((u) => u && u())
       unsubsRef.current = []
       if (deliveredUnsubRef.current) {
-        try { deliveredUnsubRef.current() } catch {}
+        try { deliveredUnsubRef.current() } catch { }
         deliveredUnsubRef.current = null
       }
       Object.keys(itemUnsubsRef.current).forEach((k) => {
-        try { itemUnsubsRef.current[k]() } catch {}
+        try { itemUnsubsRef.current[k]() } catch { }
       })
       itemUnsubsRef.current = {}
     }
@@ -658,7 +682,12 @@ export default function HomeDeliveriesToday({
 
                     {/* Notes thread */}
                     {familyId ? (
-                      <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                      <div className="mt-2">
+                        <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
+                        {openNotesIds.has(d.id) ? (
+                          <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 )
@@ -701,7 +730,12 @@ export default function HomeDeliveriesToday({
 
                   {/* Notes thread */}
                   {familyId ? (
-                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                    <div className="mt-2">
+                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
+                      {openNotesIds.has(d.id) ? (
+                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                      ) : null}
+                    </div>
                   ) : null}
 
                   <ReceiverNoteDialog
@@ -798,7 +832,12 @@ export default function HomeDeliveriesToday({
 
                     {/* Notes thread */}
                     {familyId ? (
-                      <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                      <div className="mt-2">
+                        <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
+                        {openNotesIds.has(d.id) ? (
+                          <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 )
@@ -840,7 +879,12 @@ export default function HomeDeliveriesToday({
 
                   {/* Notes thread */}
                   {familyId ? (
-                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                    <div className="mt-2">
+                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
+                      {openNotesIds.has(d.id) ? (
+                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                      ) : null}
+                    </div>
                   ) : null}
 
                   <ReceiverNoteDialog
@@ -899,7 +943,12 @@ export default function HomeDeliveriesToday({
 
                   {/* Notes thread (read/write stays enabled after delivery) */}
                   {familyId ? (
-                    <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                    <div className="mt-2">
+                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
+                      {openNotesIds.has(d.id) ? (
+                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )
