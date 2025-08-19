@@ -259,16 +259,6 @@ function DeliveryNotesThreadInline({
   )
 }
 
-const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set())
-
-const toggleNotes = (id: string) => {
-  setOpenNotesIds((prev) => {
-    const next = new Set(prev)
-    next.has(id) ? next.delete(id) : next.add(id)
-    return next
-  })
-}
-
 /* ----------------------------
    Component
    ---------------------------- */
@@ -285,6 +275,16 @@ export default function HomeDeliveriesToday({
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  // ✅ Notes toggle state lives inside the component (fixes React hook error)
+  const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set())
+  const toggleNotes = (id: string) => {
+    setOpenNotesIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
 
   const handleReceiverNoteSubmit = async (note: string) => {
     if (!dialogOpenId || !familyId) return
