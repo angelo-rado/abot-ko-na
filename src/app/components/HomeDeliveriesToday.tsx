@@ -1,4 +1,3 @@
-// src/app/(whatever)/components/HomeDeliveriesToday.tsx
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -24,11 +23,10 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
-// Removed dialog-based notes viewer to avoid child/slot issues
-// import { DeliveryNotesDialog } from './DialogBasedNotesViewer'
 import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
+import { AnimatePresence, motion } from 'framer-motion'
 
 type Props = {
   familyId: string | null
@@ -93,7 +91,7 @@ function UserName({ userId }: { userId?: string }) {
 }
 
 /* ----------------------------
-   Friendly date helpers
+   Friendly date + relative time
    ---------------------------- */
 function toDate(input: any): Date | null {
   if (!input) return null
@@ -130,43 +128,84 @@ function friendlyDeliveredLabel(raw: any) {
   return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })} at ${formatTimeShort(d)}`
 }
 
-/* ----------------------------
-   Helpers for delivery meta
-   ---------------------------- */
-function deliveryTypeLabel(d: any) {
-  const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
-  return isSingle ? 'Single' : 'Multiple'
+function formatRelative(from: Date, to: Date) {
+  const s = Math.floor((from.getTime() - to.getTime()) / 1000)
+  const abs = Math.max(0, s)
+  if (abs < 10) return 'a few seconds ago'
+  if (abs < 60) return `${abs} seconds ago`
+  const m = Math.floor(abs / 60)
+  if (m === 1) return 'a minute ago'
+  if (m < 60) return `${m} minutes ago`
+  const h = Math.floor(m / 60)
+  if (h === 1) return 'an hour ago'
+  if (h < 24) return `${h} hours ago`
+  const d = Math.floor(h / 24)
+  if (d === 1) return 'a day ago'
+  return `${d} days ago`
 }
 
-function deliveryCodTotal(d: any, items: any[]) {
-  const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
-  if (isSingle) {
-    if (typeof d.codAmount === 'number') return d.codAmount
-    return null
-  }
-  if (items && items.length > 0) {
-    const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
-    return sum
-  }
-  if (typeof d.codAmount === 'number') return d.codAmount
-  return null
+function useRelativeTime(rawDate: any) {
+  const [label, setLabel] = useState<string>(() => {
+    const init = toDate(rawDate)
+    return init ? formatRelative(new Date(), init) : 'just now'
+  })
+
+  useEffect(() => {
+    const dMaybe = toDate(rawDate)
+    if (!dMaybe) {
+      setLabel('just now')
+      return
+    }
+    // Narrow to non-null Date to appease TS
+    const dd: Date = dMaybe
+
+    function update() {
+      setLabel(formatRelative(new Date(), dd))
+    }
+
+    update()
+
+    const diffSec = Math.abs((Date.now() - dd.getTime()) / 1000)
+    let interval = 1000
+    if (diffSec > 60 && diffSec <= 3600) interval = 30_000
+    else if (diffSec > 3600 && diffSec <= 86400) interval = 300_000
+    else if (diffSec > 86400) interval = 3600_000
+
+    const id = setInterval(update, interval)
+    return () => clearInterval(id)
+  }, [rawDate])
+
+  return label
 }
 
 /* ----------------------------
    Inline Delivery Notes Thread
    ---------------------------- */
-function NoteRow({ note }: { note: any }) {
-  const createdAt = toDate(note?.createdAt)
+function NoteRow({ note, meId }: { note: any; meId?: string }) {
+  const createdLabel = useRelativeTime(note?.createdAt)
+  const isMe = meId && note?.createdBy === meId
+  const displayName = isMe ? 'You' : (note?.createdByName as string | undefined)
   return (
-    <div className="text-xs">
-      <span className="font-medium"><UserName userId={note?.createdBy} /></span>
-      {createdAt ? <span className="text-muted-foreground">{` · ${formatTimeShort(createdAt)}`}</span> : null}
-      <div className="whitespace-pre-wrap break-words">{note?.text}</div>
-    </div>
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -6 }}
+      transition={{ duration: 0.16 }}
+      className="rounded-md border bg-background p-2"
+    >
+      <div className="text-xs">
+        <span className="font-medium">
+          {displayName ?? <UserName userId={note?.createdBy} />}
+        </span>
+        <span className="text-muted-foreground">{` · ${createdLabel}`}</span>
+      </div>
+      <div className="mt-1 text-sm whitespace-pre-wrap break-words">{note?.text}</div>
+    </motion.div>
   )
 }
 
-function NotesToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+function NotesToggle({ open, count, onClick }: { open: boolean; count: number; onClick: () => void }) {
   return (
     <Button
       type="button"
@@ -175,7 +214,7 @@ function NotesToggle({ open, onClick }: { open: boolean; onClick: () => void }) 
       className="h-7 px-2 text-xs"
       onClick={onClick}
     >
-      {open ? 'Hide notes' : 'Show notes'}
+      {open ? 'Hide notes' : `Show notes${count ? ` (${count})` : ''}`}
     </Button>
   )
 }
@@ -191,6 +230,9 @@ function DeliveryNotesThreadInline({
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+
+  const me = auth.currentUser
+  const meName = useUserName(me?.uid)
 
   useEffect(() => {
     if (!familyId || !deliveryId) return
@@ -211,14 +253,16 @@ function DeliveryNotesThreadInline({
   }, [familyId, deliveryId])
 
   const handleAdd = async () => {
-    const me = auth.currentUser
-    if (!me || !text.trim()) return
+    const user = auth.currentUser
+    if (!user || !text.trim()) return
     setAdding(true)
     try {
       await addDoc(collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes'), {
         text: text.trim(),
         createdAt: serverTimestamp(),
-        createdBy: me.uid,
+        createdBy: user.uid,
+        createdByName: meName || user.displayName || null,
+        createdByPhotoURL: user.photoURL || null,
       })
       setText('')
     } catch (e) {
@@ -230,33 +274,54 @@ function DeliveryNotesThreadInline({
   }
 
   return (
-    <div className="mt-3 border rounded p-2 bg-muted/30">
+    <motion.div
+      layout
+      initial={{ opacity: 0, height: 0 }}
+      animate={{ opacity: 1, height: 'auto' }}
+      exit={{ opacity: 0, height: 0 }}
+      transition={{ duration: 0.18 }}
+      className="mt-3 border rounded p-2 bg-muted/30 overflow-hidden"
+    >
       <div className="text-xs font-semibold mb-2">Notes</div>
 
       {loadError ? (
         <div className="text-xs text-red-500">{loadError}</div>
-      ) : notes.length === 0 ? (
-        <div className="text-xs text-muted-foreground">No notes yet</div>
       ) : (
-        <div className="space-y-2">
-          {notes.map((n) => (
-            <NoteRow key={n.id} note={n} />
-          ))}
-        </div>
-      )}
+        <>
+          <AnimatePresence initial={false}>
+            {notes.length === 0 ? (
+              <motion.div
+                key="empty"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="text-xs text-muted-foreground"
+              >
+                No notes yet
+              </motion.div>
+            ) : (
+              <div className="space-y-2">
+                {notes.map((n) => (
+                  <NoteRow key={n.id} note={n} meId={me?.uid} />
+                ))}
+              </div>
+            )}
+          </AnimatePresence>
 
-      <div className="mt-2 flex items-start gap-2">
-        <Textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Add a note…"
-          className="min-h-[60px]"
-        />
-        <Button size="sm" onClick={handleAdd} disabled={adding || !text.trim()}>
-          {adding ? 'Posting…' : 'Post'}
-        </Button>
-      </div>
-    </div>
+          <div className="mt-2 flex items-start gap-2">
+            <Textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Add a note…"
+              className="min-h-[60px]"
+            />
+            <Button size="sm" onClick={handleAdd} disabled={adding || !text.trim()}>
+              {adding ? 'Posting…' : 'Post'}
+            </Button>
+          </div>
+        </>
+      )}
+    </motion.div>
   )
 }
 
@@ -277,8 +342,8 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // NEW: keep note thread visibility here (fixes invalid hook usage)
-  const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(new Set())
+  // Notes toggle state
+  const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())
   const toggleNotes = (id: string) => {
     setOpenNotesIds((prev) => {
       const next = new Set(prev)
@@ -286,6 +351,9 @@ export default function HomeDeliveriesToday({
       return next
     })
   }
+
+  const me = auth.currentUser
+  const myName = useUserName(me?.uid)
 
   const handleReceiverNoteSubmit = async (note: string) => {
     if (!dialogOpenId || !familyId) return
@@ -512,9 +580,21 @@ export default function HomeDeliveriesToday({
     if (!familyId) return
     setProcessingId(deliveryId)
     try {
-      const res = await markDeliveryAsReceived(familyId, deliveryId, receiverNote)
-      if (!res || res.success === false) {
-        alert(res?.message ?? 'Failed to mark delivery')
+      // Save delivery as received; receiver note becomes a note doc (or default)
+      await markDeliveryAsReceived(familyId, deliveryId, undefined as any)
+
+      const user = auth.currentUser
+      if (user) {
+        const text = receiverNote?.trim()
+          ? receiverNote.trim()
+          : `Received by ${myName || user.displayName || 'Member'}`
+        await addDoc(collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes'), {
+          text,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          createdByName: myName || user.displayName || null,
+          createdByPhotoURL: user.photoURL || null,
+        })
       }
     } catch (err) {
       console.error('handleMarkDelivery', err)
@@ -604,11 +684,20 @@ export default function HomeDeliveriesToday({
                   ? new Date(d.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   : ''
 
-              const typeLabel = deliveryTypeLabel(d)
-              const codTotal = deliveryCodTotal(d, items)
+              const typeLabel = (isSingleByDoc ? 'Single' : 'Multiple')
+              const codTotal = (() => {
+                if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
+                if (items && items.length > 0) {
+                  const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
+                  return sum
+                }
+                if (typeof d.codAmount === 'number') return d.codAmount
+                return null
+              })()
 
               // Grouped deliveries (show items)
               if (!isSingleByDoc && items.length > 0) {
+                const notesOpen = openNotesIds.has(d.id)
                 return (
                   <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
                     <div className="flex items-center justify-between">
@@ -630,13 +719,24 @@ export default function HomeDeliveriesToday({
                           )}
                         </div>
                       </div>
-                      <div>
+                      <div className="flex items-center gap-2">
+                        <NotesToggle
+                          open={notesOpen}
+                          count={0}
+                          onClick={() => toggleNotes(d.id)}
+                        />
                         <MarkDeliveryButton
                           id={d.id}
                           isProcessing={processingId === d.id}
                           onClick={() => setDialogOpenId(d.id)}
                         />
                       </div>
+                      <ReceiverNoteDialog
+                        open={dialogOpenId === d.id}
+                        onClose={() => setDialogOpenId(null)}
+                        onSubmit={handleReceiverNoteSubmit}
+                        loading={saving}
+                      />
                     </div>
 
                     <div className="mt-3 space-y-2">
@@ -673,20 +773,18 @@ export default function HomeDeliveriesToday({
                       })}
                     </div>
 
-                    {/* Notes toggle + thread */}
-                    {familyId ? (
-                      <div className="mt-2">
-                        <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
-                        {openNotesIds.has(d.id) ? (
-                          <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
-                        ) : null}
-                      </div>
-                    ) : null}
+                    {/* Notes thread */}
+                    <AnimatePresence initial={false}>
+                      {notesOpen && familyId ? (
+                        <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
+                      ) : null}
+                    </AnimatePresence>
                   </div>
                 )
               }
 
               // flat delivery rendering
+              const notesOpen = openNotesIds.has(d.id)
               return (
                 <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
                   <div className="flex items-center justify-between">
@@ -710,7 +808,12 @@ export default function HomeDeliveriesToday({
                       </div>
                     </div>
 
-                    <div>
+                    <div className="flex items-center gap-2">
+                      <NotesToggle
+                        open={notesOpen}
+                        count={0}
+                        onClick={() => toggleNotes(d.id)}
+                      />
                       <MarkDeliveryButton
                         id={d.id}
                         isProcessing={processingId === d.id}
@@ -719,15 +822,19 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes toggle + thread */}
-                  {familyId ? (
-                    <div className="mt-2">
-                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
-                      {openNotesIds.has(d.id) ? (
-                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {/* Notes thread */}
+                  <AnimatePresence initial={false}>
+                    {notesOpen && familyId ? (
+                      <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
+                    ) : null}
+                  </AnimatePresence>
+
+                  <ReceiverNoteDialog
+                    open={dialogOpenId === d.id}
+                    onClose={() => setDialogOpenId(null)}
+                    onSubmit={handleReceiverNoteSubmit}
+                    loading={saving}
+                  />
                 </div>
               )
             })}
@@ -751,10 +858,19 @@ export default function HomeDeliveriesToday({
                   ? new Date(d.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   : ''
 
-              const typeLabel = deliveryTypeLabel(d)
-              const codTotal = deliveryCodTotal(d, items)
+              const typeLabel = (isSingleByDoc ? 'Single' : 'Multiple')
+              const codTotal = (() => {
+                if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
+                if (items && items.length > 0) {
+                  const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
+                  return sum
+                }
+                if (typeof d.codAmount === 'number') return d.codAmount
+                return null
+              })()
 
               if (!isSingleByDoc && items.length > 0) {
+                const notesOpen = openNotesIds.has(d.id)
                 return (
                   <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
                     <div className="flex items-center justify-between">
@@ -776,11 +892,24 @@ export default function HomeDeliveriesToday({
                           )}
                         </div>
                       </div>
-                      <div>
-                        <Button type="button" size="sm" onClick={() => handleMarkDelivery(d.id, d.note)} disabled={processingId === d.id}>
-                          {processingId === d.id ? 'Saving…' : 'Mark delivery received'}
-                        </Button>
+                      <div className="flex items-center gap-2">
+                        <NotesToggle
+                          open={notesOpen}
+                          count={0}
+                          onClick={() => toggleNotes(d.id)}
+                        />
+                        <MarkDeliveryButton
+                          id={d.id}
+                          isProcessing={processingId === d.id}
+                          onClick={() => setDialogOpenId(d.id)}
+                        />
                       </div>
+                      <ReceiverNoteDialog
+                        open={dialogOpenId === d.id}
+                        onClose={() => setDialogOpenId(null)}
+                        onSubmit={handleReceiverNoteSubmit}
+                        loading={saving}
+                      />
                     </div>
 
                     <div className="mt-3 space-y-2">
@@ -814,19 +943,17 @@ export default function HomeDeliveriesToday({
                       })}
                     </div>
 
-                    {/* Notes toggle + thread */}
-                    {familyId ? (
-                      <div className="mt-2">
-                        <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
-                        {openNotesIds.has(d.id) ? (
-                          <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
-                        ) : null}
-                      </div>
-                    ) : null}
+                    {/* Notes thread */}
+                    <AnimatePresence initial={false}>
+                      {notesOpen && familyId ? (
+                        <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
+                      ) : null}
+                    </AnimatePresence>
                   </div>
                 )
               }
 
+              const notesOpen = openNotesIds.has(d.id)
               return (
                 <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
                   <div className="flex items-center justify-between">
@@ -850,7 +977,12 @@ export default function HomeDeliveriesToday({
                       </div>
                     </div>
 
-                    <div>
+                    <div className="flex items-center gap-2">
+                      <NotesToggle
+                        open={notesOpen}
+                        count={0}
+                        onClick={() => toggleNotes(d.id)}
+                      />
                       <MarkDeliveryButton
                         id={d.id}
                         isProcessing={processingId === d.id}
@@ -859,15 +991,19 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes toggle + thread */}
-                  {familyId ? (
-                    <div className="mt-2">
-                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
-                      {openNotesIds.has(d.id) ? (
-                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {/* Notes thread */}
+                  <AnimatePresence initial={false}>
+                    {notesOpen && familyId ? (
+                      <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
+                    ) : null}
+                  </AnimatePresence>
+
+                  <ReceiverNoteDialog
+                    open={dialogOpenId === d.id}
+                    onClose={() => setDialogOpenId(null)}
+                    onSubmit={handleReceiverNoteSubmit}
+                    loading={saving}
+                  />
                 </div>
               )
             })}
@@ -883,9 +1019,20 @@ export default function HomeDeliveriesToday({
         ) : (
           <div className="space-y-2">
             {deliveredToday.map((d) => {
-              const typeLabel = deliveryTypeLabel(d)
-              const codTotal = deliveryCodTotal(d, d.items)
               const receivedAtStr = d.receivedAt ? friendlyDeliveredLabel(d.receivedAt) : ''
+              const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
+              const typeLabel = isSingle ? 'Single' : 'Multiple'
+              const codTotal = (() => {
+                if (isSingle) return typeof d.codAmount === 'number' ? d.codAmount : null
+                if (d.items && d.items.length > 0) {
+                  const sum = d.items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
+                  return sum
+                }
+                if (typeof d.codAmount === 'number') return d.codAmount
+                return null
+              })()
+
+              const notesOpen = openNotesIds.has(d.id)
 
               return (
                 <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
@@ -914,29 +1061,25 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes thread persists after delivery */}
-                  {familyId ? (
-                    <div className="mt-2">
-                      <NotesToggle open={openNotesIds.has(d.id)} onClick={() => toggleNotes(d.id)} />
-                      {openNotesIds.has(d.id) ? (
-                        <DeliveryNotesThreadInline familyId={familyId} deliveryId={d.id} />
-                      ) : null}
-                    </div>
-                  ) : null}
+                  {/* Notes thread (read/write stays enabled after delivery) */}
+                  <div className="flex items-center justify-between">
+                    <NotesToggle
+                      open={notesOpen}
+                      count={0}
+                      onClick={() => toggleNotes(d.id)}
+                    />
+                  </div>
+                  <AnimatePresence initial={false}>
+                    {notesOpen && familyId ? (
+                      <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
+                    ) : null}
+                  </AnimatePresence>
                 </div>
               )
             })}
           </div>
         )}
       </section>
-
-      {/* Single controlled dialog instance to avoid Children.only issues */}
-      <ReceiverNoteDialog
-        open={!!dialogOpenId}
-        onClose={() => setDialogOpenId(null)}
-        onSubmit={handleReceiverNoteSubmit}
-        loading={saving}
-      />
     </div>
   )
 }
