@@ -17,14 +17,18 @@ export default function DeliveryNotesThread({
 }) {
   const [notes, setNotes] = useState<DeliveryNoteDoc[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     setLoading(true)
+    setError(null)
+
     const qy = query(
       collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes'),
       orderBy('createdAt', 'asc')
     )
+
     const unsub = onSnapshot(
       qy,
       (snap) => {
@@ -35,6 +39,12 @@ export default function DeliveryNotesThread({
       },
       (err) => {
         console.error('DeliveryNotes snapshot error', err)
+        // Show a friendly message and stop listening
+        const msg =
+          (err as any)?.code === 'permission-denied'
+            ? 'You do not have access to notes for this delivery.'
+            : 'Notes are unavailable right now.'
+        setError(msg)
         setLoading(false)
       }
     )
@@ -51,6 +61,14 @@ export default function DeliveryNotesThread({
         {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} className="h-16 w-full rounded-lg" />
         ))}
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/30 bg-destructive/10 text-destructive text-sm p-3">
+        {error}
       </div>
     )
   }
