@@ -615,19 +615,6 @@ export default function DeliveriesPage() {
         </div>
       )}
 
-      {/* Mobile FAB */}
-      <Button
-        type="button"
-        onClick={() => {
-          setEditingDelivery(null)
-          setOpenForm(true)
-        }}
-        disabled={!familyId}
-        className="sm:hidden fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 rounded-full h-14 w-14 shadow-lg"
-      >
-        <Plus className="w-5 h-5" />
-      </Button>
-
       {/* Form Dialog (prop shape bridged) */}
       {familyId && (
         <DeliveryFormDialog

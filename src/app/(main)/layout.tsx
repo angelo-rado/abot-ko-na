@@ -48,8 +48,19 @@ export default function MainLayout({
   if (isStandalone) {
     return (
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-        <div className="min-h-screen bg-background text-foreground">
-          <PullToRefresh getScrollEl={() => document.querySelector('#main-scroll')} onRefresh={() => router.refresh()}>
+        <div
+          id="main-scroll"
+          className="h-[100dvh] overflow-y-auto overscroll-contain"
+        // NOTE: avoid setting `touch-action` here; let horizontal swipes work naturally
+        >
+          <PullToRefresh
+            // Point PTR to this container so `atTop()` is accurate
+            getScrollEl={() => document.getElementById('main-scroll')}
+            onRefresh={async () => {
+              router.refresh()
+            }}
+            className="min-h-[100dvh]"
+          >
             {children}
           </PullToRefresh>
         </div>
