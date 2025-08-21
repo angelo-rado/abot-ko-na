@@ -19,6 +19,7 @@ import {
   updateDoc,
   arrayUnion,
   serverTimestamp,
+  increment,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 
@@ -38,23 +39,90 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    // keep input in sync when modal opens via route param
     setValue(initialInvite ?? '')
   }, [initialInvite, open])
 
-  // helper: extract familyId from either full invite link or raw id
-  const extractFamilyId = (input: string) => {
+  // Accepts: full URL (?invite=...), deep links, or raw code
+  const extractCode = (input: string) => {
     if (!input) return ''
+    const trimmed = input.trim()
     try {
-      // try URL parsing
-      const maybeUrl = new URL(input, typeof window !== 'undefined' ? window.location.origin : undefined)
-      const invite = maybeUrl.searchParams.get('invite')
-      if (invite) return invite
-    } catch (err) {
-      // not a full URL — fall through
+      const maybeUrl = new URL(
+        trimmed,
+        typeof window !== 'undefined' ? window.location.origin : 'https://abot-ko-na.local'
+      )
+      const qp = maybeUrl.searchParams.get('invite')
+      if (qp) return qp.trim()
+    } catch {
+      // not a URL
     }
-    // fallback: sanitize whitespace
-    return input.trim()
+    return trimmed
+  }
+
+  // Resolve to a valid familyId.
+  // Supports either direct familyId OR invite tokens stored under top-level `invites/{code}`.
+  const resolveFamilyId = async (code: string) => {
+    // 1) Try direct family doc id
+    const famRefDirect = doc(firestore, 'families', code)
+    const famSnapDirect = await getDoc(famRefDirect)
+    if (famSnapDirect.exists()) {
+      return { familyId: code, inviteRefPath: null as string | null }
+    }
+
+    // 2) Try invite token lookup
+    const inviteRef = doc(firestore, 'invites', code)
+    const inviteSnap = await getDoc(inviteRef)
+    if (!inviteSnap.exists()) {
+      return null
+    }
+
+    const inv = inviteSnap.data() as any
+    const familyId: string | undefined =
+      inv?.familyId ?? inv?.family ?? inv?.fid // support older field names if any
+
+    if (!familyId) {
+      return null
+    }
+
+    // Optional validations: revoked / expired / usage limits
+    const revoked: boolean = !!inv?.revoked || !!inv?.disabled
+    if (revoked) return { error: 'Invite has been revoked.', familyId: null, inviteRefPath: inviteRef.path }
+
+    const now = Date.now()
+    let expiresAt: number | null = null
+    if (inv?.expiresAt) {
+      if (typeof inv.expiresAt?.toDate === 'function') {
+        expiresAt = inv.expiresAt.toDate().getTime()
+      } else if (typeof inv.expiresAt === 'number') {
+        expiresAt = inv.expiresAt
+      } else if (typeof inv.expiresAt === 'string') {
+        const t = Date.parse(inv.expiresAt)
+        expiresAt = Number.isNaN(t) ? null : t
+      }
+    }
+    if (expiresAt && now > expiresAt) {
+      return { error: 'Invite has expired.', familyId: null, inviteRefPath: inviteRef.path }
+    }
+
+    const maxUses: number | undefined = typeof inv?.maxUses === 'number' ? inv.maxUses : undefined
+    const uses: number = typeof inv?.uses === 'number' ? inv.uses : 0
+    if (typeof maxUses === 'number' && uses >= maxUses) {
+      return { error: 'Invite has reached its maximum number of uses.', familyId: null, inviteRefPath: inviteRef.path }
+    }
+
+    return { familyId, inviteRefPath: inviteRef.path }
+  }
+
+  const bumpInviteUsage = async (inviteRefPath: string | null) => {
+    if (!inviteRefPath) return
+    try {
+      await updateDoc(doc(firestore, inviteRefPath), {
+        uses: increment(1),
+        lastUsedAt: serverTimestamp(),
+      })
+    } catch {
+      // best-effort only
+    }
   }
 
   const handleJoin = async () => {
@@ -62,14 +130,30 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
       toast.error('Sign in to join a family.')
       return
     }
-    const familyId = extractFamilyId(value)
-    if (!familyId) {
+    const code = extractCode(value)
+    if (!code) {
       toast.error('Enter an invite link or family code.')
       return
     }
 
     setLoading(true)
     try {
+      const resolved = await resolveFamilyId(code)
+
+      if (!resolved || (!resolved.familyId && !resolved.error)) {
+        toast.error('Invite is invalid — code not recognized.')
+        setLoading(false)
+        return
+      }
+      if (resolved && resolved.error) {
+        toast.error(resolved.error)
+        setLoading(false)
+        return
+      }
+
+      const familyId = resolved!.familyId as string
+
+      // Verify family exists (in case invite pointed to deleted family)
       const famRef = doc(firestore, 'families', familyId)
       const famSnap = await getDoc(famRef)
       if (!famSnap.exists()) {
@@ -78,19 +162,19 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
         return
       }
 
-      // If member doc already exists, short-circuit and redirect to family
+      // If already a member, short-circuit
       const memberRef = doc(firestore, 'families', familyId, 'members', user.uid)
       const existingMember = await getDoc(memberRef)
       if (existingMember.exists()) {
+        await bumpInviteUsage(resolved!.inviteRefPath ?? null)
         toast.success('You are already a member of this family.')
         onOpenChange(false)
-        // Persist locally so UI picks it up quickly
         try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
-        router.replace(`/family/${familyId}`)
+        router.replace(`/family/${familyId}?joined=1`)
         return
       }
 
-      // Write authoritative member doc (role, presence defaults and profile)
+      // Create/merge member record
       await setDoc(
         memberRef,
         {
@@ -106,44 +190,35 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
         { merge: true }
       )
 
-      // Best-effort: add uid to families/{id}.members array
+      // Append to families.members (best-effort)
       try {
-        await updateDoc(famRef, {
-          members: arrayUnion(user.uid),
-        })
-      } catch (err) {
-        console.warn('Failed to update families.members array (non-fatal)', err)
+        await updateDoc(famRef, { members: arrayUnion(user.uid) })
+      } catch {
         try {
-          // fallback to set merge (best-effort)
           await setDoc(famRef, { members: [user.uid] }, { merge: true })
-        } catch (e) {
-          console.warn('Fallback set for families.members failed', e)
-        }
+        } catch {}
       }
 
-      // Best-effort: add family to user's doc and set preferredFamily
+      // Update users doc (best-effort)
       const userRef = doc(firestore, 'users', user.uid)
       try {
         await updateDoc(userRef, {
           familiesJoined: arrayUnion(familyId),
           preferredFamily: familyId,
         })
-      } catch (err) {
-        console.warn('Could not update users.familiesJoined/preferredFamily (non-fatal)', err)
+      } catch {
         try {
           await setDoc(userRef, { familiesJoined: [familyId], preferredFamily: familyId }, { merge: true })
-        } catch (e) {
-          console.warn('Fallback set for users doc failed', e)
-        }
+        } catch {}
       }
 
-      // Persist locally so UI early-init picks this family immediately
-      try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch (e) { /* ignore */ }
+      await bumpInviteUsage(resolved!.inviteRefPath ?? null)
+
+      try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
 
       toast.success('Joined family!')
       onOpenChange(false)
-      // replace so back doesn't reopen join modal
-      router.replace(`/family/${familyId}`)
+      router.replace(`/family/${familyId}?joined=1`)
     } catch (err) {
       console.error('JoinFamilyModal.handleJoin error', err)
       toast.error('Failed to join family. Try again.')

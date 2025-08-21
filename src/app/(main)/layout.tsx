@@ -9,6 +9,7 @@ import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import { ThemeProvider } from 'next-themes'
+import PullToRefresh from '../components/PullToRefresh'
 
 const VAPID_KEY =
   (
@@ -48,7 +49,13 @@ export default function MainLayout({
     return (
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
         <div className="min-h-screen bg-background text-foreground">
-          {children}
+          <PullToRefresh
+            onRefresh={async () => {
+              router.refresh()
+            }}
+          >
+            {children}
+          </PullToRefresh>
         </div>
       </ThemeProvider>
     )
@@ -105,7 +112,7 @@ export default function MainLayout({
       if (isIOSWebKit()) {
         window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: u.uid } }))
       } else {
-        setupPushNotifications(u.uid).catch(() => {})
+        setupPushNotifications(u.uid).catch(() => { })
       }
     })
     return () => unsub()
@@ -124,7 +131,7 @@ export default function MainLayout({
       if (!messaging) return
       const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
       if (token) await sendTokenToBackend(token, uid)
-    } catch {}
+    } catch { }
   }
 
   function onTouchStart(e: React.TouchEvent) {
@@ -248,7 +255,7 @@ async function sendTokenToBackend(token: string, userId: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, userId }),
     })
-  } catch {}
+  } catch { }
 }
 
 function isIOSWebKit() {

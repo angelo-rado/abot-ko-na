@@ -80,6 +80,7 @@ async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Pro
    Unified notifier for a family's members (multicast + Safari fallback)
    ============================================================================= */
 
+// --- REPLACE sendNotificationToFamilyMembers with token cleanup -------------
 async function sendNotificationToFamilyMembers(
   familyId: string,
   title: string,
@@ -90,56 +91,69 @@ async function sendNotificationToFamilyMembers(
   try {
     const exclude = new Set(opts?.excludeUids ?? []);
 
-    // Get member UIDs from subcollection: families/{familyId}/members/{uid}
-    const membersSnap = await firestore
-      .collection('families')
-      .doc(familyId)
-      .collection('members')
-      .get();
+    // Collect member tokens with origin uid (for cleanup)
+    const membersSnap = await firestore.collection('families').doc(familyId).collection('members').get();
+    const memberUids = membersSnap.docs.map(d => d.id).filter(uid => !exclude.has(uid));
 
-    const memberUids = membersSnap.docs.map((d) => d.id).filter((uid) => !exclude.has(uid));
-
-    const fcmTokens: string[] = [];
+    const pairs: Array<{ token: string; uid: string }> = [];
     const safariFallbackUids: string[] = [];
 
-    // Collect tokens & Safari fallback
     for (const uid of memberUids) {
-      const userDoc = await firestore.collection('users').doc(uid).get();
-      const u = userDoc.data() as any;
-      if (u && Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0) {
-        fcmTokens.push(...u.fcmTokens);
+      const uDoc = await firestore.collection('users').doc(uid).get();
+      const u = uDoc.data() as any;
+      if (u && Array.isArray(u.fcmTokens) && u.fcmTokens.length) {
+        for (const t of u.fcmTokens) pairs.push({ token: String(t), uid });
       } else if (u?.isSafari) {
         safariFallbackUids.push(uid);
       }
     }
 
-    const tokens = Array.from(new Set(fcmTokens)); // dedupe
+    // Dedupe by token
+    const unique = new Map<string, { token: string; uid: string }>();
+    for (const p of pairs) if (!unique.has(p.token)) unique.set(p.token, p);
 
-    // Multicast in chunks of 500 (FCM limit)
+    const tokens = Array.from(unique.values()).map(p => p.token);
+
     if (tokens.length > 0) {
       const chunks = chunk(tokens, 500);
       for (const part of chunks) {
         try {
           const res = await messaging.sendEachForMulticast({
             tokens: part,
-            notification: { title, body },
-            data: { familyId, ...extraData },
+            notification: { title, body },          // (keep notification block)
+            data: { familyId, ...extraData },       // client can still read data
           });
+
           logger.info('Push multicast result', {
             familyId,
             successCount: res.successCount,
             failureCount: res.failureCount,
           });
 
-          // Optional: log specific errors per token (kept concise)
-          res.responses.forEach((r, i) => {
-            if (!r.success) {
-              logger.error('Push failed', {
-                token: part[i],
-                error: r.error?.message ?? 'unknown',
-              });
-            }
-          });
+          // Remove invalid tokens from user docs
+          await Promise.all(
+            res.responses.map(async (r, i) => {
+              if (!r.success) {
+                const code = (r.error as any)?.code || '';
+                if (code.includes('registration-token-not-registered') || code.includes('invalid-argument')) {
+                  const badToken = part[i];
+                  const uid = unique.get(badToken)?.uid;
+                  if (uid) {
+                    try {
+                      await firestore.collection('users').doc(uid).update({
+                        fcmTokens: admin.firestore.FieldValue.arrayRemove(badToken),
+                      });
+                      logger.info('Pruned invalid token', { uid });
+                    } catch (e) {
+                      logger.error('Token prune failed', { uid, error: e instanceof Error ? e.message : String(e) });
+                    }
+                  }
+                } else {
+                  logger.error('Push failed', { token: part[i], error: r.error?.message ?? 'unknown' });
+                }
+              }
+            })
+          );
         } catch (err) {
           logger.error('Push multicast exception', {
             error: err instanceof Error ? err.message : JSON.stringify(err),
@@ -148,16 +162,12 @@ async function sendNotificationToFamilyMembers(
       }
     }
 
-    // Safari fallback: queue on user doc
+    // Safari fallback queue
     for (const uid of safariFallbackUids) {
       try {
         await firestore.collection('users').doc(uid).update({
           pendingNotifications: admin.firestore.FieldValue.arrayUnion({
-            title,
-            body,
-            familyId,
-            ...extraData,
-            timestamp: Date.now(),
+            title, body, familyId, ...extraData, timestamp: Date.now(),
           }),
         });
       } catch (err) {
@@ -199,6 +209,22 @@ async function sendDeliveryNotificationForFamily(familyId: string, expectedDate:
   );
 }
 
+// --- NEW: per-delivery status idempotency (no recursion) --------------------
+async function claimInTransitNotification(familyId: string, deliveryId: string): Promise<boolean> {
+  const ref = firestore
+    .collection('system')
+    .doc('inTransitNotified')
+    .collection(familyId)
+    .doc(deliveryId);
+
+  try {
+    await ref.create({ at: admin.firestore.FieldValue.serverTimestamp() }); // fails if exists
+    return true;
+  } catch {
+    return false; // already sent (or racing duplicate) — skip
+  }
+}
+
 /* =============================================================================
    Triggers
    ============================================================================= */
@@ -214,8 +240,8 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
     const beforeSnap = event.data?.before;
     const afterSnap  = event.data?.after;
     const familyId   = event.params.familyId as string;
-
-    if (!beforeSnap || !afterSnap || !familyId) return;
+    const deliveryId = event.params.deliveryId as string;
+    if (!beforeSnap || !afterSnap || !familyId || !deliveryId) return;
 
     const before = beforeSnap.data() as any;
     const after  = afterSnap.data() as any;
@@ -224,9 +250,16 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
     const prevStatus = String(before.status ?? '').toLowerCase();
     const nextStatus = String(after.status ?? '').toLowerCase();
 
+    // Only when entering in_transit
     if (prevStatus !== 'in_transit' && nextStatus === 'in_transit') {
-      let expectedDate: Date | null = null;
+      // Idempotency guard across retries/parallel invocations
+      const claimed = await claimInTransitNotification(familyId, deliveryId);
+      if (!claimed) {
+        logger.info('In-transit notification already sent, skipping', { familyId, deliveryId });
+        return;
+      }
 
+      let expectedDate: Date | null = null;
       if (after.expectedDate) {
         if (typeof after.expectedDate === 'object' && 'toDate' in after.expectedDate) {
           expectedDate = (after.expectedDate as admin.firestore.Timestamp).toDate();
@@ -235,7 +268,6 @@ export const notifyDeliveryInTransit = functions.firestore.onDocumentUpdated(
           expectedDate = isNaN(d.getTime()) ? null : d;
         }
       }
-
       await sendDeliveryNotificationForFamily(familyId, expectedDate);
     }
   }
@@ -373,7 +405,7 @@ export const notifyPresenceStatusChange = functions.firestore.onDocumentUpdated(
       const uDoc = await firestore.collection('users').doc(userId).get();
       const u = uDoc.data() as any;
       displayName = u?.displayName ?? u?.name ?? userId;
-    } catch {}
+    } catch { }
 
     const title = next === 'home' ? 'Arrived home' : 'Left home';
     const body = `${displayName} is now ${next}.`;

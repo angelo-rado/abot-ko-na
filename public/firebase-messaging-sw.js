@@ -16,29 +16,33 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Background messages from FCM
+/**
+ * Background messages from FCM
+ * If payload contains `notification`, the browser will auto-display it.
+ * We only call showNotification for DATA-ONLY payloads to avoid duplicates.
+ */
 messaging.onBackgroundMessage((payload) => {
-  console.log('[firebase-messaging-sw.js] background message', payload);
-  const title =
-    payload.notification?.title ||
-    payload.data?.title ||
-    'Abot Ko Na';
+  // Guard: let the browser handle notification-only messages (prevents double)
+  if (payload?.notification) return;
 
-  const body =
-    payload.notification?.body ||
-    payload.data?.body ||
-    '📦 You have a new update!';
+  const title = payload?.data?.title || 'Abot Ko Na';
+  const body  = payload?.data?.body  || '📦 You have a new update!';
+  const url   = payload?.data?.url   || '/';
 
-  const url =
-    payload.data?.url ||
-    payload.notification?.click_action ||
-    '/';
+  // Optional: collapse updates of the same type so they replace instead of stacking
+  const tag =
+    payload?.data?.tag ||
+    [payload?.data?.type || 'general', payload?.data?.familyId, payload?.data?.deliveryId]
+      .filter(Boolean)
+      .join(':');
 
   self.registration.showNotification(title, {
     body,
     icon: '/android-chrome-192x192.png',
     badge: '/favicon-32x32.png',
     data: { url },
+    tag,
+    renotify: false,
   });
 });
 
@@ -71,16 +75,29 @@ workbox.routing.registerRoute(
   })
 );
 
-// Optional push and notificationclick handlers (non-FCM web push, or extra safety)
+/**
+ * Optional non-FCM web push fallback
+ * If you don't use any other push provider, you can delete this handler.
+ * Kept here but guarded to avoid handling FCM-delivered payloads twice.
+ */
 self.addEventListener('push', (event) => {
-  // Some providers send data-only pushes (no FCM SDK), handle gracefully
-  const data = event.data?.json() ?? {}; // ✅ fix: call .json()
-  const title = data.notification?.title || data.title || 'Abot Ko Na';
-  const body = data.notification?.body || data.body || '📦 You have a new update!';
-  const url =
-    data.data?.url ||
-    data.notification?.click_action ||
-    '/';
+  // Try to parse; if it looks like an FCM payload, bail (FCM SDK already handled it)
+  let data = {};
+  try { data = event.data?.json?.() ?? event.data?.json() ?? {}; } catch {}
+
+  // Heuristic: common FCM markers in raw payloads
+  const looksLikeFCM =
+    data?.fcmOptions ||
+    data?.fcmMessageId ||
+    data?.from ||
+    data?.notification && (data?.data?.firebaseMessaging || data?.data?.google || data?.data?.gcm_message_id);
+
+  if (looksLikeFCM) return;
+
+  const title = data?.notification?.title || data?.title || 'Abot Ko Na';
+  const body  = data?.notification?.body  || data?.body  || '📦 You have a new update!';
+  const url   = data?.data?.url || data?.notification?.click_action || '/';
+  const tag   = data?.data?.tag || 'general';
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -88,6 +105,8 @@ self.addEventListener('push', (event) => {
       icon: '/android-chrome-192x192.png',
       badge: '/favicon-32x32.png',
       data: { url },
+      tag,
+      renotify: false,
     })
   );
 });
@@ -103,23 +122,19 @@ self.addEventListener('notificationclick', (event) => {
         includeUncontrolled: true,
       });
 
-      // Focus an existing tab with same origin and (if present) same path
+      const desired = new URL(targetUrl, self.location.origin);
+
       for (const client of windowClients) {
         try {
           const clientUrl = new URL(client.url);
-          const desired = new URL(targetUrl, self.location.origin);
           if (clientUrl.origin === desired.origin) {
-            // If already on the desired path, just focus; otherwise open a new one
-            if (clientUrl.pathname === desired.pathname) {
-              return client.focus();
-            }
+            return client.focus();
           }
         } catch {
-          // ignore URL parsing errors, fallback to openWindow below
+          // ignore; fallback to openWindow
         }
       }
 
-      // Otherwise open a new window
       if (clients.openWindow) {
         return clients.openWindow(targetUrl);
       }
