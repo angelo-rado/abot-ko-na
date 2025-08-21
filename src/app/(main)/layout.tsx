@@ -49,11 +49,7 @@ export default function MainLayout({
     return (
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
         <div className="min-h-screen bg-background text-foreground">
-          <PullToRefresh
-            onRefresh={async () => {
-              router.refresh()
-            }}
-          >
+          <PullToRefresh getScrollEl={() => document.querySelector('#main-scroll')} onRefresh={() => router.refresh()}>
             {children}
           </PullToRefresh>
         </div>

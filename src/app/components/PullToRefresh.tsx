@@ -1,48 +1,85 @@
 'use client'
 
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
 
 type Props = {
   children: React.ReactNode
   onRefresh?: () => Promise<void> | void
-  /** pixels to pull before triggering refresh */
+  /** px to pull before triggering refresh */
   threshold?: number
   /** max visual pull distance */
   maxPull?: number
+  /** lock direction after this many px of movement */
+  lockAfter?: number
+  /** return the scrolling element; can be Element or Document */
+  getScrollEl?: () => Element | Document | null
   className?: string
 }
+
+type Mode = 'idle' | 'detect' | 'pull' | 'horiz' | 'refreshing'
 
 export default function PullToRefresh({
   children,
   onRefresh,
-  threshold = 64,
+  threshold = 72,
   maxPull = 120,
+  lockAfter = 10,
+  getScrollEl,
   className = '',
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
-  const startY = useRef<number | null>(null)
-  const pulling = useRef(false)
+  const startX = useRef<number>(0)
+  const startY = useRef<number>(0)
+  const mode = useRef<Mode>('idle')
+  const pointerId = useRef<number | null>(null)
+  const scrollEl = useRef<Element | Document | null>(null)
 
   const [pullPx, setPullPx] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
 
+  const resolveScrollEl = useCallback(() => {
+    const el =
+      getScrollEl?.() ??
+      document.scrollingElement ?? // Element | null
+      document.documentElement // Element
+    scrollEl.current = el || document // Element | Document
+  }, [getScrollEl])
+
+  useEffect(() => {
+    resolveScrollEl()
+  }, [resolveScrollEl])
+
   const atTop = () => {
-    const el = document.scrollingElement || document.documentElement
-    return (el?.scrollTop ?? 0) <= 0
+    const el = scrollEl.current
+    if (!el) return true
+    if (el instanceof Document) {
+      const se = el.scrollingElement || document.documentElement
+      return (se?.scrollTop ?? 0) <= 0
+    }
+    if (el instanceof HTMLElement) {
+      return el.scrollTop <= 0
+    }
+    // If not an HTMLElement (e.g., SVGElement), treat as top to avoid blocking
+    return true
+  }
+
+  const isInteractive = (target: EventTarget | null) => {
+    if (!(target instanceof Element)) return false
+    return !!target.closest('input, textarea, select, button, a, [contenteditable="true"], [data-no-ptr="true"]')
   }
 
   const reset = useCallback(() => {
+    mode.current = 'idle'
+    pointerId.current = null
     setPullPx(0)
-    pulling.current = false
-    startY.current = null
   }, [])
 
   const doRefresh = useCallback(async () => {
     if (!onRefresh) return
     try {
+      mode.current = 'refreshing'
       setRefreshing(true)
-      // light haptic if supported
       try { navigator.vibrate?.(15) } catch {}
       await onRefresh()
     } finally {
@@ -51,31 +88,62 @@ export default function PullToRefresh({
     }
   }, [onRefresh, reset])
 
-  const onTouchStart = (e: React.TouchEvent) => {
+  const dampen = (dy: number) => Math.min(maxPull, dy * 0.6)
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (refreshing) return
-    if (!atTop()) return
-    startY.current = e.touches[0].clientY
-    pulling.current = true
-  }
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    if (!pulling.current || refreshing) return
-    const y = e.touches[0].clientY
-    if (startY.current == null) startY.current = y
-    const diff = y - startY.current
-    if (diff > 0 && atTop()) {
-      // dampen pull
-      const damped = Math.min(maxPull, diff * 0.6)
-      setPullPx(damped)
-      // prevent native bounce
-      if (e.cancelable) e.preventDefault()
+    if (e.pointerType !== 'touch' && e.pointerType !== 'pen') return
+    if (isInteractive(e.target)) return
+    resolveScrollEl()
+    if (!atTop()) {
+      mode.current = 'idle'
+      return
     }
+    pointerId.current = e.pointerId
+    startX.current = e.clientX
+    startY.current = e.clientY
+    mode.current = 'detect'
   }
 
-  const onTouchEnd = () => {
-    if (!pulling.current || refreshing) return reset()
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (refreshing) return
+    if (pointerId.current == null || e.pointerId !== pointerId.current) return
+    if (mode.current === 'idle' || mode.current === 'horiz') return
+
+    const dx = e.clientX - startX.current
+    const dy = e.clientY - startY.current
+
+    if (mode.current === 'detect') {
+      if (Math.abs(dx) >= lockAfter || Math.abs(dy) >= lockAfter) {
+        if (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.15 && atTop()) {
+          mode.current = 'pull'
+        } else {
+          mode.current = 'horiz'
+          return
+        }
+      } else {
+        return
+      }
+    }
+
+    if (mode.current !== 'pull') return
+    if (!atTop()) {
+      reset()
+      return
+    }
+
+    const damped = dampen(dy)
+    if (e.cancelable) e.preventDefault()
+    setPullPx(damped)
+  }
+
+  const onPointerUp = () => {
+    if (refreshing) return
+    if (mode.current !== 'pull') {
+      reset()
+      return
+    }
     if (pullPx >= threshold) {
-      // lock indicator while refreshing
       setPullPx(threshold)
       doRefresh()
     } else {
@@ -83,16 +151,24 @@ export default function PullToRefresh({
     }
   }
 
+  const onPointerCancel = () => {
+    if (refreshing) return
+    reset()
+  }
+
   return (
     <div
       ref={wrapRef}
       className={`relative ${className}`}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-      onTouchCancel={onTouchEnd}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      style={{
+        touchAction: 'manipulation',
+        overscrollBehaviorY: 'contain',
+      } as React.CSSProperties}
     >
-      {/* Indicator */}
       <div
         className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-12 items-center justify-center"
         style={{
@@ -111,7 +187,6 @@ export default function PullToRefresh({
         </div>
       </div>
 
-      {/* Content translates with pull */}
       <div
         style={{
           transform: `translateY(${pullPx}px)`,
@@ -125,6 +200,4 @@ export default function PullToRefresh({
   )
 }
 
-// tiny helper animation (optional)
-// Add to your global CSS if you want slower spin while pulling:
 // .animate-spin-slow { animation: spin 1.2s linear infinite; }
