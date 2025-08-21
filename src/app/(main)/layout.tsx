@@ -1,7 +1,7 @@
 // app/(main)/layout.tsx
 'use client'
 
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
@@ -9,7 +9,7 @@ import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import { ThemeProvider } from 'next-themes'
-import PullToRefresh from '../components/PullToRefresh'
+import PTR from '../components/PullToRefresh'
 
 const VAPID_KEY =
   (
@@ -17,6 +17,18 @@ const VAPID_KEY =
     process.env.NEXT_PUBLIC_VAPID_KEY ||
     ''
   ).trim() || undefined
+
+function detectModalOpen(): boolean {
+  if (typeof document === 'undefined') return false
+  return !!document.querySelector(
+    [
+      '[role="dialog"][data-state="open"]',
+      '[data-radix-portal] [role="dialog"][data-state="open"]',
+      '[data-state="open"][data-side]',
+      '[data-radix-portal] [data-state="open"][data-side]',
+    ].join(', ')
+  )
+}
 
 export default function MainLayout({
   children,
@@ -35,18 +47,21 @@ export default function MainLayout({
   const pathname = usePathname()
   const auth = getAuth()
 
-  const STANDALONE_PREFIXES = useMemo(
-    () => ['/family/join', '/login', '/onboarding', '/family/create'],
-    []
-  )
-  const isStandalone = useMemo(
-    () => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)),
-    [pathname, STANDALONE_PREFIXES]
-  )
+  // Track if any modal/sheet is open (Radix portals)
+  const [uiLocked, setUiLocked] = useState(false)
+  useEffect(() => {
+    const check = () => setUiLocked(detectModalOpen())
+    check()
+    const mo = new MutationObserver(check)
+    mo.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-state', 'class', 'style'] })
+    return () => mo.disconnect()
+  }, [])
+
+  const STANDALONE_PREFIXES = useMemo(() => ['/family/join', '/login', '/onboarding', '/family/create'], [])
+  const isStandalone = useMemo(() => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)), [pathname, STANDALONE_PREFIXES])
 
   const softRefresh = async () => {
     try { router.refresh() } catch {}
-    // tiny pause so spinner is visible even if refresh is instant
     await new Promise((r) => setTimeout(r, 250))
   }
 
@@ -54,7 +69,7 @@ export default function MainLayout({
     return (
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
         <div id="main-scroll" className="h-[100dvh] overflow-y-auto overscroll-contain">
-          <PullToRefresh
+          <PTR
             getScrollEl={() => document.getElementById('main-scroll')}
             onRefresh={softRefresh}
             className="min-h-[100dvh]"
@@ -62,7 +77,7 @@ export default function MainLayout({
             minSpinMs={400}
           >
             {children}
-          </PullToRefresh>
+          </PTR>
         </div>
       </ThemeProvider>
     )
@@ -78,15 +93,15 @@ export default function MainLayout({
   const width = useViewportWidth()
   const x = useMotionValue(0)
 
-  // swipe tuning
+  // swipe tuning (less sensitive)
   const EDGE = 12
   const STIFF = 420
   const DAMP = 38
-  const VEL_TH = 1100       // ↑ require faster flick to switch
-  const DIST_TH = 0.28      // ↑ require more than ~28% width drag
+  const VEL_TH = 1400
+  const DIST_TH = 0.35
   const RUBBER = 0.22
-  const LOCK_AFTER = 10     // distance before deciding direction
-  const DIR_RATIO = 1.2     // must be this times more horizontal than vertical
+  const LOCK_AFTER = 14
+  const DIR_RATIO = 1.35
 
   const index = useMemo(() => {
     const i = nav.findIndex(n => pathname === n.href || pathname.startsWith(n.href + '/'))
@@ -115,7 +130,7 @@ export default function MainLayout({
       if (isIOSWebKit()) {
         window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: u.uid } }))
       } else {
-        setupPushNotifications(u.uid).catch(() => { })
+        setupPushNotifications(u.uid).catch(() => {})
       }
     })
     return () => unsub()
@@ -134,10 +149,10 @@ export default function MainLayout({
       if (!messaging) return
       const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
       if (token) await sendTokenToBackend(token, uid)
-    } catch { }
+    } catch {}
   }
 
-  // --- Swipe gesture with direction lock & higher thresholds ---
+  // --- Swipe gesture with direction lock; blocked when uiLocked ---
   const modeRef = useRef<'idle' | 'detect' | 'horiz'>('idle')
   const isDragging = useRef(false)
   const startX = useRef<number>(0)
@@ -148,6 +163,7 @@ export default function MainLayout({
   const baseRef = useRef(0)
 
   function onTouchStart(e: React.TouchEvent) {
+    if (uiLocked) return // 🚫 modal open: disable swipe
     modeRef.current = 'detect'
     isDragging.current = false
     startX.current = e.touches[0].clientX
@@ -163,12 +179,12 @@ export default function MainLayout({
   }
 
   function onTouchMove(e: React.TouchEvent) {
+    if (uiLocked) return // 🚫 block while modal/sheet open
     const cx = e.touches[0].clientX
     const cy = e.touches[0].clientY
     const dxAll = cx - startX.current
     const dyAll = cy - startY.current
 
-    // decide direction
     if (modeRef.current === 'detect') {
       const traveled = Math.max(Math.abs(dxAll), Math.abs(dyAll))
       if (traveled < LOCK_AFTER) return
@@ -176,7 +192,7 @@ export default function MainLayout({
         modeRef.current = 'horiz'
         isDragging.current = true
       } else {
-        modeRef.current = 'idle' // vertical: let scroll/PTR handle
+        modeRef.current = 'idle'
         return
       }
     }
@@ -201,7 +217,7 @@ export default function MainLayout({
   }
 
   function onTouchEnd() {
-    if (!isDragging.current) return
+    if (uiLocked || !isDragging.current) return
     isDragging.current = false
     const offsetX = x.get()
     const raw = -offsetX / width
@@ -259,7 +275,7 @@ export default function MainLayout({
             width: width * nav.length,
             x,
             height: 'calc(100vh - 4rem)',
-            touchAction: 'pan-y',               // allow vertical gestures (PTR) to pass
+            touchAction: uiLocked ? 'auto' : 'pan-y', // when modal open, don't capture gestures
             WebkitOverflowScrolling: 'touch',
           }}
           onTouchStart={onTouchStart}
@@ -276,13 +292,13 @@ export default function MainLayout({
                 flexShrink: 0,
                 height: '100%',
                 overflowY: 'auto',
-                overscrollBehaviorY: 'contain', // critical on Android to disable browser PTR
+                overscrollBehaviorY: 'contain',
                 WebkitBackfaceVisibility: 'hidden',
                 backfaceVisibility: 'hidden',
                 transform: 'translateZ(0)',
               }}
             >
-              <PullToRefresh
+              <PTR
                 getScrollEl={getPaneScrollEl(i)}
                 onRefresh={softRefresh}
                 className="min-h-full"
@@ -290,7 +306,7 @@ export default function MainLayout({
                 minSpinMs={400}
               >
                 {safeRenderNode(node)}
-              </PullToRefresh>
+              </PTR>
             </div>
           ))}
         </motion.div>

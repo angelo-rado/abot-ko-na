@@ -1,336 +1,222 @@
-// app/(main)/layout.tsx
 'use client'
 
-import React, { useEffect, useMemo, useRef } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
-import { motion, useMotionValue, animate } from 'framer-motion'
-import { getAuth, onAuthStateChanged } from 'firebase/auth'
-import { getFirebaseMessaging } from '@/lib/firebase'
-import { getToken } from 'firebase/messaging'
-import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
-import { ThemeProvider } from 'next-themes'
-import PullToRefresh from '../components/PullToRefresh'
+import { useRef, useState, useEffect, useCallback } from 'react'
+import { Loader2 } from 'lucide-react'
 
-const VAPID_KEY =
-  (
-    process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
-    process.env.NEXT_PUBLIC_VAPID_KEY ||
-    ''
-  ).trim() || undefined
-
-export default function MainLayout({
-  children,
-  home,
-  deliveries,
-  family,
-  settings,
-}: {
+type Props = {
   children: React.ReactNode
-  home: React.ReactNode
-  deliveries: React.ReactNode
-  family: React.ReactNode
-  settings: React.ReactNode
-}) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const auth = getAuth()
+  onRefresh?: () => Promise<void> | void
+  threshold?: number
+  maxPull?: number
+  lockAfter?: number
+  getScrollEl?: () => Element | Document | null
+  className?: string
+  safetyTimeoutMs?: number
+  minSpinMs?: number
+}
 
-  const STANDALONE_PREFIXES = useMemo(
-    () => ['/family/join', '/login', '/onboarding', '/family/create'],
-    []
-  )
-  const isStandalone = useMemo(
-    () => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)),
-    [pathname, STANDALONE_PREFIXES]
-  )
+type Mode = 'idle' | 'detect' | 'pull' | 'horiz' | 'refreshing'
 
-  const softRefresh = async () => {
-    try { router.refresh() } catch {}
-    // tiny pause so spinner is visible even if refresh is instant
-    await new Promise((r) => setTimeout(r, 250))
+function anyModalOpen() {
+  if (typeof document === 'undefined') return false
+  // Radix Dialog/AlertDialog/Sheet/Drawer content all carry data-state="open"
+  return !!document.querySelector(
+    [
+      '[role="dialog"][data-state="open"]',
+      '[data-radix-portal] [role="dialog"][data-state="open"]',
+      // Radix Sheet/Drawer (content has data-side)
+      '[data-state="open"][data-side]',
+      '[data-radix-portal] [data-state="open"][data-side]',
+    ].join(', ')
+  )
+}
+
+export default function PullToRefresh({
+  children,
+  onRefresh,
+  threshold = 72,
+  maxPull = 120,
+  lockAfter = 12,
+  getScrollEl,
+  className = '',
+  safetyTimeoutMs = 2500,
+  minSpinMs = 400,
+}: Props) {
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const startX = useRef(0)
+  const startY = useRef(0)
+  const modeRef = useRef<Mode>('idle')
+  const scrollEl = useRef<Element | Document | null>(null)
+
+  const [pullPx, setPullPx] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+
+  // non-stale refs
+  const pullPxRef = useRef(0)
+  const setPull = (v: number) => { pullPxRef.current = v; setPullPx(v) }
+
+  const setScrollEl = useCallback((target: EventTarget | null) => {
+    const explicit = getScrollEl?.()
+    if (explicit) { scrollEl.current = explicit; return }
+    let el: Element | null = (target as Element) ?? null
+    const isScrollable = (e: Element) => {
+      const s = getComputedStyle(e)
+      return /(auto|scroll)/.test(s.overflowY) && e.scrollHeight > e.clientHeight
+    }
+    while (el) { if (isScrollable(el)) { scrollEl.current = el; return }; el = el.parentElement }
+    scrollEl.current = document
+  }, [getScrollEl])
+
+  const atTop = () => {
+    const el = scrollEl.current
+    if (!el) return true
+    if (el instanceof Document) {
+      const se = el.scrollingElement || document.documentElement
+      return (se?.scrollTop ?? 0) <= 0
+    }
+    if (el instanceof HTMLElement) return el.scrollTop <= 0
+    return true
   }
 
-  if (isStandalone) {
-    return (
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-        <div id="main-scroll" className="h-[100dvh] overflow-y-auto overscroll-contain">
-          <PullToRefresh
-            getScrollEl={() => document.getElementById('main-scroll')}
-            onRefresh={softRefresh}
-            className="min-h-[100dvh]"
-            safetyTimeoutMs={2500}
-            minSpinMs={400}
-          >
-            {children}
-          </PullToRefresh>
-        </div>
-      </ThemeProvider>
-    )
+  const isInteractive = (target: EventTarget | null) => {
+    if (!(target instanceof Element)) return false
+    return !!target.closest('input, textarea, select, button, a, [contenteditable="true"], [data-no-ptr="true"]')
   }
 
-  const nav = [
-    { label: 'Home', href: '/', Icon: HomeIcon, node: home ?? children },
-    { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
-    { label: 'Family', href: '/family', Icon: UsersIcon, node: family },
-    { label: 'Settings', href: '/settings', Icon: SettingsIcon, node: settings },
-  ]
+  const hardReset = useCallback(() => {
+    modeRef.current = 'idle'
+    setPull(0)
+    setRefreshing(false)
+  }, [])
 
-  const width = useViewportWidth()
-  const x = useMotionValue(0)
-
-  // swipe tuning
-  const EDGE = 12
-  const STIFF = 420
-  const DAMP = 38
-  const VEL_TH = 1100       // ↑ require faster flick to switch
-  const DIST_TH = 0.28      // ↑ require more than ~28% width drag
-  const RUBBER = 0.22
-  const LOCK_AFTER = 10     // distance before deciding direction
-  const DIR_RATIO = 1.2     // must be this times more horizontal than vertical
-
-  const index = useMemo(() => {
-    const i = nav.findIndex(n => pathname === n.href || pathname.startsWith(n.href + '/'))
-    return i === -1 ? 0 : i
-  }, [pathname])
-
-  useEffect(() => {
-    const edge = index === 0 ? -EDGE : index === nav.length - 1 ? EDGE : 0
-    animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
-  }, [index, width, x])
-
-  useEffect(() => {
-    // @ts-ignore
-    const prefetch = (p?: string) => p && router.prefetch?.(p)
-    prefetch(nav[index - 1]?.href)
-    prefetch(nav[index + 1]?.href)
-  }, [index, router])
-  useEffect(() => {
-    // @ts-ignore
-    nav.forEach(n => router.prefetch?.(n.href))
-  }, [router])
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      if (!u) return
-      if (isIOSWebKit()) {
-        window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: u.uid } }))
-      } else {
-        setupPushNotifications(u.uid).catch(() => { })
-      }
-    })
-    return () => unsub()
-  }, [auth])
-
-  async function setupPushNotifications(uid: string) {
-    if (typeof window === 'undefined') return
-    if (!('serviceWorker' in navigator) || !('Notification' in window)) return
-    if (!VAPID_KEY) return
+  const doRefresh = useCallback(async () => {
+    const t0 = performance.now()
+    const user = (async () => { await onRefresh?.() })()
+    const safety = new Promise<void>((res) => setTimeout(res, safetyTimeoutMs))
     try {
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
-      await navigator.serviceWorker.ready
-      const permission = await Notification.requestPermission()
-      if (permission !== 'granted') return
-      const messaging = getFirebaseMessaging()
-      if (!messaging) return
-      const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
-      if (token) await sendTokenToBackend(token, uid)
-    } catch { }
-  }
+      await Promise.race([user, safety])
+      const elapsed = performance.now() - t0
+      if (elapsed < minSpinMs) await new Promise(r => setTimeout(r, minSpinMs - elapsed))
+    } catch {}
+    finally {
+      setPull(0)
+      setTimeout(hardReset, 180)
+    }
+  }, [onRefresh, safetyTimeoutMs, minSpinMs, hardReset])
 
-  // --- Swipe gesture with direction lock & higher thresholds ---
-  const modeRef = useRef<'idle' | 'detect' | 'horiz'>('idle')
-  const isDragging = useRef(false)
-  const startX = useRef<number>(0)
-  const startY = useRef<number>(0)
-  const lastX = useRef<number>(0)
-  const lastT = useRef<number>(0)
-  const velRef = useRef(0)
-  const baseRef = useRef(0)
+  const dampen = (dy: number) => Math.min(maxPull, dy * 0.6)
 
-  function onTouchStart(e: React.TouchEvent) {
-    modeRef.current = 'detect'
-    isDragging.current = false
-    startX.current = e.touches[0].clientX
-    startY.current = e.touches[0].clientY
-    lastX.current = startX.current
-    lastT.current = e.timeStamp
-    baseRef.current = x.get()
-    velRef.current = 0
-    // @ts-ignore
-    router.prefetch?.(nav[index - 1]?.href)
-    // @ts-ignore
-    router.prefetch?.(nav[index + 1]?.href)
-  }
+  useEffect(() => {
+    const root = wrapRef.current
+    if (!root) return
+    let active = false
 
-  function onTouchMove(e: React.TouchEvent) {
-    const cx = e.touches[0].clientX
-    const cy = e.touches[0].clientY
-    const dxAll = cx - startX.current
-    const dyAll = cy - startY.current
+    const onTouchStart = (e: TouchEvent) => {
+      if (refreshing) return
+      if (anyModalOpen()) return            // 🚫 ignore when modal/sheet is open
+      if (e.touches.length !== 1) return
+      if (isInteractive(e.target)) return
+      setScrollEl(e.target)
+      if (!atTop()) { modeRef.current = 'idle'; return }
+      const t = e.touches[0]
+      startX.current = t.clientX
+      startY.current = t.clientY
+      modeRef.current = 'detect'
+      active = true
+    }
 
-    // decide direction
-    if (modeRef.current === 'detect') {
-      const traveled = Math.max(Math.abs(dxAll), Math.abs(dyAll))
-      if (traveled < LOCK_AFTER) return
-      if (Math.abs(dxAll) > Math.abs(dyAll) * DIR_RATIO) {
-        modeRef.current = 'horiz'
-        isDragging.current = true
+    const onTouchMove = (e: TouchEvent) => {
+      if (!active || refreshing) return
+      const t = e.touches[0]
+      const dx = t.clientX - startX.current
+      const dy = t.clientY - startY.current
+
+      if (modeRef.current === 'detect') {
+        const moved = Math.abs(dx) >= lockAfter || Math.abs(dy) >= lockAfter
+        if (!moved) return
+        if (dy > 0 && Math.abs(dy) > Math.abs(dx) * 1.25 && atTop()) {
+          modeRef.current = 'pull'
+        } else {
+          modeRef.current = 'horiz'
+          return
+        }
+      }
+
+      if (modeRef.current !== 'pull') return
+      if (!atTop()) { hardReset(); active = false; return }
+
+      const damped = dampen(dy)
+      if (e.cancelable) {
+        e.preventDefault()   // stop native rubber-band
+        e.stopPropagation()  // don't bubble to swipe container
+      }
+      setPull(damped)
+    }
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!active || refreshing) return
+      active = false
+      if (modeRef.current !== 'pull') { hardReset(); return }
+      if (e.cancelable) e.stopPropagation()
+      if (pullPxRef.current >= threshold) {
+        modeRef.current = 'refreshing'
+        setRefreshing(true)
+        setPull(threshold)
+        void doRefresh()
       } else {
-        modeRef.current = 'idle' // vertical: let scroll/PTR handle
-        return
+        hardReset()
       }
     }
 
-    if (!isDragging.current) return
+    const onTouchCancel = () => { active = false; hardReset() }
 
-    const now = e.timeStamp
-    const dx = cx - lastX.current
-    const dt = Math.max(1, now - lastT.current)
-    const inst = (dx / dt) * 1000
-    velRef.current = velRef.current * 0.25 + inst * 0.75
-    lastX.current = cx
-    lastT.current = now
-
-    const desired = baseRef.current + dxAll
-    const max = 60
-    const min = -width * (nav.length - 1) - 60
-    let next = desired
-    if (next > max) next = max + (next - max) * RUBBER
-    if (next < min) next = min + (next - min) * RUBBER
-    x.set(next)
-  }
-
-  function onTouchEnd() {
-    if (!isDragging.current) return
-    isDragging.current = false
-    const offsetX = x.get()
-    const raw = -offsetX / width
-    const vel = velRef.current
-    const maxIndex = nav.length - 1
-    let ni = index
-
-    if (Math.abs(vel) > VEL_TH) {
-      if (vel < 0 && index < maxIndex) ni = index + 1
-      if (vel > 0 && index > 0) ni = index - 1
-    } else {
-      const dist = raw - index
-      if (Math.abs(dist) > DIST_TH) {
-        if (dist > 0 && index < maxIndex) ni = index + 1
-        else if (dist < 0 && index > 0) ni = index - 1
-      } else {
-        ni = Math.round(raw)
-      }
+    root.addEventListener('touchstart', onTouchStart, { passive: true })
+    root.addEventListener('touchmove', onTouchMove, { passive: false })
+    root.addEventListener('touchend', onTouchEnd, { passive: true })
+    root.addEventListener('touchcancel', onTouchCancel, { passive: true })
+    return () => {
+      root.removeEventListener('touchstart', onTouchStart as any)
+      root.removeEventListener('touchmove', onTouchMove as any)
+      root.removeEventListener('touchend', onTouchEnd as any)
+      root.removeEventListener('touchcancel', onTouchCancel as any)
     }
-
-    if (ni !== index) {
-      router.push(nav[ni].href, { scroll: false })
-      return
-    }
-    const edge = index === 0 ? -EDGE : index === nav.length - 1 ? EDGE : 0
-    animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
-  }
-
-  // pane refs to drive PTR per pane
-  const paneRefs = React.useRef<Array<HTMLDivElement | null>>([])
-  const setPaneRef = (i: number) => (el: HTMLDivElement | null) => { paneRefs.current[i] = el }
-  const getPaneScrollEl = (i: number) => () => paneRefs.current[i]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doRefresh, hardReset, lockAfter, maxPull, setScrollEl, threshold])
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <div className="flex flex-col min-h-screen overflow-hidden select-none bg-background text-foreground" style={{ height: '100vh' }}>
-        <nav className="fixed top-0 left-0 right-0 h-16 bg-background border-b flex items-center justify-around z-50">
-          {nav.map(({ label, href, Icon }, i) => (
-            <button
-              key={href}
-              type="button"
-              onClick={() => router.push(href, { scroll: false })}
-              className={`flex flex-col items-center text-xs p-2 ${i === index ? 'text-primary font-semibold' : 'text-muted-foreground'}`}
-              aria-current={i === index ? 'page' : undefined}
-            >
-              <Icon className="w-5 h-5 mb-1" />
-              {label}
-            </button>
-          ))}
-        </nav>
-
-        <motion.div
-          className="relative flex flex-row pt-16 overflow-hidden"
-          style={{
-            width: width * nav.length,
-            x,
-            height: 'calc(100vh - 4rem)',
-            touchAction: 'pan-y',               // allow vertical gestures (PTR) to pass
-            WebkitOverflowScrolling: 'touch',
-          }}
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-          onTouchCancel={onTouchEnd}
-        >
-          {[home ?? children, deliveries, family, settings].map((node, i) => (
-            <div
-              key={i}
-              ref={setPaneRef(i)}
-              style={{
-                width: width,
-                flexShrink: 0,
-                height: '100%',
-                overflowY: 'auto',
-                overscrollBehaviorY: 'contain', // critical on Android to disable browser PTR
-                WebkitBackfaceVisibility: 'hidden',
-                backfaceVisibility: 'hidden',
-                transform: 'translateZ(0)',
-              }}
-            >
-              <PullToRefresh
-                getScrollEl={getPaneScrollEl(i)}
-                onRefresh={softRefresh}
-                className="min-h-full"
-                safetyTimeoutMs={2500}
-                minSpinMs={400}
-              >
-                {safeRenderNode(node)}
-              </PullToRefresh>
-            </div>
-          ))}
-        </motion.div>
+    <div
+      ref={wrapRef}
+      className={`relative ${className}`}
+      style={{ touchAction: 'manipulation', overscrollBehaviorY: 'contain' } as React.CSSProperties}
+    >
+      {/* Indicator */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-12 items-center justify-center"
+        style={{
+          opacity: pullPx > 2 || refreshing ? 1 : 0,
+          transform: `translateY(${Math.min(pullPx, threshold)}px)`,
+          transition: refreshing
+            ? 'transform 150ms ease'
+            : 'transform 180ms cubic-bezier(.2,.7,.3,1), opacity 120ms ease',
+        }}
+      >
+        <div className="flex items-center gap-2 rounded-full bg-muted/70 px-3 py-1 text-xs backdrop-blur">
+          {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Loader2 className={`h-4 w-4 ${pullPx >= threshold ? '' : 'animate-spin-slow'}`} />}
+          <span>{refreshing ? 'Refreshing…' : pullPx >= threshold ? 'Release to refresh' : 'Pull to refresh'}</span>
+        </div>
       </div>
-    </ThemeProvider>
+
+      {/* Content translates with pull */}
+      <div
+        style={{
+          transform: `translateY(${pullPx}px)`,
+          transition: refreshing ? 'transform 150ms ease' : 'transform 180ms cubic-bezier(.2,.7,.3,1)',
+          willChange: 'transform',
+        }}
+      >
+        {children}
+      </div>
+    </div>
   )
 }
-
-async function sendTokenToBackend(token: string, userId: string) {
-  try {
-    await fetch('/api/save-fcm-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, userId }),
-    })
-  } catch {}
-}
-
-function isIOSWebKit() {
-  if (typeof navigator === 'undefined') return false
-  const ua = navigator.userAgent
-  return /iP(ad|hone|od)/i.test(ua) && /WebKit/i.test(ua)
-}
-
-function useViewportWidth() {
-  const [w, setW] = React.useState<number>(() => (typeof window !== 'undefined' ? window.innerWidth : 0))
-  React.useEffect(() => {
-    const onR = () => setW(window.innerWidth)
-    onR()
-    window.addEventListener('resize', onR)
-    return () => window.removeEventListener('resize', onR)
-  }, [])
-  return w
-}
-
-function safeRenderNode(node: React.ReactNode): React.ReactNode {
-  if (node == null) return null
-  if (typeof node === 'string' || typeof node === 'number') return node
-  if (Array.isArray(node)) return <>{node as any}</>
-  // @ts-ignore – React is already imported in this file
-  if (React.isValidElement?.(node)) return node as any
-  return null
-}
+// .animate-spin-slow { animation: spin 1.2s linear infinite; }
