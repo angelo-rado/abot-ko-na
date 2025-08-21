@@ -1,3 +1,4 @@
+// app/components/PullToRefresh.tsx
 'use client'
 
 import { useRef, useState, useEffect, useCallback } from 'react'
@@ -11,6 +12,8 @@ type Props = {
   lockAfter?: number
   getScrollEl?: () => Element | Document | null
   className?: string
+  /** safety: auto-complete refresh even if onRefresh never resolves */
+  safetyTimeoutMs?: number
 }
 
 type Mode = 'idle' | 'detect' | 'pull' | 'horiz' | 'refreshing'
@@ -23,6 +26,7 @@ export default function PullToRefresh({
   lockAfter = 10,
   getScrollEl,
   className = '',
+  safetyTimeoutMs = 1500,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const startX = useRef(0)
@@ -60,23 +64,25 @@ export default function PullToRefresh({
     return !!target.closest('input, textarea, select, button, a, [contenteditable="true"], [data-no-ptr="true"]')
   }
 
-  const reset = useCallback(() => {
+  const hardReset = useCallback(() => {
     mode.current = 'idle'
     setPullPx(0)
+    setRefreshing(false)
   }, [])
 
   const doRefresh = useCallback(async () => {
-    if (!onRefresh) return
+    // Always end animation even if user callback stalls
+    const user = (async () => { await onRefresh?.() })()
+    const safety = new Promise<void>((res) => setTimeout(() => res(), safetyTimeoutMs))
     try {
-      mode.current = 'refreshing'
-      setRefreshing(true)
-      try { navigator.vibrate?.(15) } catch {}
-      await onRefresh()
-    } finally {
-      setRefreshing(false)
-      reset()
+      await Promise.race([user, safety])
+    } catch { /* ignore */ }
+    finally {
+      // animate back
+      setPullPx(0)
+      setTimeout(hardReset, 180)
     }
-  }, [onRefresh, reset])
+  }, [onRefresh, safetyTimeoutMs, hardReset])
 
   const dampen = (dy: number) => Math.min(maxPull, dy * 0.6)
 
@@ -117,27 +123,37 @@ export default function PullToRefresh({
 
       if (mode.current !== 'pull') return
 
-      if (!atTop()) { reset(); active = false; return }
+      if (!atTop()) { hardReset(); active = false; return }
 
       const damped = dampen(dy)
       if (e.cancelable) {
         e.preventDefault()      // stop native rubber-band
-        e.stopPropagation()     // stop swipe parent
+        e.stopPropagation()     // don't bubble to swipe container
       }
       setPullPx(damped)
     }
 
     const onTouchEnd = (e: TouchEvent) => {
       if (!active || refreshing) return
-      if (mode.current === 'pull') {
-        e.stopPropagation()
-      }
       active = false
-      if (mode.current !== 'pull') { reset(); return }
-      if (pullPx >= threshold) { setPullPx(threshold); void doRefresh() } else { reset() }
+      if (mode.current !== 'pull') { hardReset(); return }
+
+      // lock indicator while refreshing
+      if (e.cancelable) e.stopPropagation()
+      if (pullPx >= threshold) {
+        mode.current = 'refreshing'
+        setRefreshing(true)
+        setPullPx(threshold)
+        void doRefresh()
+      } else {
+        hardReset()
+      }
     }
 
-    const onTouchCancel = () => { active = false; if (!refreshing) reset() }
+    const onTouchCancel = () => {
+      active = false
+      hardReset()
+    }
 
     root.addEventListener('touchstart', onTouchStart, { passive: true })
     root.addEventListener('touchmove', onTouchMove, { passive: false })
@@ -149,20 +165,24 @@ export default function PullToRefresh({
       root.removeEventListener('touchend', onTouchEnd as any)
       root.removeEventListener('touchcancel', onTouchCancel as any)
     }
-  }, [doRefresh, lockAfter, maxPull, refreshing, setScrollEl, threshold, reset, pullPx])
+  }, [doRefresh, hardReset, lockAfter, maxPull, refreshing, setScrollEl, threshold, safetyTimeoutMs, pullPx])
 
   return (
     <div
       ref={wrapRef}
       className={`relative ${className}`}
-      style={{ touchAction: 'manipulation', overscrollBehaviorY: 'contain' } as React.CSSProperties}
+      style={{
+        touchAction: 'manipulation',
+        overscrollBehaviorY: 'contain',
+      } as React.CSSProperties}
     >
+      {/* Indicator */}
       <div
         className="pointer-events-none absolute inset-x-0 top-0 z-20 flex h-12 items-center justify-center"
         style={{
           opacity: pullPx > 2 || refreshing ? 1 : 0,
           transform: `translateY(${Math.min(pullPx, threshold)}px)`,
-          transition: refreshing ? 'transform 150ms ease' : 'opacity 150ms ease',
+          transition: 'transform 180ms cubic-bezier(.2,.7,.3,1), opacity 120ms ease',
         }}
       >
         <div className="flex items-center gap-2 rounded-full bg-muted/70 px-3 py-1 text-xs backdrop-blur">
@@ -171,10 +191,11 @@ export default function PullToRefresh({
         </div>
       </div>
 
+      {/* Content translates with pull */}
       <div
         style={{
           transform: `translateY(${pullPx}px)`,
-          transition: refreshing ? 'transform 150ms ease' : undefined,
+          transition: 'transform 180ms cubic-bezier(.2,.7,.3,1)',
           willChange: 'transform',
         }}
       >
@@ -183,3 +204,4 @@ export default function PullToRefresh({
     </div>
   )
 }
+// .animate-spin-slow { animation: spin 1.2s linear infinite; }
