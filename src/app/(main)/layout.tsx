@@ -35,7 +35,6 @@ export default function MainLayout({
   const pathname = usePathname()
   const auth = getAuth()
 
-  // ⛔️ Bypass the swipe layout on public/standalone routes
   const STANDALONE_PREFIXES = useMemo(
     () => ['/family/join', '/login', '/onboarding', '/family/create'],
     []
@@ -51,10 +50,8 @@ export default function MainLayout({
         <div
           id="main-scroll"
           className="h-[100dvh] overflow-y-auto overscroll-contain"
-        // NOTE: avoid setting `touch-action` here; let horizontal swipes work naturally
         >
           <PullToRefresh
-            // Point PTR to this container so `atTop()` is accurate
             getScrollEl={() => document.getElementById('main-scroll')}
             onRefresh={async () => {
               router.refresh()
@@ -68,7 +65,6 @@ export default function MainLayout({
     )
   }
 
-  // --- existing swipe-nav layout below unchanged ---
   const nav = [
     { label: 'Home', href: '/', Icon: HomeIcon, node: home ?? children },
     { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
@@ -200,6 +196,11 @@ export default function MainLayout({
     animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
   }
 
+  // pane refs to drive PTR per pane
+  const paneRefs = React.useRef<Array<HTMLDivElement | null>>([])
+  const setPaneRef = (i: number) => (el: HTMLDivElement | null) => { paneRefs.current[i] = el }
+  const getPaneScrollEl = (i: number) => () => paneRefs.current[i]
+
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <div className="flex flex-col min-h-screen overflow-hidden select-none bg-background text-foreground" style={{ height: '100vh' }}>
@@ -235,18 +236,25 @@ export default function MainLayout({
           {[home ?? children, deliveries, family, settings].map((node, i) => (
             <div
               key={i}
+              ref={setPaneRef(i)}
               style={{
                 width: width,
                 flexShrink: 0,
                 height: '100%',
                 overflowY: 'auto',
-                willChange: 'transform, opacity',
+                overscrollBehaviorY: 'contain',
                 WebkitBackfaceVisibility: 'hidden',
                 backfaceVisibility: 'hidden',
                 transform: 'translateZ(0)',
               }}
             >
-              {safeRenderNode(node)}
+              <PullToRefresh
+                getScrollEl={getPaneScrollEl(i)}
+                onRefresh={async () => { router.refresh() }}
+                className="min-h-full"
+              >
+                {safeRenderNode(node)}
+              </PullToRefresh>
             </div>
           ))}
         </motion.div>
@@ -288,6 +296,5 @@ function safeRenderNode(node: React.ReactNode): React.ReactNode {
   if (Array.isArray(node)) return <>{node as any}</>
   // @ts-ignore – React is already imported in this file
   if (React.isValidElement?.(node)) return node as any
-  // Fallback: avoid rendering plain objects (e.g., module exports)
   return null
 }
