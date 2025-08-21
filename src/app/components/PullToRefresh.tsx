@@ -19,12 +19,10 @@ type Mode = 'idle' | 'detect' | 'pull' | 'horiz' | 'refreshing'
 
 function anyModalOpen() {
   if (typeof document === 'undefined') return false
-  // Radix Dialog/AlertDialog/Sheet/Drawer content all carry data-state="open"
   return !!document.querySelector(
     [
       '[role="dialog"][data-state="open"]',
       '[data-radix-portal] [role="dialog"][data-state="open"]',
-      // Radix Sheet/Drawer (content has data-side)
       '[data-state="open"][data-side]',
       '[data-radix-portal] [data-state="open"][data-side]',
     ].join(', ')
@@ -43,18 +41,24 @@ export default function PullToRefresh({
   minSpinMs = 400,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+
+  // gesture refs
   const startX = useRef(0)
   const startY = useRef(0)
   const modeRef = useRef<Mode>('idle')
+  const activeRef = useRef(false)
   const scrollEl = useRef<Element | Document | null>(null)
 
+  // state + non-stale mirrors
   const [pullPx, setPullPx] = useState(0)
-  const [refreshing, setRefreshing] = useState(false)
-
-  // non-stale refs
   const pullPxRef = useRef(0)
   const setPull = (v: number) => { pullPxRef.current = v; setPullPx(v) }
 
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshingRef = useRef(false)
+  const setRefreshingSafe = (v: boolean) => { refreshingRef.current = v; setRefreshing(v) }
+
+  // ----- helpers -----
   const setScrollEl = useCallback((target: EventTarget | null) => {
     const explicit = getScrollEl?.()
     if (explicit) { scrollEl.current = explicit; return }
@@ -85,8 +89,9 @@ export default function PullToRefresh({
 
   const hardReset = useCallback(() => {
     modeRef.current = 'idle'
+    activeRef.current = false
     setPull(0)
-    setRefreshing(false)
+    setRefreshingSafe(false)
   }, [])
 
   const doRefresh = useCallback(async () => {
@@ -100,33 +105,41 @@ export default function PullToRefresh({
     } catch {}
     finally {
       setPull(0)
+      // small delay so the collapse transition plays before we re-arm
       setTimeout(hardReset, 180)
     }
   }, [onRefresh, safetyTimeoutMs, minSpinMs, hardReset])
 
   const dampen = (dy: number) => Math.min(maxPull, dy * 0.6)
 
+  // ----- gesture binding (per-gesture listeners) -----
   useEffect(() => {
     const root = wrapRef.current
     if (!root) return
-    let active = false
 
     const onTouchStart = (e: TouchEvent) => {
-      if (refreshing) return
-      if (anyModalOpen()) return            // 🚫 ignore when modal/sheet is open
+      if (refreshingRef.current) return
+      if (anyModalOpen()) return
       if (e.touches.length !== 1) return
       if (isInteractive(e.target)) return
+
       setScrollEl(e.target)
       if (!atTop()) { modeRef.current = 'idle'; return }
+
       const t = e.touches[0]
       startX.current = t.clientX
       startY.current = t.clientY
       modeRef.current = 'detect'
-      active = true
+      activeRef.current = true
+
+      // attach move/end only for this gesture on window
+      window.addEventListener('touchmove', onTouchMove, { passive: false })
+      window.addEventListener('touchend', onTouchEnd, { passive: true })
+      window.addEventListener('touchcancel', onTouchCancel, { passive: true })
     }
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!active || refreshing) return
+      if (!activeRef.current || refreshingRef.current) return
       const t = e.touches[0]
       const dx = t.clientX - startX.current
       const dy = t.clientY - startY.current
@@ -138,12 +151,14 @@ export default function PullToRefresh({
           modeRef.current = 'pull'
         } else {
           modeRef.current = 'horiz'
+          // we’re not pulling; tear down listeners immediately
+          teardownGesture()
           return
         }
       }
 
       if (modeRef.current !== 'pull') return
-      if (!atTop()) { hardReset(); active = false; return }
+      if (!atTop()) { hardReset(); teardownGesture(); return }
 
       const damped = dampen(dy)
       if (e.cancelable) {
@@ -154,40 +169,50 @@ export default function PullToRefresh({
     }
 
     const onTouchEnd = (e: TouchEvent) => {
-      if (!active || refreshing) return
-      active = false
-      if (modeRef.current !== 'pull') { hardReset(); return }
+      if (!activeRef.current || refreshingRef.current) { teardownGesture(); return }
+      activeRef.current = false
+
+      if (modeRef.current !== 'pull') { hardReset(); teardownGesture(); return }
       if (e.cancelable) e.stopPropagation()
       if (pullPxRef.current >= threshold) {
         modeRef.current = 'refreshing'
-        setRefreshing(true)
+        setRefreshingSafe(true)
         setPull(threshold)
         void doRefresh()
       } else {
         hardReset()
       }
+      teardownGesture()
     }
 
-    const onTouchCancel = () => { active = false; hardReset() }
+    const onTouchCancel = () => {
+      activeRef.current = false
+      hardReset()
+      teardownGesture()
+    }
 
+    const teardownGesture = () => {
+      window.removeEventListener('touchmove', onTouchMove as any)
+      window.removeEventListener('touchend', onTouchEnd as any)
+      window.removeEventListener('touchcancel', onTouchCancel as any)
+    }
+
+    // we only keep a lightweight start listener on the root node
     root.addEventListener('touchstart', onTouchStart, { passive: true })
-    root.addEventListener('touchmove', onTouchMove, { passive: false })
-    root.addEventListener('touchend', onTouchEnd, { passive: true })
-    root.addEventListener('touchcancel', onTouchCancel, { passive: true })
+
     return () => {
       root.removeEventListener('touchstart', onTouchStart as any)
-      root.removeEventListener('touchmove', onTouchMove as any)
-      root.removeEventListener('touchend', onTouchEnd as any)
-      root.removeEventListener('touchcancel', onTouchCancel as any)
+      // safety: ensure no stray window listeners remain
+      teardownGesture()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doRefresh, hardReset, lockAfter, maxPull, setScrollEl, threshold])
 
   return (
     <div
       ref={wrapRef}
       className={`relative ${className}`}
-      style={{ touchAction: 'manipulation', overscrollBehaviorY: 'contain' } as React.CSSProperties}
+      // Use pan-y to favor vertical pulls; horizontal swipes will still work upstream.
+      style={{ touchAction: 'pan-y', overscrollBehaviorY: 'contain' } as React.CSSProperties}
     >
       {/* Indicator */}
       <div
