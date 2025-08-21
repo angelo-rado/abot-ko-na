@@ -44,19 +44,22 @@ export default function MainLayout({
     [pathname, STANDALONE_PREFIXES]
   )
 
+  const softRefresh = async () => {
+    try { router.refresh() } catch {}
+    // tiny pause so spinner is visible even if refresh is instant
+    await new Promise((r) => setTimeout(r, 250))
+  }
+
   if (isStandalone) {
     return (
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-        <div
-          id="main-scroll"
-          className="h-[100dvh] overflow-y-auto overscroll-contain"
-        >
+        <div id="main-scroll" className="h-[100dvh] overflow-y-auto overscroll-contain">
           <PullToRefresh
             getScrollEl={() => document.getElementById('main-scroll')}
-            onRefresh={async () => {
-              router.refresh()
-            }}
+            onRefresh={softRefresh}
             className="min-h-[100dvh]"
+            safetyTimeoutMs={2500}
+            minSpinMs={400}
           >
             {children}
           </PullToRefresh>
@@ -74,19 +77,16 @@ export default function MainLayout({
 
   const width = useViewportWidth()
   const x = useMotionValue(0)
-  const isDragging = useRef(false)
-  const startX = useRef<number | null>(null)
-  const lastX = useRef<number | null>(null)
-  const lastT = useRef<number>(0)
-  const velRef = useRef(0)
-  const baseRef = useRef(0)
 
-  const EDGE = 16
+  // swipe tuning
+  const EDGE = 12
   const STIFF = 420
-  const DAMP = 36
-  const VEL_TH = 650
-  const DIST_TH = 0.18
-  const RUBBER = 0.25
+  const DAMP = 38
+  const VEL_TH = 1100       // ↑ require faster flick to switch
+  const DIST_TH = 0.28      // ↑ require more than ~28% width drag
+  const RUBBER = 0.22
+  const LOCK_AFTER = 10     // distance before deciding direction
+  const DIR_RATIO = 1.2     // must be this times more horizontal than vertical
 
   const index = useMemo(() => {
     const i = nav.findIndex(n => pathname === n.href || pathname.startsWith(n.href + '/'))
@@ -137,10 +137,22 @@ export default function MainLayout({
     } catch { }
   }
 
+  // --- Swipe gesture with direction lock & higher thresholds ---
+  const modeRef = useRef<'idle' | 'detect' | 'horiz'>('idle')
+  const isDragging = useRef(false)
+  const startX = useRef<number>(0)
+  const startY = useRef<number>(0)
+  const lastX = useRef<number>(0)
+  const lastT = useRef<number>(0)
+  const velRef = useRef(0)
+  const baseRef = useRef(0)
+
   function onTouchStart(e: React.TouchEvent) {
-    isDragging.current = true
+    modeRef.current = 'detect'
+    isDragging.current = false
     startX.current = e.touches[0].clientX
-    lastX.current = e.touches[0].clientX
+    startY.current = e.touches[0].clientY
+    lastX.current = startX.current
     lastT.current = e.timeStamp
     baseRef.current = x.get()
     velRef.current = 0
@@ -151,16 +163,35 @@ export default function MainLayout({
   }
 
   function onTouchMove(e: React.TouchEvent) {
-    if (!isDragging.current || startX.current === null) return
     const cx = e.touches[0].clientX
+    const cy = e.touches[0].clientY
+    const dxAll = cx - startX.current
+    const dyAll = cy - startY.current
+
+    // decide direction
+    if (modeRef.current === 'detect') {
+      const traveled = Math.max(Math.abs(dxAll), Math.abs(dyAll))
+      if (traveled < LOCK_AFTER) return
+      if (Math.abs(dxAll) > Math.abs(dyAll) * DIR_RATIO) {
+        modeRef.current = 'horiz'
+        isDragging.current = true
+      } else {
+        modeRef.current = 'idle' // vertical: let scroll/PTR handle
+        return
+      }
+    }
+
+    if (!isDragging.current) return
+
     const now = e.timeStamp
-    const dx = cx - (lastX.current as number)
+    const dx = cx - lastX.current
     const dt = Math.max(1, now - lastT.current)
     const inst = (dx / dt) * 1000
-    velRef.current = velRef.current * 0.2 + inst * 0.8
+    velRef.current = velRef.current * 0.25 + inst * 0.75
     lastX.current = cx
     lastT.current = now
-    const desired = baseRef.current + (cx - startX.current)
+
+    const desired = baseRef.current + dxAll
     const max = 60
     const min = -width * (nav.length - 1) - 60
     let next = desired
@@ -170,12 +201,14 @@ export default function MainLayout({
   }
 
   function onTouchEnd() {
+    if (!isDragging.current) return
     isDragging.current = false
     const offsetX = x.get()
     const raw = -offsetX / width
     const vel = velRef.current
     const maxIndex = nav.length - 1
     let ni = index
+
     if (Math.abs(vel) > VEL_TH) {
       if (vel < 0 && index < maxIndex) ni = index + 1
       if (vel > 0 && index > 0) ni = index - 1
@@ -188,6 +221,7 @@ export default function MainLayout({
         ni = Math.round(raw)
       }
     }
+
     if (ni !== index) {
       router.push(nav[ni].href, { scroll: false })
       return
@@ -225,7 +259,7 @@ export default function MainLayout({
             width: width * nav.length,
             x,
             height: 'calc(100vh - 4rem)',
-            touchAction: 'pan-y',
+            touchAction: 'pan-y',               // allow vertical gestures (PTR) to pass
             WebkitOverflowScrolling: 'touch',
           }}
           onTouchStart={onTouchStart}
@@ -242,7 +276,7 @@ export default function MainLayout({
                 flexShrink: 0,
                 height: '100%',
                 overflowY: 'auto',
-                overscrollBehaviorY: 'contain',
+                overscrollBehaviorY: 'contain', // critical on Android to disable browser PTR
                 WebkitBackfaceVisibility: 'hidden',
                 backfaceVisibility: 'hidden',
                 transform: 'translateZ(0)',
@@ -250,8 +284,10 @@ export default function MainLayout({
             >
               <PullToRefresh
                 getScrollEl={getPaneScrollEl(i)}
-                onRefresh={async () => { router.refresh() }}
+                onRefresh={softRefresh}
                 className="min-h-full"
+                safetyTimeoutMs={2500}
+                minSpinMs={400}
               >
                 {safeRenderNode(node)}
               </PullToRefresh>
@@ -270,7 +306,7 @@ async function sendTokenToBackend(token: string, userId: string) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, userId }),
     })
-  } catch { }
+  } catch {}
 }
 
 function isIOSWebKit() {
