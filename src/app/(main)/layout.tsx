@@ -11,6 +11,8 @@ import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 import PTR from '../components/PullToRefresh'
 import { SelectedFamilyProvider } from '@/lib/selected-family'
+import { initOutboxProcessor } from '@/lib/offline'
+import { toast } from 'sonner'
 
 /** ==== Push config ==== */
 const VAPID_KEY =
@@ -108,6 +110,24 @@ function SwipeShell({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+
+  useEffect(() => { try { initOutboxProcessor() } catch {} }, [])
+
+  // outbox toast/status listeners
+  useEffect(() => {
+    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c>1?'s':''}…`) }
+    const onErr = (e: any) => { const msg = e?.detail?.error || 'Sync error'; toast.error(msg) }
+    const onDone = () => { toast.success('All offline changes synced') }
+    window.addEventListener('abot-sync-start', onStart as any)
+    window.addEventListener('abot-sync-error', onErr as any)
+    window.addEventListener('abot-sync-done', onDone as any)
+    return () => {
+      window.removeEventListener('abot-sync-start', onStart as any)
+      window.removeEventListener('abot-sync-error', onErr as any)
+      window.removeEventListener('abot-sync-done', onDone as any)
+    }
+  }, [])
+
   const auth = getAuth()
 
   // Lock gestures when a modal/sheet is open
@@ -376,6 +396,24 @@ export default function MainLayout({
   settings: React.ReactNode
 }) {
   const pathname = usePathname()
+
+  useEffect(() => { try { initOutboxProcessor() } catch {} }, [])
+
+  // outbox toast/status listeners
+  useEffect(() => {
+    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c>1?'s':''}…`) }
+    const onErr = (e: any) => { const msg = e?.detail?.error || 'Sync error'; toast.error(msg) }
+    const onDone = () => { toast.success('All offline changes synced') }
+    window.addEventListener('abot-sync-start', onStart as any)
+    window.addEventListener('abot-sync-error', onErr as any)
+    window.addEventListener('abot-sync-done', onDone as any)
+    return () => {
+      window.removeEventListener('abot-sync-start', onStart as any)
+      window.removeEventListener('abot-sync-error', onErr as any)
+      window.removeEventListener('abot-sync-done', onDone as any)
+    }
+  }, [])
+
   const STANDALONE_PREFIXES = useMemo(
     () => ['/family/join', '/login', '/onboarding', '/family/create'],
     []

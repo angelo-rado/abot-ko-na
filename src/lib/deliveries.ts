@@ -1,5 +1,7 @@
 // lib/deliveries.ts
 import { firestore, auth } from '@/lib/firebase'
+import { enqueue, isOnline as isNetOnline } from '@/lib/offline'
+import { db } from '@/lib/db'
 import {
     collection,
     doc,
@@ -111,6 +113,18 @@ export async function markItemAsReceived(familyId: string, orderId: string, item
  * Mark entire order as delivered (batched update of items + order).
  */
 export async function markOrderAsDelivered(familyId: string, orderId: string) {
+
+  // OFFLINE: enqueue order mark all items delivered
+  if (typeof navigator !== 'undefined' && !isNetOnline()) {
+    try {
+      await enqueue({ op: 'markOrderDelivered', familyId, payload: { familyId, orderId } })
+      return { success: true, offline: true }
+    } catch {
+      return { success: false, message: 'Failed to queue order update' }
+    }
+  }
+
+
     if (!familyId || !orderId) throw new Error('missing ids')
     const uid = auth.currentUser?.uid
 
@@ -216,6 +230,22 @@ export async function createDelivery(familyId: string, payload: {
  * Returns { success: boolean, message?: string }
  */
 export async function markDeliveryAsReceived(familyId: string, deliveryId: string, receiverNote: string) {
+
+  // OFFLINE: mirror to Dexie and enqueue update
+  if (typeof navigator !== 'undefined' && !isNetOnline()) {
+    try {
+      const now = Date.now()
+      await db.deliveries.update(deliveryId, { status: "delivered", receiverNote, updatedAt: now } as any)
+      await enqueue({
+        op: 'updateDelivery',
+        familyId,
+        payload: { familyId, id: deliveryId, payload: { status: "delivered", receiverNote, updatedAt: now } }
+      })
+      return { success: true, offline: true }
+    } catch {}
+  }
+
+
     if (!familyId || !deliveryId) throw new Error('familyId and deliveryId required')
     const uid = auth.currentUser?.uid
     if (!uid) return { success: false, message: 'User not authenticated' }
@@ -253,6 +283,23 @@ export async function markDeliveryAsReceived(familyId: string, deliveryId: strin
  * Update arbitrary fields on a delivery document.
  */
 export async function updateDelivery(familyId: string, deliveryId: string, data: Partial<Record<string, any>>) {
+
+  // OFFLINE: mirror to Dexie and enqueue update
+  if (typeof navigator !== 'undefined' && !isNetOnline()) {
+    try {
+      const now = Date.now()
+      const patch = { ...data, updatedAt: now }
+      await db.deliveries.update(deliveryId, patch as any)
+      await enqueue({
+        op: 'updateDelivery',
+        familyId,
+        payload: { familyId, id: deliveryId, payload: patch }
+      })
+      return { success: true, offline: true }
+    } catch {}
+  }
+
+
     if (!familyId || !deliveryId) throw new Error('familyId and deliveryId required')
     const ref = doc(firestore, 'families', familyId, 'deliveries', deliveryId)
     const patched: any = { ...data, updatedAt: serverTimestamp() }
@@ -266,6 +313,21 @@ export async function updateDelivery(familyId: string, deliveryId: string, data:
  * Delete a delivery
  */
 export async function deleteDelivery(familyId: string, deliveryId: string) {
+
+  // OFFLINE: mirror delete to Dexie and enqueue
+  if (typeof navigator !== 'undefined' && !isNetOnline()) {
+    try {
+      await db.deliveries.delete(deliveryId)
+      await enqueue({
+        op: 'deleteDelivery',
+        familyId,
+        payload: { familyId, id: deliveryId }
+      })
+      return { success: true, offline: true }
+    } catch {}
+  }
+
+
     if (!familyId || !deliveryId) throw new Error('familyId and deliveryId required')
     const ref = doc(firestore, 'families', familyId, 'deliveries', deliveryId)
     await deleteDoc(ref)
@@ -340,6 +402,18 @@ export function subscribeToItems(
  * parentCollection should be 'orders' or 'deliveries'.
  */
 export async function markChildItemAsReceived(familyId: string, parentCollection: string, parentId: string, itemId: string) {
+
+  // OFFLINE: enqueue single child item mark delivered
+  if (typeof navigator !== 'undefined' && !isNetOnline()) {
+    try {
+      await enqueue({ op: 'markChildItemReceived', familyId, payload: { familyId, orderId : parentId, itemId } })
+      return { success: true, offline: true }
+    } catch {
+      return { success: false, message: 'Failed to queue item update' }
+    }
+  }
+
+
     if (!familyId || !parentCollection || !parentId || !itemId) throw new Error('missing ids')
     const uid = auth.currentUser?.uid
     if (!uid) return { success: false, message: 'Not authenticated' }

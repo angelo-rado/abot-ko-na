@@ -16,69 +16,36 @@ type InviteModalProps = {
 
 export default function InviteModal({ familyId, familyName, open, onOpenChange }: InviteModalProps) {
   const [copied, setCopied] = useState(false)
-  const svgWrapRef = useRef<HTMLDivElement>(null)
+  const svgWrapRef = useRef<HTMLDivElement | null>(null)
 
-  const displayName = familyName ?? 'your family'
-  const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const inviteLink = `${origin}/family/join?invite=${familyId}`
+  const inviteLink = typeof window !== 'undefined'
+    ? `${window.location.origin}/family/join?invite=${encodeURIComponent(familyId)}`
+    : ''
 
-  const handleCopy = () => {
-    const fallbackCopy = () => {
-      const tempInput = document.createElement('input')
-      tempInput.value = inviteLink
-      document.body.appendChild(tempInput)
-      tempInput.select()
-      try {
-        const success = document.execCommand('copy')
-        if (success) {
-          toast.success('Invite link copied!')
-          setCopied(true)
-          setTimeout(() => setCopied(false), 2000)
-        } else {
-          toast.error('Copy failed')
-        }
-      } catch {
-        toast.error('Copy not supported on this browser')
-      }
-      document.body.removeChild(tempInput)
-    }
-
-    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(inviteLink)
-        .then(() => {
-          toast.success('Invite link copied!')
-          setCopied(true)
-          setTimeout(() => setCopied(false), 2000)
-        })
-        .catch(fallbackCopy)
-    } else {
-      fallbackCopy()
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+      toast.success('Invite link copied')
+    } catch {
+      toast.error('Failed to copy link')
     }
   }
 
-  const handleShare = () => {
-    if (typeof navigator !== 'undefined' && (navigator as any).share) {
-      (navigator as any).share({
-        title: 'Join my family on Abot Ko Na',
-        text: `Join ${displayName} on Abot Ko Na`,
-        url: inviteLink,
-      }).catch(() => toast.error('Sharing cancelled or failed.'))
-    } else {
-      navigator.clipboard?.writeText(inviteLink)
-        .then(() => toast.success('Sharing not supported. Link copied instead.'))
-        .catch(() => toast.error('Sharing not supported, and failed to copy link.'))
-    }
-  }
-
-  // Convert <svg> QR to PNG and download (with Safari-safe fallback)
   const handleDownloadQR = () => {
     const container = svgWrapRef.current
     if (!container) return
     const svg = container.querySelector('svg') as SVGSVGElement | null
     if (!svg) return
 
+    // Determine an appropriate PNG size from the rendered SVG (avoid oversizing)
+    const rect = svg.getBoundingClientRect()
+    const base = Math.round(Math.max(rect.width, rect.height) || 160)
+    const dpr = Math.min(2, Math.max(1, Math.ceil(window.devicePixelRatio || 1)))
+    const size = Math.max(160, Math.min(320, base * dpr)) // clamp to 160–320px
+
     // Ensure xmlns + explicit size on the SVG before rasterizing
-    const size = 640 // output PNG size
     svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
     svg.setAttribute('width', String(size))
     svg.setAttribute('height', String(size))
@@ -102,57 +69,30 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
       ctx.drawImage(img, 0, 0, size, size)
       URL.revokeObjectURL(url)
 
-      // Prefer toBlob; fallback to dataURL (Safari)
-      if (canvas.toBlob) {
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            // Fallback if toBlob returns null
-            const dataURL = canvas.toDataURL('image/png')
-            const a = document.createElement('a')
-            a.href = dataURL
-            a.download = `abot-ko-na-invite-${familyId}.png`
-            a.click()
-            return
-          }
-          const pngUrl = URL.createObjectURL(blob)
-          const a = document.createElement('a')
-          a.href = pngUrl
-          a.download = `abot-ko-na-invite-${familyId}.png`
-          a.click()
-          setTimeout(() => URL.revokeObjectURL(pngUrl), 2000)
-        }, 'image/png')
-      } else {
-        const dataURL = canvas.toDataURL('image/png')
+      // Save blob
+      canvas.toBlob((blob) => {
+        if (!blob) return
         const a = document.createElement('a')
-        a.href = dataURL
-        a.download = `abot-ko-na-invite-${familyId}.png`
+        a.href = URL.createObjectURL(blob)
+        a.download = `${familyName || 'invite'}-qr.png`
         a.click()
-      }
-    }
-    img.onerror = () => {
-      URL.revokeObjectURL(url)
-      toast.error('Failed to generate QR code image.')
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+      }, 'image/png')
     }
     img.src = url
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm space-y-4">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Invite to {displayName}</DialogTitle>
+          <DialogTitle>Invite to {familyName || 'Family'}</DialogTitle>
         </DialogHeader>
 
-        <p className="text-sm text-muted-foreground">Share this link or QR code with family members to invite them:</p>
-
-        <Input readOnly value={inviteLink} className="text-sm" onFocus={(e) => e.target.select()} autoFocus />
-
         <div className="space-y-2">
-          <Button type="button" onClick={handleCopy} className="w-full">
-            {copied ? 'Copied!' : 'Copy Link'}
-          </Button>
-          <Button type="button" onClick={handleShare} variant="outline" className="w-full">
-            Share
+          <Input value={inviteLink} readOnly />
+          <Button onClick={handleCopy} type="button">
+            {copied ? 'Copied!' : 'Copy link'}
           </Button>
         </div>
 

@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { setDoc, doc, updateDoc, getDoc } from 'firebase/firestore'
+import { enqueue, isOnline as isNetOnline } from '@/lib/offline'
+import { db } from '@/lib/db'
 import { firestore } from '@/lib/firebase'
 import MapPickerDialog from './MapPickerDialog'
 import { toast } from 'sonner'
@@ -67,7 +69,30 @@ export default function SetFamilyHomeLocation({ familyId }: Props) {
     )
   }
 
-  return (
+  
+  async function saveHomeLocation(lat: number, lon: number) {
+    if (!familyId) return
+    if (typeof navigator !== 'undefined' && !isNetOnline()) {
+      try {
+        await db.homeLocation.put({ id: familyId, lat, lng: lon })
+        await enqueue({ op: 'setHomeLocation', familyId, payload: { familyId, lat, lng: lon } })
+        toast.success('Home location saved (offline) — will sync when online')
+        return true
+      } catch (e) {
+        console.error('offline saveHomeLocation failed', e)
+      }
+    }
+    try {
+      await setDoc(doc(firestore, 'families', familyId), { homeLocation: { lat, lng: lon } }, { merge: true })
+      toast.success('Home location saved!')
+      return true
+    } catch (e) {
+      console.error('Error saving home location:', e)
+      toast.error('Failed to save home location')
+      return false
+    }
+  }
+return (
     <div className="space-y-4">
       <div>
         <p className="text-sm text-muted-foreground">Family Home Location:</p>

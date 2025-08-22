@@ -23,43 +23,28 @@ type Ctx = {
   reloadPreferred: () => Promise<void>
 }
 
-const LOCAL_KEY = 'abot:selectedFamily'
-const JUST_JOINED_KEY = 'abot:justJoinedFamily'
 const SelectedFamilyCtx = createContext<Ctx | null>(null)
 
-/**
- * SelectedFamilyProvider
- * - Fast-adopts users/{uid}.preferredFamily (no need to wait for membership list)
- * - Falls back to first membership when preferredFamily is absent
- * - Ensures your member profile doc (name/photoURL) whenever familyId is set
- */
+const JUST_JOINED_KEY = 'abot:just-joined-family'
+
 export function SelectedFamilyProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
-  const [families, setFamilies] = useState<Family[]>([])
-  const [familyId, setFamilyIdState] = useState<string | null>(null)
-  const [loadingFamilies, setLoadingFamilies] = useState<boolean>(true)
 
-  // internal “ready” trackers to keep loading state accurate
+  const [families, setFamilies] = useState<Family[]>([])
+  const [loadingFamilies, setLoadingFamilies] = useState<boolean>(true)
+  const [familyId, setFamilyIdState] = useState<string | null>(null)
+
+  // unsub refs
+  const membersUnsubRef = useRef<null | (() => void)>(null)
+  const userUnsubRef = useRef<null | (() => void)>(null)
+
+  // ready flags
   const prefReadyRef = useRef(false)
   const membershipReadyRef = useRef(false)
 
-  const membersUnsubRef = useRef<(() => void) | null>(null)
-  const userUnsubRef = useRef<(() => void) | null>(null)
-
-  // --- helpers
-  const endLoadingIfReady = () => {
-    if (prefReadyRef.current && membershipReadyRef.current) {
-      setLoadingFamilies(false)
-    }
-  }
-
-  const adoptFamilyId = (id: string | null) => {
-    setFamilyIdState((prev) => (prev === id ? prev : id))
-  }
-
-  // --- Reset on auth change
+  // Reset on auth change
   useEffect(() => {
-    // cleanup old listeners
+    // cleanup previous listeners
     try { membersUnsubRef.current?.() } catch {}
     try { userUnsubRef.current?.() } catch {}
     membersUnsubRef.current = null
@@ -82,44 +67,29 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       (snap) => {
         prefReadyRef.current = true
         const data = snap.exists() ? (snap.data() as any) : null
-        const preferred = (data?.preferredFamily ?? null) as string | null
-
-        // If preferred is present, adopt immediately (don’t wait for membership list)
-        if (preferred) {
-          adoptFamilyId(preferred)
-          try { localStorage.setItem(LOCAL_KEY, preferred) } catch {}
-        }
-        endLoadingIfReady()
+        const preferred: string | null = typeof data?.preferredFamily === 'string' ? data.preferredFamily : null
+        setFamilyIdState(preferred ?? null)
       },
-      () => {
-        prefReadyRef.current = true
-        endLoadingIfReady()
-      }
+      () => { prefReadyRef.current = true }
     )
 
-    // Membership list via collectionGroup('members') where uid == user.uid
-    const qy = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
+    // Listen to all memberships via collectionGroup
+    const q = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
     membersUnsubRef.current = onSnapshot(
-      qy,
-      async (snap) => {
-        const rawIds = Array.from(
-          new Set(
-            snap.docs
-              .map((d) => d.ref.parent.parent?.id)
-              .filter((v): v is string => typeof v === 'string' && v.length > 0)
-          )
-        )
+      q,
+      async (qs) => {
+        membershipReadyRef.current = true
+        const rawIds = Array.from(new Set(qs.docs.map((d) => d.ref.parent.parent?.id).filter(Boolean) as string[]))
 
-        // Smooth handoff from join flows: include JUST_JOINED_KEY if still present
+        // Include JUST_JOINED_KEY one-shot to improve immediate UX after join
         let ids = rawIds.slice()
         try {
-          const jj = sessionStorage.getItem(JUST_JOINED_KEY)
+          const jj = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(JUST_JOINED_KEY) : null
           if (jj && !ids.includes(jj)) ids.push(jj)
-          // clear it once membership sees the family (or immediately)
           if (jj && rawIds.includes(jj)) sessionStorage.removeItem(JUST_JOINED_KEY)
         } catch {}
 
-        // Hydrate names (best-effort)
+        // Best-effort hydrate names
         const list: Family[] = []
         await Promise.all(
           ids.map(async (id) => {
@@ -139,18 +109,13 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
         list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         setFamilies(list)
 
-        // If no current familyId, adopt first membership
-        if (!familyId && list.length > 0) {
-          adoptFamilyId(list[0].id)
-        }
-
-        membershipReadyRef.current = true
-        endLoadingIfReady()
+        // Auto-select a family if none is chosen yet
+        setFamilyIdState((curr) => curr ?? (list[0]?.id ?? null))
+        setLoadingFamilies(false)
       },
       () => {
-        setFamilies([])
         membershipReadyRef.current = true
-        endLoadingIfReady()
+        setLoadingFamilies(false)
       }
     )
 
@@ -160,7 +125,6 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       membersUnsubRef.current = null
       userUnsubRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
   // Ensure your member profile is hydrated for the current family (fix: others seeing UID)
@@ -171,32 +135,32 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       uid: user.uid,
       name: (user as any).displayName ?? (user as any).name ?? (user as any).email ?? user.uid,
       photoURL: (user as any).photoURL ?? null,
+      updatedAt: Date.now(),
     }, { merge: true }).catch(() => {})
-  }, [user?.uid, user?.name, user?.photoURL, user?.email, familyId])
+  }, [user?.uid, user?.name, user?.photoURL, familyId])
 
-  // Persist & broadcast preferred family
+  // Persist preferred family to users/{uid}
   const persistPreferred = async (id: string | null) => {
-    adoptFamilyId(id)
-    try { localStorage.setItem(LOCAL_KEY, id ?? '') } catch {}
-
     if (!user?.uid) return
+    const uref = doc(firestore, 'users', user.uid)
     try {
-      const uref = doc(firestore, 'users', user.uid)
-      const snap = await getDoc(uref)
-      if (!snap.exists()) {
-        await setDoc(uref, { preferredFamily: id ?? null }, { merge: true })
-      } else {
-        await updateDoc(uref, { preferredFamily: id ?? null })
-      }
-    } catch {}
+      await setDoc(uref, { preferredFamily: id ?? null }, { merge: true })
+      setFamilyIdState(id)
+    } catch {
+      // fallback to update
+      try { await updateDoc(uref, { preferredFamily: id ?? null }) } catch {}
+      setFamilyIdState(id)
+    }
   }
 
+  // Manual reload of preferred family (one-shot read)
   const reloadPreferred = async () => {
     if (!user?.uid) return
     try {
-      const u = await getDoc(doc(firestore, 'users', user.uid))
-      const pf = (u.exists() ? (u.data() as any).preferredFamily : null) ?? null
-      if (pf) await persistPreferred(pf)
+      const snap = await getDoc(doc(firestore, 'users', user.uid))
+      const data = snap.exists() ? (snap.data() as any) : null
+      const preferred: string | null = typeof data?.preferredFamily === 'string' ? data.preferredFamily : null
+      setFamilyIdState(preferred ?? null)
     } catch {}
   }
 
@@ -213,3 +177,6 @@ export function useSelectedFamily() {
   if (!ctx) throw new Error('useSelectedFamily must be used inside <SelectedFamilyProvider>')
   return ctx
 }
+
+// Helper to satisfy TS when toggling booleans in refs
+function FalseGuard(v: boolean) { return v }

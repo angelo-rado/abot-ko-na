@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
+import { enqueue, isOnline as isNetOnline } from '@/lib/offline'
 import {
   doc,
   getDoc,
@@ -105,14 +106,14 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   const stopMembersRealtime = () => {
     if (membersUnsubRef.current) {
-      try { membersUnsubRef.current() } catch {}
+      try { membersUnsubRef.current() } catch { }
       membersUnsubRef.current = null
     }
   }
 
   const stopMyRoleRealtime = () => {
     if (myRoleUnsubRef.current) {
-      try { myRoleUnsubRef.current() } catch {}
+      try { myRoleUnsubRef.current() } catch { }
       myRoleUnsubRef.current = null
     }
   }
@@ -249,6 +250,17 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   // Remove member (owner/admin). No client writes to users/{uid} (rules block it) — server does the cleanup.
   const removeMember = async (memberId: string) => {
+    // OFFLINE: queue removal and optimistically update UI
+    if (typeof navigator !== 'undefined' && !isNetOnline()) {
+      if (!family?.id) return
+      try {
+        setMembers(prev => prev.filter(m => m.id !== memberId))
+        await enqueue({ op: 'removeMember', familyId: family.id, payload: { familyId: family.id, uid: memberId } })
+        toast("Member will be removed when you're back online", { icon: '📶' })
+        return
+      } catch { }
+    }
+
     if (!family?.id || !user?.uid) return
     const ownerId = family.owner ?? family.createdBy ?? null
     if (ownerId && memberId === ownerId) {
@@ -425,7 +437,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                     <div key={m.id} className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <Avatar>
-                          {m.photoURL ? <AvatarImage src={m.photoURL} alt={m.name ?? 'Member'} /> : <AvatarFallback>{(m.name ?? '?').split(' ').map(s => s[0]).join('').slice(0,2).toUpperCase()}</AvatarFallback>}
+                          {m.photoURL ? <AvatarImage src={m.photoURL} alt={m.name ?? 'Member'} /> : <AvatarFallback>{(m.name ?? '?').split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase()}</AvatarFallback>}
                         </Avatar>
                         <div className="min-w-0">
                           <div className="font-medium truncate flex items-center gap-2">

@@ -19,6 +19,9 @@ import { firestore } from '@/lib/firebase'
 import { createDelivery } from '@/lib/deliveries'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Textarea } from '@/components/ui/textarea'
+import { enqueue, isOnline } from '@/lib/offline'
+import { db } from '@/lib/db'
+import { toast } from 'sonner'
 
 type DeliveryStatus = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
@@ -268,6 +271,23 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   }
 
   const onSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    // OFFLINE PATH: enqueue write & mirror locally
+    if (!isOnline()) {
+      try {
+        const now = Date.now()
+        const tempId = `offline-${'${'}now${'}'}`
+        const fam = familyId
+        // Basic single delivery optimistic mirror
+        await db.deliveries.put({ id: tempId, familyId: fam!, title: values.title?.trim() || 'Untitled', type: itemMode === 'single' ? 'single' : 'multiple', amount: values.codAmount ?? null, note: values.note ?? '', eta: values.expectedDate ? Date.parse(values.expectedDate) : null, createdAt: now, updatedAt: now, itemCount: itemMode === 'single' ? 1 : items.length })
+        await enqueue({ op: 'addDelivery', familyId: fam, payload: { familyId: fam, id: tempId, payload: { title: values.title?.trim() || 'Untitled', type: itemMode === 'single' ? 'single' : 'multiple', amount: values.codAmount ?? null, note: values.note ?? '', expectedDate: values.expectedDate ? Date.parse(values.expectedDate) : null, createdAt: now, updatedAt: now, itemCount: itemMode === 'single' ? 1 : items.length } } })
+        toast('Saved offline — will sync when online', { icon: '📶' })
+        onOpenChange(false)
+        return
+      } catch (err) {
+        toast.error('Failed to save offline draft')
+      }
+    }
     e?.preventDefault()
     setFormErrors({})
     const errors: Record<string, string> = {}
