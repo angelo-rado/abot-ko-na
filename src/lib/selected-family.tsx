@@ -5,7 +5,6 @@ import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import {
   collectionGroup,
-  documentId,
   doc,
   getDoc,
   onSnapshot,
@@ -42,17 +41,19 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       try { unsubRef.current() } catch {}
       unsubRef.current = null
     }
-    setFamilies([])
-    setFamilyIdState(null)
 
     if (!user?.uid) {
+      setFamilies([])
+      setFamilyIdState(null)
       setLoadingFamilies(false)
       return
     }
 
     setLoadingFamilies(true)
     // Reliable membership: families/{id}/members/{uid}
-    const qy = query(collectionGroup(firestore, 'members'), where(documentId(), '==', user.uid))
+    // FIX: use a field filter instead of documentId() on collectionGroup
+    const qy = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
+
     const unsub = onSnapshot(
       qy,
       async (snap) => {
@@ -93,6 +94,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
             if (pf) next = pf
           } catch {}
         }
+
         if (next && !out.some((f) => f.id === next)) {
           next = out[0]?.id ?? null
         }
@@ -108,16 +110,17 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
 
   const persistPreferred = async (id: string | null) => {
     setFamilyIdState(id)
+    try { localStorage.setItem(LOCAL_KEY, id ?? '') } catch {}
+    if (!user?.uid) return
     try {
-      if (id) localStorage.setItem(LOCAL_KEY, id)
-      else localStorage.removeItem(LOCAL_KEY)
+      const uref = doc(firestore, 'users', user.uid)
+      const snap = await getDoc(uref)
+      if (!snap.exists()) {
+        await setDoc(uref, { preferredFamily: id ?? null }, { merge: true })
+      } else {
+        await updateDoc(uref, { preferredFamily: id ?? null })
+      }
     } catch {}
-    if (user?.uid) {
-      const ref = doc(firestore, 'users', user.uid)
-      await updateDoc(ref, { preferredFamily: id }).catch(async () => {
-        await setDoc(ref, { preferredFamily: id }, { merge: true })
-      })
-    }
   }
 
   const reloadPreferred = async () => {
