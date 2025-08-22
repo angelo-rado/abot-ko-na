@@ -1,146 +1,155 @@
-// DefaultFamilySelector (patched)
-'use client'
+'use client';
 
-import { useEffect, useMemo, useState } from 'react'
-import { toast } from 'sonner'
-import { useAuth } from '@/lib/useAuth'
-import { firestore } from '@/lib/firebase'
-import {
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  query,
-  updateDoc,
-  setDoc,
-  where,
-} from 'firebase/firestore'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Button } from '@/components/ui/button'
-import { Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react';
+import { doc, getDoc } from 'firebase/firestore';
+import { firestore } from '@/lib/firebase';
+import { useSelectedFamily } from '@/lib/selected-family';
+import { Label } from '@/components/ui/label';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
+import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
 
-type Family = { id: string; name?: string }
-const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
-
+/**
+ * DefaultFamilySelector
+ * - Shows the user's default family by NAME (never the raw UID).
+ * - If the provider hasn't loaded family names yet, we best-effort fetch the selected family's name.
+ * - Lets the user change or clear their default; persists via useSelectedFamily().setFamilyId.
+ */
 export default function DefaultFamilySelector() {
-  const { user } = useAuth()
-  const [families, setFamilies] = useState<Family[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [preferred, setPreferred] = useState<string | null>(null)
+  const { families, familyId, setFamilyId, loadingFamilies } = useSelectedFamily();
 
-  // 🔄 Load families by membership array (no collectionGroup + documentId)
+  // Local resolved name for the currently selected family, used when provider hasn't hydrated names yet.
+  const [resolvedName, setResolvedName] = useState<string | null>(null);
+  const [loadingName, setLoadingName] = useState(false);
+
+  // Name from provider if available
+  const providerName = useMemo(
+    () => (familyId ? families.find((f) => f.id === familyId)?.name || null : null),
+    [families, familyId]
+  );
+
+  // Make sure we have a human label for the current familyId
   useEffect(() => {
-    if (!user?.uid) {
-      setFamilies([])
-      setLoading(false)
-      return
-    }
+    let cancelled = false;
 
-    setLoading(true)
-    const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: Family[] = snap.docs.map((d) => {
-          const data = d.data() as any
-          return { id: d.id, name: typeof data?.name === 'string' ? data.name : undefined }
-        })
-        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-        setFamilies(list)
-        setLoading(false)
-      },
-      () => setLoading(false)
-    )
-    return () => unsub()
-  }, [user?.uid])
-
-  // Load preferred family (localStorage first, then server)
-  useEffect(() => {
-    if (!user?.uid) return
-    try {
-      const ls = localStorage.getItem(LOCAL_FAMILY_KEY)
-      if (ls) {
-        setPreferred(ls)
-        return
+    async function hydrateName(id: string) {
+      if (!id) return;
+      // If provider already has the name, use it and stop
+      if (providerName) {
+        setResolvedName(providerName);
+        return;
       }
-    } catch {}
-    ;(async () => {
+      // Otherwise fetch just this family's name once (best-effort)
+      setLoadingName(true);
       try {
-        const u = await getDoc(doc(firestore, 'users', user.uid))
-        const pf = (u.exists() ? (u.data() as any).preferredFamily : null) ?? null
-        setPreferred(pf)
-        if (pf) try { localStorage.setItem(LOCAL_FAMILY_KEY, pf) } catch {}
-      } catch {}
-    })()
-  }, [user?.uid])
-
-  const persistPreferred = async (next: string | null) => {
-    if (!user?.uid) return
-    setSaving(true)
-    try {
-      setPreferred(next)
-      try {
-        if (next) localStorage.setItem(LOCAL_FAMILY_KEY, next)
-        else localStorage.removeItem(LOCAL_FAMILY_KEY)
-      } catch {}
-
-      const userRef = doc(firestore, 'users', user.uid)
-      await updateDoc(userRef, { preferredFamily: next }).catch(async () => {
-        await setDoc(userRef, { preferredFamily: next }, { merge: true })
-      })
-      toast.success(next ? 'Default family updated' : 'Default family cleared')
-    } catch {
-      toast.error('Could not update default family')
-    } finally {
-      setSaving(false)
+        const snap = await getDoc(doc(firestore, 'families', id));
+        if (cancelled) return;
+        if (snap.exists()) {
+          const data = snap.data() as any;
+          const name = typeof data?.name === 'string' ? data.name : null;
+          setResolvedName(name);
+        } else {
+          setResolvedName(null);
+        }
+      } catch {
+        if (!cancelled) setResolvedName(null);
+      } finally {
+        if (!cancelled) setLoadingName(false);
+      }
     }
+
+    if (!familyId) {
+      setResolvedName(null);
+      setLoadingName(false);
+      return;
+    }
+
+    hydrateName(familyId);
+    return () => {
+      cancelled = true;
+    };
+  }, [familyId, providerName]);
+
+  const currentLabel =
+    providerName ??
+    resolvedName ??
+    (familyId ? 'Family' : 'None'); // never show the UID
+
+  const onChange = async (value: string) => {
+    const next = value || null;
+    await setFamilyId(next);
+    // Provide instant, correct label without flashing the UID
+    if (!next) {
+      setResolvedName(null);
+      toast.success('Default family cleared');
+      return;
+    }
+    // Prefer provider name if already present; otherwise keep existing resolvedName or fetch
+    const fromProvider = families.find((f) => f.id === next)?.name || null;
+    if (fromProvider) {
+      setResolvedName(fromProvider);
+      toast.success('Default family updated');
+      return;
+    }
+    try {
+      const snap = await getDoc(doc(firestore, 'families', next));
+      const name = snap.exists() ? (snap.data() as any)?.name : null;
+      setResolvedName(typeof name === 'string' ? name : null);
+      toast.success('Default family updated');
+    } catch {
+      // silently ignore; provider will catch up
+      toast.success('Default family updated');
+    }
+  };
+
+  if (loadingFamilies && !familyId) {
+    return (
+      <div className="space-y-2">
+        <Label className="text-sm">Default family</Label>
+        <Skeleton className="h-10 w-full" />
+      </div>
+    );
   }
 
-  const canClear = useMemo(() => families.length > 1 && !!preferred, [families.length, preferred])
+  // Create the list of items, sorted by name (falling back to id order if name is missing)
+  const items = useMemo(() => {
+    const copy = [...families];
+    copy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return copy;
+  }, [families]);
+
+  // If the selected familyId isn't in the provider list yet, inject a temporary item
+  const includeEphemeralSelected =
+    familyId && !items.some((f) => f.id === familyId) && (providerName || resolvedName);
 
   return (
-    <section className="rounded-lg border p-4 space-y-3 bg-background">
-      <div className="flex items-center justify-between">
-        <Label className="text-sm font-medium">Default family</Label>
-        {saving && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />}
-      </div>
+    <div className="space-y-2">
+      <Label className="text-sm">Default family</Label>
 
-      {loading ? (
-        <div className="h-10 bg-muted/20 rounded w-full animate-pulse" />
-      ) : families.length === 0 ? (
-        <p className="text-xs text-muted-foreground">You haven’t joined any families yet.</p>
-      ) : (
-        <div className="flex items-center gap-2 w-full">
-          <Select
-            value={preferred ?? ''}
-            onValueChange={(val) => persistPreferred(val === '' ? null : val)}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Choose default…" />
-            </SelectTrigger>
-            <SelectContent>
-              {families.length > 1 && <SelectItem value="">— None —</SelectItem>}
-              {families.map((f) => (
-                <SelectItem key={f.id} value={f.id}>
-                  {f.name || f.id}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {canClear && (
-            <Button variant="outline" size="sm" onClick={() => persistPreferred(null)} disabled={saving}>
-              Clear
-            </Button>
+      <Select value={familyId ?? ''} onValueChange={onChange}>
+        <SelectTrigger className="w-full">
+          {/* We never show the raw ID here */}
+          <SelectValue placeholder={loadingName ? 'Loading…' : 'Choose a family'}>
+            {loadingName ? 'Loading…' : currentLabel}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">None</SelectItem>
+          {includeEphemeralSelected && (
+            <SelectItem key={`__current-${familyId}`} value={familyId!}>
+              {providerName || resolvedName || 'Family'}
+            </SelectItem>
           )}
-        </div>
-      )}
-
+          {items.map((f) => (
+            <SelectItem key={f.id} value={f.id}>
+              {f.name || 'Untitled family'}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       <p className="text-xs text-muted-foreground">
-        This sets which family opens by default and is used across the app.
+        This is used across Home and Deliveries by default. You can still browse other families from their pages.
       </p>
-    </section>
-  )
+    </div>
+  );
 }
