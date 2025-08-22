@@ -32,11 +32,10 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
   const [loadingFamilies, setLoadingFamilies] = useState(false)
   const [familyId, setFamilyIdState] = useState<string | null>(null)
 
-  // ✅ initialize ref with null (fixes “Expected 1 arguments”)
+  // listener cleanup
   const unsubRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    // clean up any previous listener
     if (unsubRef.current) {
       try { unsubRef.current() } catch {}
       unsubRef.current = null
@@ -50,8 +49,8 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
     }
 
     setLoadingFamilies(true)
-    // Reliable membership: families/{id}/members/{uid}
-    // FIX: use a field filter instead of documentId() on collectionGroup
+
+    // membership lives at families/{id}/members/{uid} and member docs have 'uid' field
     const qy = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
 
     const unsub = onSnapshot(
@@ -84,9 +83,10 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
         out.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
         setFamilies(out)
 
-        // pick selected family: localStorage -> users/{uid}.preferredFamily -> first available
+        // Single source of truth: users/{uid}.preferredFamily (Settings writes this)
         let next: string | null = null
-        try { next = localStorage.getItem(LOCAL_KEY) } catch {}
+        /* local default removed; Settings drives preferredFamily */
+
         if (!next) {
           try {
             const u = await getDoc(doc(firestore, 'users', user.uid))
@@ -110,6 +110,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
 
   const persistPreferred = async (id: string | null) => {
     setFamilyIdState(id)
+    // keep a harmless write for legacy users (we no longer READ localStorage)
     try { localStorage.setItem(LOCAL_KEY, id ?? '') } catch {}
     if (!user?.uid) return
     try {

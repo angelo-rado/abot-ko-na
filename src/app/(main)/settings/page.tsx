@@ -18,7 +18,6 @@ import { getToken, deleteToken } from 'firebase/messaging';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import DefaultFamilySelector from '@/app/components/DefaultFamilySelector'
-import FamilyPicker from '@/app/components/FamilyPicker'
 import DisplayNameEditor from '@/app/components/DisplayNameEditor';
 
 const VAPID_KEY =
@@ -26,177 +25,87 @@ const VAPID_KEY =
     process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
     process.env.NEXT_PUBLIC_VAPID_KEY ||
     ''
-  ).trim() || undefined;
-
-type UserLike = {
-  uid: string;
-  name?: string;
-  email?: string;
-  fcmTokens?: string[];
-  familyId?: string | null;
-};
+  ).trim();
 
 export default function SettingsPage() {
-  const { user, loading } = useAuth() as { user: UserLike | null; loading: boolean };
-  const { families, familyId, setFamilyId, loadingFamilies } = useSelectedFamily()
   const router = useRouter();
+  const { user, loading } = useAuth();
+  const { familyId } = useSelectedFamily();
   const isOnline = useOnlineStatus();
-
-  const [notifEnabled, setNotifEnabled] = useState(false);
-  const [working, setWorking] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>('default');
-  const notificationsSupported =
-    typeof window !== 'undefined' && 'Notification' in window;
-
-  const { theme, setTheme, resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const currentTheme = mounted ? (theme ?? 'system') : 'system';
-
-  const offlineBanner = !isOnline ? (
-    <p className="text-center text-red-500">You're offline — cached content only.</p>
-  ) : null;
+  const [working, setWorking] = useState(false);
+  const [notificationsSupported, setNotificationsSupported] = useState(false);
+  const { theme, setTheme } = useTheme();
 
   useEffect(() => {
-    if (!loading && user === null) router.push('/login');
-  }, [user, loading, router]);
+    setNotificationsSupported(typeof window !== 'undefined' && 'Notification' in window);
+    setPermission(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+  }, []);
 
   useEffect(() => {
-    if (notificationsSupported) {
-      setPermission(Notification.permission);
+    if (!loading && !user?.uid) {
+      router.push('/login');
     }
-  }, [notificationsSupported]);
+  }, [loading, user?.uid, router]);
 
-  useEffect(() => {
-    if (!user) return;
-    const hasTokens = Array.isArray(user.fcmTokens) && user.fcmTokens.length > 0;
-    const granted = notificationsSupported ? Notification.permission === 'granted' : false;
-    setNotifEnabled(hasTokens && granted);
-  }, [user, notificationsSupported]);
-
-  if (loading || loadingFamilies || user === null) {
-    return (
-      <main className="flex items-center justify-center h-screen">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </main>
-    );
-  }
-
-  async function enableNotifications(): Promise<void> {
-    if (typeof window === 'undefined') return;
-    if (!user?.uid) {
-      toast.error('You need to be signed in to enable notifications.');
-      setNotifEnabled(false);
-      return;
-    }
-    if (!('serviceWorker' in navigator)) {
-      toast.error('Notifications require Service Workers (not supported in this browser).');
-      return;
-    }
-    if (!('Notification' in window)) {
-      toast.error('Notifications are not supported on this device.');
-      return;
-    }
-    if (!VAPID_KEY) {
-      toast.error('Missing VAPID key. Set NEXT_PUBLIC_FIREBASE_VAPID_KEY (or NEXT_PUBLIC_VAPID_KEY).');
-      setNotifEnabled(false);
-      return;
-    }
-
-    setWorking(true);
+  const subscribe = async () => {
     try {
-      const perm = await Notification.requestPermission();
-      setPermission(perm);
-      if (perm !== 'granted') {
-        toast.error('Permission was not granted.');
-        setNotifEnabled(false);
-        return;
-      }
-
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
-      await navigator.serviceWorker.ready;
-
+      setWorking(true);
       const messaging = getFirebaseMessaging();
-      if (!messaging) {
-        toast.error('Messaging not initialized.');
-        setNotifEnabled(false);
-        return;
-      }
+      if (!messaging) throw new Error('Messaging is not available');
 
       const token = await getToken(messaging, {
-        vapidKey: VAPID_KEY,
-        serviceWorkerRegistration: registration,
+        vapidKey: VAPID_KEY || undefined,
       });
-      if (!token) {
-        toast.error('Failed to get notification token.');
-        setNotifEnabled(false);
-        return;
-      }
 
-      await updateDoc(doc(firestore, 'users', user.uid), {
+      if (!token) throw new Error('Failed to get FCM token');
+
+      await updateDoc(doc(firestore, 'users', user!.uid), {
         fcmTokens: arrayUnion(token),
-        notificationsEnabled: true,
       });
 
-      try { localStorage.setItem('abotko.fcmToken', token); } catch {}
-
-      setNotifEnabled(true);
       toast.success('Notifications enabled');
-    } catch (err) {
-      console.error('enableNotifications error', err);
-      toast.error('Could not enable notifications.');
-      setNotifEnabled(false);
+      setPermission('granted');
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Failed to enable notifications');
     } finally {
       setWorking(false);
     }
-  }
+  };
 
-  async function disableNotifications(): Promise<void> {
-    if (typeof window === 'undefined') return;
-    if (!user?.uid) {
-      setNotifEnabled(false);
-      return;
-    }
-
-    setWorking(true);
+  const unsubscribe = async () => {
     try {
+      setWorking(true);
       const messaging = getFirebaseMessaging();
+      if (!messaging) throw new Error('Messaging is not available');
 
-      let token: string | null = null;
-      try { token = localStorage.getItem('abotko.fcmToken'); } catch {}
-      if (!token && messaging && VAPID_KEY) {
-        try { token = await getToken(messaging, { vapidKey: VAPID_KEY }); } catch {}
-      }
-
-      try { if (messaging) await deleteToken(messaging); } catch (e) {
-        console.warn('deleteToken failed, continuing:', e);
-      }
+      const token = await getToken(messaging, {
+        vapidKey: VAPID_KEY || undefined,
+      });
 
       if (token) {
-        await updateDoc(doc(firestore, 'users', user.uid), {
+        await deleteToken(messaging);
+        await updateDoc(doc(firestore, 'users', user!.uid), {
           fcmTokens: arrayRemove(token),
-          notificationsEnabled: false,
         });
-      } else {
-        await updateDoc(doc(firestore, 'users', user.uid), { notificationsEnabled: false });
       }
 
-      try { localStorage.removeItem('abotko.fcmToken'); } catch {}
-
-      setNotifEnabled(false);
       toast.success('Notifications disabled');
-    } catch (err) {
-      console.error('disableNotifications error', err);
-      toast.error('Could not disable notifications.');
+      setPermission('default');
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Failed to disable notifications');
     } finally {
       setWorking(false);
     }
-  }
-
-  const onToggleChange = (next: boolean) => {
-    if (working) return;
-    void (next ? enableNotifications() : disableNotifications());
   };
+
+  const offlineBanner = !isOnline ? (
+    <div className="w-full bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-100 text-sm py-2 text-center">
+      You are offline. Some settings may not save until you reconnect.
+    </div>
+  ) : null;
+
+  const currentTheme = theme ?? 'system';
 
   return (
     <>
@@ -209,27 +118,43 @@ export default function SettingsPage() {
 
         <div className="space-y-1">
           <p className="text-sm">
-            Logged in as <strong>{user.name ?? 'User'}</strong>
+            Logged in as <strong>{user?.name ?? 'User'}</strong>
           </p>
-          <p className="text-xs text-muted-foreground">{user.email ?? ''}</p>
+          <p className="text-xs text-muted-foreground">{user?.email ?? ''}</p>
         </div>
 
-        {/* Quick switch (uses same shared list/selection) */}
+        {/* Default family selector — the only place to set it */}
+        <DefaultFamilySelector />
+
+        {/* Display name editor */}
+        <DisplayNameEditor />
+
+        {/* Notifications */}
         <section className="rounded-lg border p-4 space-y-3 bg-background">
-          <Label className="text-sm font-medium">Current family</Label>
-          <FamilyPicker
-            familyId={familyId}
-            onFamilyChange={setFamilyId}
-            families={families}
-            loading={loadingFamilies}
-          />
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium">Push notifications</Label>
+            <div className="flex items-center gap-2">
+              {working && <Loader2 className="w-4 h-4 animate-spin" />}
+              <Switch
+                checked={permission === 'granted'}
+                onCheckedChange={(v) => (v ? subscribe() : unsubscribe())}
+                disabled={working || !notificationsSupported || permission === 'denied'}
+                aria-label="Toggle push notifications"
+              />
+            </div>
+          </div>
+          {!notificationsSupported && (
+            <p className="text-xs text-muted-foreground">This browser doesn’t support notifications.</p>
+          )}
+          {permission === 'denied' && (
+            <p className="text-xs text-muted-foreground">
+              Notifications are blocked in your browser settings. Allow them and try again.
+            </p>
+          )}
         </section>
 
-        {/* Default family selector (more explicit control) */}
-        <DefaultFamilySelector />
-        
-        {/*Display Name Editor */}
-        <DisplayNameEditor />
+        <Separator />
+        <PresenceSettings />
 
         {/* Appearance */}
         <section className="rounded-lg border p-4 space-y-3 bg-background">
@@ -245,42 +170,8 @@ export default function SettingsPage() {
               <Moon className="w-4 h-4" /> Dark
             </Button>
           </div>
-          {mounted && (
-            <p className="text-xs text-muted-foreground">
-              Active theme: <strong>{currentTheme === 'system' ? `System (${resolvedTheme})` : currentTheme}</strong>
-            </p>
-          )}
         </section>
 
-        {/* Notifications */}
-        <section className="rounded-lg border p-4 flex items-start justify-between gap-4 bg-background">
-          <div className="space-y-1">
-            <Label className="text-sm font-medium">Push notifications</Label>
-            <p className="text-xs text-muted-foreground">
-              Get alerts for today’s deliveries and status updates.
-            </p>
-            {notificationsSupported && permission === 'denied' && (
-              <p className="text-xs text-red-500 mt-1">
-                Notifications are <strong>blocked</strong> for this site. Please enable them in your browser’s Site Settings, then try again.
-              </p>
-            )}
-            {!notificationsSupported && (
-              <p className="text-xs text-red-500 mt-1">Not supported by this browser.</p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {working && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />}
-            <Switch
-              checked={notifEnabled}
-              onCheckedChange={onToggleChange}
-              disabled={working || !notificationsSupported || permission === 'denied'}
-              aria-label="Toggle push notifications"
-            />
-          </div>
-        </section>
-
-        <Separator />
-        <PresenceSettings />
         <Separator />
         <LogoutButton />
       </main>

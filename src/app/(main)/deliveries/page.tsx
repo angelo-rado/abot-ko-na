@@ -10,7 +10,6 @@ import {
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 import { useSelectedFamily } from '@/lib/selected-family'
-import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Plus, Loader2, MessageSquareText, ChevronDown, ChevronRight, Package } from 'lucide-react'
@@ -22,6 +21,7 @@ import { useRouter } from 'next/navigation'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
 import BulkEditBar from './BulkEditBar'
+import Link from 'next/link'
 
 // ✅ Controlled AlertDialog (no Trigger) – avoids Children.only crash
 import {
@@ -63,7 +63,7 @@ function etaLabel(raw: any) {
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
-  const { families, familyId, setFamilyId, loadingFamilies } = useSelectedFamily()
+  const { families, familyId, loadingFamilies } = useSelectedFamily()
   const [deliveries, setDeliveries] = useState<any[]>([])
   const [loadingDeliveries, setLoadingDeliveries] = useState(true)
   const [tab, setTab] = useState<'upcoming' | 'archived'>('upcoming')
@@ -118,9 +118,6 @@ export default function DeliveriesPage() {
     setConfirmCancelLabel(opts?.cancelLabel || 'Cancel')
     setConfirmOpen(true)
   }), [])
-
-  // Persist selection through the provider
-  const selectFamily = async (id: string | null) => { await setFamilyId(id) }
 
   // deliveries listener
   useEffect(() => {
@@ -251,21 +248,17 @@ export default function DeliveriesPage() {
       {/* Top controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1">
-          {loadingFamilies ? (
-            <div>
-              <label className="text-sm text-muted-foreground">Viewing Dashboard for:</label>
-              <Skeleton className="h-10 w-full mt-2" />
+          {/* ✅ Settings-driven default family (no inline picker here) */}
+          <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between">
+            <div className="text-sm">
+              <span className="font-medium">Default family:</span>{' '}
+              <span>{families.find((f) => f.id === familyId)?.name ?? familyId ?? 'None set'}</span>
             </div>
-          ) : (
-            <FamilyPicker
-              familyId={familyId}
-              onFamilyChange={selectFamily}
-              families={families}
-              loading={loadingFamilies}
-            />
-          )}
+            <Link href="/settings" className="text-sm underline">Change</Link>
+          </div>
         </div>
 
+        {/* the rest of your top-right controls remain */}
         <div className="flex gap-2 flex-wrap sm:flex-nowrap">
           <Button
             type="button"
