@@ -32,6 +32,8 @@ export interface Setting {
   // legacy keys used by HomeLocationMap
   homeLat?: number
   homeLon?: number
+  // presence toggle used by HomeLocationMap
+  autoPresence?: boolean
 }
 
 export interface Family {
