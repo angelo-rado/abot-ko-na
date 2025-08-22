@@ -56,26 +56,19 @@ self.addEventListener('message', (event) => {
 })
 workbox.core.clientsClaim()
 
-// Cache Firestore reads conservatively
+/**
+ * 🔧 Firestore caching fix
+ * The Firestore endpoints often return streamed/opaque/POST responses that
+ * the Cache API can’t store, causing "Cache.put() encountered a network error".
+ * Use NetworkOnly for all requests to firestore.googleapis.com.
+ */
 workbox.routing.registerRoute(
-  /^https:\/\/firestore\.googleapis\.com\/.*/i,
-  new workbox.strategies.NetworkFirst({
-    cacheName: 'firebase-firestore',
-    plugins: [
-      new workbox.expiration.ExpirationPlugin({
-        maxEntries: 100,
-        maxAgeSeconds: 24 * 60 * 60,
-      }),
-      new workbox.cacheableResponse.CacheableResponsePlugin({
-        statuses: [0, 200],
-      }),
-    ],
-  })
+  ({ url }) => url.origin === 'https://firestore.googleapis.com',
+  new workbox.strategies.NetworkOnly()
 )
 
 /**
  * Optional non-FCM web push fallback.
- * If you don't use other push providers, you can remove this.
  * Guarded to avoid handling FCM-delivered payloads twice.
  */
 self.addEventListener('push', (event) => {
