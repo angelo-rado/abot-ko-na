@@ -1,20 +1,20 @@
 /* eslint-disable no-undef */
 
 // Firebase SDK imports (compat) — must load before Workbox
-importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-app-compat.js')
+importScripts('https://www.gstatic.com/firebasejs/12.0.0/firebase-messaging-compat.js')
 
 // Init Firebase in SW (only keys needed for messaging)
 firebase.initializeApp({
-  apiKey: "AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y",
-  authDomain: "abot-ko-na.firebaseapp.com",
-  projectId: "abot-ko-na",
-  storageBucket: "abot-ko-na.appspot.com",
-  messagingSenderId: "882171741289",
-  appId: "1:882171741289:web:f7b8dc68a88bdae6a5cef8",
-});
+  apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
+  authDomain: 'abot-ko-na.firebaseapp.com',
+  projectId: 'abot-ko-na',
+  storageBucket: 'abot-ko-na.appspot.com',
+  messagingSenderId: '882171741289',
+  appId: '1:882171741289:web:f7b8dc68a88bdae6a5cef8',
+})
 
-const messaging = firebase.messaging();
+const messaging = firebase.messaging()
 
 /**
  * Background messages from FCM
@@ -22,19 +22,17 @@ const messaging = firebase.messaging();
  * We only call showNotification for DATA-ONLY payloads to avoid duplicates.
  */
 messaging.onBackgroundMessage((payload) => {
-  // Guard: let the browser handle notification-only messages (prevents double)
-  if (payload?.notification) return;
+  // Prevent double notifications: let browser handle notification payloads
+  if (payload?.notification) return
 
-  const title = payload?.data?.title || 'Abot Ko Na';
-  const body  = payload?.data?.body  || '📦 You have a new update!';
-  const url   = payload?.data?.url   || '/';
-
-  // Optional: collapse updates of the same type so they replace instead of stacking
+  const title = payload?.data?.title || 'Abot Ko Na'
+  const body = payload?.data?.body || '📦 You have a new update!'
+  const url = payload?.data?.url || '/'
   const tag =
     payload?.data?.tag ||
     [payload?.data?.type || 'general', payload?.data?.familyId, payload?.data?.deliveryId]
       .filter(Boolean)
-      .join(':');
+      .join(':')
 
   self.registration.showNotification(title, {
     body,
@@ -43,20 +41,20 @@ messaging.onBackgroundMessage((payload) => {
     data: { url },
     tag,
     renotify: false,
-  });
-});
+  })
+})
 
 // Now load Workbox after Firebase
-importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
+importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js')
 
 // Workbox setup
-self.__WB_MANIFEST;
+self.__WB_MANIFEST
 self.addEventListener('message', (event) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    self.skipWaiting()
   }
-});
-workbox.core.clientsClaim();
+})
+workbox.core.clientsClaim()
 
 // Cache Firestore reads conservatively
 workbox.routing.registerRoute(
@@ -73,31 +71,32 @@ workbox.routing.registerRoute(
       }),
     ],
   })
-);
+)
 
 /**
- * Optional non-FCM web push fallback
- * If you don't use any other push provider, you can delete this handler.
- * Kept here but guarded to avoid handling FCM-delivered payloads twice.
+ * Optional non-FCM web push fallback.
+ * If you don't use other push providers, you can remove this.
+ * Guarded to avoid handling FCM-delivered payloads twice.
  */
 self.addEventListener('push', (event) => {
-  // Try to parse; if it looks like an FCM payload, bail (FCM SDK already handled it)
-  let data = {};
-  try { data = event.data?.json?.() ?? event.data?.json() ?? {}; } catch {}
+  let data = {}
+  try {
+    data = event.data?.json?.() ?? event.data?.json() ?? {}
+  } catch {}
 
-  // Heuristic: common FCM markers in raw payloads
   const looksLikeFCM =
     data?.fcmOptions ||
     data?.fcmMessageId ||
     data?.from ||
-    data?.notification && (data?.data?.firebaseMessaging || data?.data?.google || data?.data?.gcm_message_id);
+    (data?.notification &&
+      (data?.data?.firebaseMessaging || data?.data?.google || data?.data?.gcm_message_id))
 
-  if (looksLikeFCM) return;
+  if (looksLikeFCM) return
 
-  const title = data?.notification?.title || data?.title || 'Abot Ko Na';
-  const body  = data?.notification?.body  || data?.body  || '📦 You have a new update!';
-  const url   = data?.data?.url || data?.notification?.click_action || '/';
-  const tag   = data?.data?.tag || 'general';
+  const title = data?.notification?.title || data?.title || 'Abot Ko Na'
+  const body = data?.notification?.body || data?.body || '📦 You have a new update!'
+  const url = data?.data?.url || data?.notification?.click_action || '/'
+  const tag = data?.data?.tag || 'general'
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -108,27 +107,27 @@ self.addEventListener('push', (event) => {
       tag,
       renotify: false,
     })
-  );
-});
+  )
+})
 
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const targetUrl = event.notification?.data?.url || '/';
+  event.notification.close()
+  const targetUrl = event.notification?.data?.url || '/'
 
   event.waitUntil(
     (async () => {
       const windowClients = await clients.matchAll({
         type: 'window',
         includeUncontrolled: true,
-      });
+      })
 
-      const desired = new URL(targetUrl, self.location.origin);
+      const desired = new URL(targetUrl, self.location.origin)
 
       for (const client of windowClients) {
         try {
-          const clientUrl = new URL(client.url);
+          const clientUrl = new URL(client.url)
           if (clientUrl.origin === desired.origin) {
-            return client.focus();
+            return client.focus()
           }
         } catch {
           // ignore; fallback to openWindow
@@ -136,8 +135,8 @@ self.addEventListener('notificationclick', (event) => {
       }
 
       if (clients.openWindow) {
-        return clients.openWindow(targetUrl);
+        return clients.openWindow(targetUrl)
       }
     })()
-  );
-});
+  )
+})

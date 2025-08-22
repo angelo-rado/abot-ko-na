@@ -17,6 +17,8 @@ import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { getToken, deleteToken } from 'firebase/messaging';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
+import DefaultFamilySelector from '@/app/components/DefaultFamilySelector';
+import DisplayNameEditor from '@/app/components/DisplayNameEditor';
 
 const VAPID_KEY =
   (
@@ -270,6 +272,16 @@ export default function SettingsPage() {
             </strong>
           </p>
         )}
+      </section>
+
+      {/* Display name */}
+      <section className="rounded-lg border p-4 space-y-3 bg-background">
+        <DisplayNameEditor />
+      </section>
+
+      {/* Default family */}
+      <section className="rounded-lg border p-4 space-y-3 bg-background">
+        <DefaultFamilySelector />
       </section>
 
       {/* Notifications */}

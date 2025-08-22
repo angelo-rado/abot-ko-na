@@ -20,6 +20,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useRouter } from 'next/navigation'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
+import BulkEditBar from './BulkEditBar' // ✅ NEW
 
 // ✅ Controlled AlertDialog (no Trigger) – avoids Children.only crash
 import {
@@ -43,17 +44,11 @@ function isMultiple(d: any) {
   if (d.type === 'single') return false
   if (typeof d.itemCount === 'number') return d.itemCount > 1
   if (Array.isArray(d.items)) return d.items.length > 1
-  // some datasets use 'order' for grouped/multiple
   if (d.type === 'order') return true
   return false
 }
-function isSingle(d: any) {
-  return !isMultiple(d)
-}
-function currency(n?: number | null) {
-  if (typeof n !== 'number') return '—'
-  return `₱${n.toFixed(2)}`
-}
+function isSingle(d: any) { return !isMultiple(d) }
+function currency(n?: number | null) { if (typeof n !== 'number') return '—'; return `₱${n.toFixed(2)}` }
 function itemsTotal(items?: any[]) {
   if (!Array.isArray(items)) return 0
   return items.reduce((s, it) => s + (typeof it?.price === 'number' ? it.price : 0), 0)
@@ -98,8 +93,8 @@ export default function DeliveriesPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const toastTimerRef = useRef<number | null>(null)
 
-  const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({}) // per-delivery notes toggles
-  const [itemsOpen, setItemsOpen] = useState<Record<string, boolean>>({}) // per-multiple-delivery expand/collapse
+  const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({})
+  const [itemsOpen, setItemsOpen] = useState<Record<string, boolean>>({})
 
   const router = useRouter()
   const isOnline = useOnlineStatus()
@@ -249,6 +244,52 @@ export default function DeliveriesPage() {
     catch (err) { console.error('delete failed', err); showToast('Delete failed') }
   }
 
+  // ✅ NEW: derived selected count
+  const selectedCount = useMemo(
+    () => Object.values(selectedIds).filter(Boolean).length,
+    [selectedIds]
+  )
+
+  // ✅ NEW: bulk handlers for bottom bar
+  const handleBulkDelete = useCallback(async () => {
+    const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
+    if (ids.length === 0) return
+    const ok = await showConfirm(
+      `Delete ${ids.length} delivery${ids.length > 1 ? 'ies' : ''}?`,
+      'This cannot be undone.',
+      { danger: true, confirmLabel: 'Delete' }
+    )
+    if (!ok) return
+    try {
+      await Promise.allSettled(
+        ids.map((id) => deleteDoc(doc(firestore, 'families', familyId!, 'deliveries', id)))
+      )
+      showToast('Deleted')
+      clearSelection()
+      setSelectionMode(false)
+    } catch (e) {
+      console.error('bulk delete failed', e)
+      showToast('Some deletions may have failed')
+    }
+  }, [selectedIds, familyId, showConfirm])
+
+  const handleBulkEdit = useCallback(() => {
+    const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
+    if (ids.length !== 1) {
+      showToast('Select exactly one delivery to edit.')
+      return
+    }
+    const d = deliveries.find((x) => x.id === ids[0])
+    if (!d) return
+    setEditingDelivery(d)
+    setOpenForm(true)
+  }, [selectedIds, deliveries])
+
+  const handleCancel = useCallback(() => {
+    setSelectionMode(false)
+    clearSelection()
+  }, [])
+
   const keyFor = (d: any) => `${d.id}-${d.updatedAt?.seconds || d.createdAt?.seconds || ''}`
 
   /* ---------------- Derived groups for current tab ---------------- */
@@ -266,7 +307,7 @@ export default function DeliveriesPage() {
   }
 
   return (
-    <div className="px-4 py-6 max-w-4xl mx-auto space-y-6 bg-background text-foreground">
+    <div className="px-4 py-6 pb-24 max-w-4xl mx-auto space-y-6 bg-background text-foreground">{/* ⬅️ pb-24 for sticky bar */}
       {/* Top controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1">
@@ -396,7 +437,6 @@ export default function DeliveriesPage() {
 
                         <DeliveryCard familyId={familyId!} {...props} />
 
-                        {/* Row actions */}
                         {!selectionMode && (
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
@@ -431,7 +471,6 @@ export default function DeliveriesPage() {
                           </div>
                         )}
 
-                        {/* Notes thread */}
                         {openNotes && (
                           <div className="mt-3">
                             <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
@@ -530,7 +569,6 @@ export default function DeliveriesPage() {
                           )}
                         </div>
 
-                        {/* Row actions */}
                         {!selectionMode && (
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
@@ -565,7 +603,6 @@ export default function DeliveriesPage() {
                           </div>
                         )}
 
-                        {/* Notes thread */}
                         {openNotes && (
                           <div className="mt-3">
                             <DeliveryNotesThread familyId={familyId!} deliveryId={d.id} />
@@ -581,12 +618,21 @@ export default function DeliveriesPage() {
         </>
       )}
 
+      {/* ✅ Sticky bulk actions inside the scroller */}
+      <BulkEditBar
+        visible={selectionMode}
+        selectedCount={selectedCount}
+        onEdit={handleBulkEdit}
+        onDelete={handleBulkDelete}
+        onCancel={handleCancel}
+      />
+
       {/* 🔁 Controlled AlertDialog replacement — no Trigger, no Children.only */}
       <AlertDialog
         open={confirmOpen}
         onOpenChange={(v) => {
           setConfirmOpen(v)
-          if (!v) handleConfirmResult(false) // treat outside click/esc as cancel
+          if (!v) handleConfirmResult(false)
         }}
       >
         <AlertDialogContent>
@@ -594,7 +640,7 @@ export default function DeliveriesPage() {
             <AlertDialogTitle>{confirmTitle}</AlertDialogTitle>
             <AlertDialogDescription>{confirmMessage}</AlertDialogDescription>
           </AlertDialogHeader>
-        <AlertDialogFooter>
+          <AlertDialogFooter>
             <AlertDialogCancel onClick={() => handleConfirmResult(false)}>
               {confirmCancelLabel}
             </AlertDialogCancel>
@@ -615,7 +661,7 @@ export default function DeliveriesPage() {
         </div>
       )}
 
-      {/* Form Dialog (prop shape bridged) */}
+      {/* Form Dialog */}
       {familyId && (
         <DeliveryFormDialog
           {...({ open: openForm, onOpenChange: setOpenForm, familyId, delivery: editingDelivery } as any)}
