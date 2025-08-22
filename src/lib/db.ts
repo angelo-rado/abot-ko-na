@@ -101,3 +101,6 @@ export class AbotKoNaDB extends Dexie {
 }
 
 export const db = new AbotKoNaDB()
+
+// Back-compat alias for older imports
+export type UserSettings = Setting;
