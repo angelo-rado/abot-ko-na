@@ -19,13 +19,14 @@ import {
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { Trash, ArrowUpDown  } from 'lucide-react'
+import { Trash, ArrowUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import SetFamilyHomeLocation from './SetFamilyHomeLocation'
 import DeleteFamilyButton from './DeleteFamilyButton'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/useAuth'
-import { TooltipContent, TooltipProvider, TooltipTrigger, Tooltip } from '@radix-ui/react-tooltip'
+// ✅ use shadcn tooltip wrapper, not radix primitives
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 type Family = {
   id: string
@@ -79,8 +80,8 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const profileCacheRef = useRef<Record<string, { name?: string; email?: string; photoURL?: string }>>({})
 
   // Realtime listener unsubs
-  const membersUnsubRef = useRef<() => void | null>(null)
-  const myRoleUnsubRef = useRef<() => void | null>(null)
+  const membersUnsubRef = useRef<(() => void) | null>(null)
+  const myRoleUnsubRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (open && family?.id) {
@@ -95,8 +96,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       setMembersLoading(false)
       setMyRole(null)
     }
-
-    // cleanup on unmount
     return () => {
       stopMembersRealtime()
       stopMyRoleRealtime()
@@ -248,7 +247,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     }
   }
 
-  // Remove member (owner/admin). now includes arrayRemove on family doc (best-effort)
+  // Remove member (owner/admin). No client writes to users/{uid} (rules block it) — server does the cleanup.
   const removeMember = async (memberId: string) => {
     if (!family?.id || !user?.uid) return
     const ownerId = family.owner ?? family.createdBy ?? null
@@ -262,50 +261,36 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     }
 
     setBusy(true)
-    // optimistic UI
     const prev = members
     setMembers(prev => prev.filter(m => m.id !== memberId))
 
     try {
-      // delete member subdoc (authoritative)
-      await deleteDoc(doc(firestore, 'families', family.id, 'members', memberId)).catch((e) => {
-        console.warn('deleteDoc member failed', e)
-      })
+      // 1) authoritative: delete membership doc
+      await deleteDoc(doc(firestore, 'families', family.id, 'members', memberId))
 
-      // best-effort: remove from families/{id}.members array if present
+      // 2) best-effort: maintain families/{id}.members array (helps queries)
       try {
         await updateDoc(doc(firestore, 'families', family.id), {
           members: arrayRemove(memberId),
-        }).catch((e) => {
-          console.warn('arrayRemove on family doc failed (non-fatal)', e)
         })
       } catch (e) {
-        console.warn('arrayRemove wrapper failed', e)
+        console.warn('arrayRemove on family doc failed (non-fatal)', e)
       }
 
-      // best-effort: remove family from user's familiesJoined
-      try {
-        await updateDoc(doc(firestore, 'users', memberId), {
-          familiesJoined: arrayRemove(family.id),
-        }).catch((e) => {
-          console.warn('update users.familiesJoined failed (non-fatal)', e)
-        })
-      } catch (e) {
-        console.warn('update users.familiesJoined wrapper failed', e)
-      }
+      // 3) DO NOT mutate users/{memberId} here (rules forbid). Cloud Function
+      //    onFamilyMemberRemoved handles user doc cleanup with admin rights.
 
       toast.success('Member removed')
     } catch (err) {
       console.error('removeMember failed', err)
       toast.error('Failed to remove member')
-      // revert optimistic
-      setMembers(prev)
+      setMembers(prev) // revert optimistic
     } finally {
       setBusy(false)
     }
   }
 
-  // Owner-only delete family (keeps behavior similar to your previous impl)
+  // Owner-only delete family
   const handleDeleteFamily = async () => {
     if (!family?.id) return
     if (!isOwner) {
@@ -314,7 +299,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     }
     setDeleting(true)
     try {
-      // delete members subcollection in a batch
       const membersRef = collection(firestore, 'families', family.id, 'members')
       const memSnap = await getDocs(membersRef)
       if (!mountedRef.current) return
@@ -323,7 +307,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         memSnap.docs.forEach(d => batch.delete(d.ref))
         await batch.commit()
       }
-      // delete family doc
       await deleteDoc(doc(firestore, 'families', family.id))
       toast.success('Family deleted')
       onOpenChange(false)
@@ -373,7 +356,8 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) { stopMembersRealtime(); stopMyRoleRealtime() } onOpenChange(v) }}>
-      <DialogContent className="sm:max-w-2xl">
+      {/* ✅ Silence Radix warning by adding aria-describedby={undefined} */}
+      <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>Manage {family?.name ?? 'family'}</DialogTitle>
         </DialogHeader>
@@ -474,20 +458,24 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
                         {canRemove ? (
                           <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button type="button" variant="ghost" size="sm" onClick={() => removeMember(m.id)} aria-label={`Remove ${m.name ?? 'member'}`} disabled={busy} >
-                            <Trash className="w-4 h-4 text-destructive" />
-                          </Button>
-                            </TooltipTrigger>
-                            <TooltipContent 
-                              className="bg-destructive text-white px-3 py-1.5 rounded text-xs shadow-md"
-                              sideOffset={8}>
-                              <p>Kick Member</p>
-                            </TooltipContent>
-                          </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => removeMember(m.id)}
+                                  aria-label={`Remove ${m.name ?? 'member'}`}
+                                  disabled={busy}
+                                >
+                                  <Trash className="w-4 h-4 text-destructive" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent className="bg-destructive text-white px-3 py-1.5 rounded text-xs shadow-md" sideOffset={8}>
+                                <p>Kick Member</p>
+                              </TooltipContent>
+                            </Tooltip>
                           </TooltipProvider>
-                          
                         ) : (
                           <div className="w-8" />
                         )}
@@ -525,7 +513,8 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
       {/* Fallback confirm delete dialog if DeleteFamilyButton isn't used */}
       <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
-        <DialogContent className="sm:max-w-md">
+        {/* ✅ Silence warning here too */}
+        <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>Delete family?</DialogTitle>
           </DialogHeader>

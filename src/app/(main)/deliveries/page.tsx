@@ -60,7 +60,7 @@ function etaLabel(raw: any) {
     if (typeof raw?.seconds === 'number') return new Date(raw.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const d = new Date(raw)
     if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {}
+  } catch { }
   return ''
 }
 
@@ -81,7 +81,7 @@ export default function DeliveriesPage() {
   const [openForm, setOpenForm] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<any | null>(null)
 
-  const [unsubDeliveries, setUnsubDeliveries] = useState<() => void>(() => () => {})
+  const [unsubDeliveries, setUnsubDeliveries] = useState<() => void>(() => () => { })
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null)
   const [confirmTitle, setConfirmTitle] = useState<string>('')
   const [confirmMessage, setConfirmMessage] = useState<string>('')
@@ -129,56 +129,56 @@ export default function DeliveriesPage() {
   // Families
   useEffect(() => {
     let unsub: (() => void) | null = null
-    ;(async () => {
-      if (!user?.uid) {
-        setFamilies([]); setFamilyId(null); setFamiliesLoading(false)
-        return
-      }
-
-      setFamiliesLoading(true)
-      const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
-      const unsubFn = onSnapshot(q, async (snapshot) => {
-        const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-        setFamilies(list)
-
-        if (familyId && !list.some((f) => f.id === familyId)) {
-          try { localStorage.removeItem(LOCAL_FAMILY_KEY) } catch { }
-          const userRef = doc(firestore, 'users', user.uid)
-          await updateDoc(userRef, { preferredFamily: null }).catch(() => {
-            return setDoc(userRef, { preferredFamily: null }, { merge: true })
-          })
-
-          if (list.length > 0) {
-            setFamilyId(list[0].id)
-            try { localStorage.setItem(LOCAL_FAMILY_KEY, list[0].id) } catch { }
-          } else setFamilyId(null)
-        } else if (!familyId && list.length > 0) {
-          let preferred: string | null = null
-          try { preferred = localStorage.getItem(LOCAL_FAMILY_KEY) } catch { }
-          if (!preferred) {
-            const snap = await getDoc(doc(firestore, 'users', user.uid))
-            if (snap.exists()) {
-              const data = snap.data() as any
-              preferred = data?.preferredFamily
-            }
-          }
-          setFamilyId(preferred || list[0].id)
+      ; (async () => {
+        if (!user?.uid) {
+          setFamilies([]); setFamilyId(null); setFamiliesLoading(false)
+          return
         }
-        setFamiliesLoading(false)
-      }, (err) => {
-        console.error('[Families] snapshot error', err)
-        setFamiliesLoading(false)
-      })
-      unsub = () => unsubFn()
-    })()
-    return () => { try { unsub?.() } catch {} }
+
+        setFamiliesLoading(true)
+        const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
+        const unsubFn = onSnapshot(q, async (snapshot) => {
+          const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
+          setFamilies(list)
+
+          if (familyId && !list.some((f) => f.id === familyId)) {
+            try { localStorage.removeItem(LOCAL_FAMILY_KEY) } catch { }
+            const userRef = doc(firestore, 'users', user.uid)
+            await updateDoc(userRef, { preferredFamily: null }).catch(() => {
+              return setDoc(userRef, { preferredFamily: null }, { merge: true })
+            })
+
+            if (list.length > 0) {
+              setFamilyId(list[0].id)
+              try { localStorage.setItem(LOCAL_FAMILY_KEY, list[0].id) } catch { }
+            } else setFamilyId(null)
+          } else if (!familyId && list.length > 0) {
+            let preferred: string | null = null
+            try { preferred = localStorage.getItem(LOCAL_FAMILY_KEY) } catch { }
+            if (!preferred) {
+              const snap = await getDoc(doc(firestore, 'users', user.uid))
+              if (snap.exists()) {
+                const data = snap.data() as any
+                preferred = data?.preferredFamily
+              }
+            }
+            setFamilyId(preferred || list[0].id)
+          }
+          setFamiliesLoading(false)
+        }, (err) => {
+          console.error('[Families] snapshot error', err)
+          setFamiliesLoading(false)
+        })
+        unsub = () => unsubFn()
+      })()
+    return () => { try { unsub?.() } catch { } }
   }, [user?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist selection
   const selectFamily = async (id: string | null) => {
     setFamilyId(id)
     if (!user?.uid) return
-    try { localStorage.setItem(LOCAL_FAMILY_KEY, id || '') } catch {}
+    try { localStorage.setItem(LOCAL_FAMILY_KEY, id || '') } catch { }
     try { await updateDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }) }
     catch { await setDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }, { merge: true }) }
   }
@@ -188,7 +188,7 @@ export default function DeliveriesPage() {
     if (!familyId) return
 
     setLoadingDeliveries(true)
-    try { unsubDeliveries?.() } catch {}
+    try { unsubDeliveries?.() } catch { }
     const q = query(
       collection(firestore, 'families', familyId, 'deliveries'),
       orderBy('createdAt', 'desc')
@@ -619,13 +619,15 @@ export default function DeliveriesPage() {
       )}
 
       {/* ✅ Sticky bulk actions inside the scroller */}
-      <BulkEditBar
-        visible={selectionMode}
-        selectedCount={selectedCount}
-        onEdit={handleBulkEdit}
-        onDelete={handleBulkDelete}
-        onCancel={handleCancel}
-      />
+      {selectionMode && (
+        <BulkEditBar
+          visible
+          selectedCount={selectedCount}
+          onEdit={handleBulkEdit}
+          onDelete={handleBulkDelete}
+          onCancel={handleCancel}
+        />
+      )}
 
       {/* 🔁 Controlled AlertDialog replacement — no Trigger, no Children.only */}
       <AlertDialog

@@ -54,8 +54,8 @@ export default function SettingsPage() {
   const currentTheme = mounted ? (theme ?? 'system') : 'system';
 
   const offlineBanner = !isOnline ? (
-  <p className="text-center text-red-500">You're offline — cached content only.</p>
-) : null
+    <p className="text-center text-red-500">You're offline — cached content only.</p>
+  ) : null
 
   // auth gate
   useEffect(() => {
@@ -143,7 +143,7 @@ export default function SettingsPage() {
 
       try {
         localStorage.setItem('abotko.fcmToken', token);
-      } catch {}
+      } catch { }
 
       setNotifEnabled(true);
       toast.success('Notifications enabled');
@@ -171,11 +171,11 @@ export default function SettingsPage() {
       let token: string | null = null;
       try {
         token = localStorage.getItem('abotko.fcmToken');
-      } catch {}
+      } catch { }
       if (!token && messaging && VAPID_KEY) {
         try {
           token = await getToken(messaging, { vapidKey: VAPID_KEY });
-        } catch {}
+        } catch { }
       }
 
       // delete on device
@@ -199,7 +199,7 @@ export default function SettingsPage() {
 
       try {
         localStorage.removeItem('abotko.fcmToken');
-      } catch {}
+      } catch { }
 
       setNotifEnabled(false);
       toast.success('Notifications disabled');
@@ -218,113 +218,111 @@ export default function SettingsPage() {
 
   return (
     <>
-    {offlineBanner}
-    <main className="max-w-xl mx-auto p-6 space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-xl font-semibold">Settings</h1>
-        <Separator />
-      </div>
-
-      <div className="space-y-1">
-        <p className="text-sm">
-          Logged in as <strong>{user.name ?? 'User'}</strong>
-        </p>
-        <p className="text-xs text-muted-foreground">{user.email ?? ''}</p>
-      </div>
-
-      {/* Appearance */}
-      <section className="rounded-lg border p-4 space-y-3 bg-background">
-        <Label className="text-sm font-medium">Appearance</Label>
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={currentTheme === 'system' ? 'default' : 'outline'}
-            onClick={() => setTheme('system')}
-            className="gap-1"
-          >
-            <Monitor className="w-4 h-4" /> System
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={currentTheme === 'light' ? 'default' : 'outline'}
-            onClick={() => setTheme('light')}
-            className="gap-1"
-          >
-            <Sun className="w-4 h-4" /> Light
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={currentTheme === 'dark' ? 'default' : 'outline'}
-            onClick={() => setTheme('dark')}
-            className="gap-1"
-          >
-            <Moon className="w-4 h-4" /> Dark
-          </Button>
+      {offlineBanner}
+      <main className="max-w-xl mx-auto p-6 space-y-6">
+        <div className="space-y-2">
+          <h1 className="text-xl font-semibold">Settings</h1>
+          <Separator />
         </div>
-        {mounted && (
-          <p className="text-xs text-muted-foreground">
-            Active theme:{' '}
-            <strong>
-              {currentTheme === 'system' ? `System (${resolvedTheme})` : currentTheme}
-            </strong>
-          </p>
-        )}
-      </section>
 
-      {/* Display name */}
-      <section className="rounded-lg border p-4 space-y-3 bg-background">
-        <DisplayNameEditor />
-      </section>
-
-      {/* Default family */}
-      <section className="rounded-lg border p-4 space-y-3 bg-background">
-        <DefaultFamilySelector />
-      </section>
-
-      {/* Notifications */}
-      <section className="rounded-lg border p-4 flex items-start justify-between gap-4 bg-background">
         <div className="space-y-1">
-          <Label className="text-sm font-medium">Push notifications</Label>
-          <p className="text-xs text-muted-foreground">
-            Get alerts for today’s deliveries and status updates.
+          <p className="text-sm">
+            Logged in as <strong>{user.name ?? 'User'}</strong>
           </p>
-
-          {/* Permission guidance */}
-          {notificationsSupported && permission === 'denied' && (
-            <p className="text-xs text-red-500 mt-1">
-              Notifications are <strong>blocked</strong> for this site. Please enable them
-              in your browser’s Site Settings, then try again.
-            </p>
-          )}
-          {!notificationsSupported && (
-            <p className="text-xs text-red-500 mt-1">
-              Not supported by this browser.
-            </p>
-          )}
+          <p className="text-xs text-muted-foreground">{user.email ?? ''}</p>
         </div>
-        <div className="flex items-center gap-2">
-          {working && (
-            <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />
-          )}
-          <Switch
-            checked={notifEnabled}
-            onCheckedChange={onToggleChange}
-            disabled={working || !notificationsSupported || permission === 'denied'}
-            aria-label="Toggle push notifications"
-          />
-        </div>
-      </section>
+        <section className="rounded-lg border p-4 space-y-3 bg-background">
+          {/* Appearance */}
+          <section className="rounded-lg border p-4 space-y-3 bg-background">
+            <Label className="text-sm font-medium">Appearance</Label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={currentTheme === 'system' ? 'default' : 'outline'}
+                onClick={() => setTheme('system')}
+                className="gap-1"
+              >
+                <Monitor className="w-4 h-4" /> System
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={currentTheme === 'light' ? 'default' : 'outline'}
+                onClick={() => setTheme('light')}
+                className="gap-1"
+              >
+                <Sun className="w-4 h-4" /> Light
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={currentTheme === 'dark' ? 'default' : 'outline'}
+                onClick={() => setTheme('dark')}
+                className="gap-1"
+              >
+                <Moon className="w-4 h-4" /> Dark
+              </Button>
+            </div>
+            {mounted && (
+              <p className="text-xs text-muted-foreground">
+                Active theme:{' '}
+                <strong>
+                  {currentTheme === 'system' ? `System (${resolvedTheme})` : currentTheme}
+                </strong>
+              </p>
+            )}
+          </section>
 
-      <Separator />
+          {/* Display name */}
 
-      <PresenceSettings />
-      <Separator />
+          <DisplayNameEditor />
 
-      <LogoutButton />
-    </main>
+          {/* Default family */}
+          <DefaultFamilySelector />
+
+          {/* Notifications */}
+          <section className="rounded-lg border p-4 flex items-start justify-between gap-4 bg-background">
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Push notifications</Label>
+              <p className="text-xs text-muted-foreground">
+                Get alerts for today’s deliveries and status updates.
+              </p>
+
+              {/* Permission guidance */}
+              {notificationsSupported && permission === 'denied' && (
+                <p className="text-xs text-red-500 mt-1">
+                  Notifications are <strong>blocked</strong> for this site. Please enable them
+                  in your browser’s Site Settings, then try again.
+                </p>
+              )}
+              {!notificationsSupported && (
+                <p className="text-xs text-red-500 mt-1">
+                  Not supported by this browser.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {working && (
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" aria-hidden />
+              )}
+              <Switch
+                checked={notifEnabled}
+                onCheckedChange={onToggleChange}
+                disabled={working || !notificationsSupported || permission === 'denied'}
+                aria-label="Toggle push notifications"
+              />
+            </div>
+          </section>
+        </section>
+
+        <Separator />
+
+        <PresenceSettings />
+        <Separator />
+
+        <LogoutButton />
+      </main>
     </>
   );
 }
