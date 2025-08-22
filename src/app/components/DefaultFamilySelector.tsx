@@ -1,3 +1,4 @@
+// DefaultFamilySelector (patched)
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -5,8 +6,7 @@ import { toast } from 'sonner'
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
 import {
-  collectionGroup,
-  documentId,
+  collection,
   doc,
   getDoc,
   onSnapshot,
@@ -30,7 +30,7 @@ export default function DefaultFamilySelector() {
   const [saving, setSaving] = useState(false)
   const [preferred, setPreferred] = useState<string | null>(null)
 
-  // Hydrate families from membership: families/{id}/members/{uid}
+  // 🔄 Load families by membership array (no collectionGroup + documentId)
   useEffect(() => {
     if (!user?.uid) {
       setFamilies([])
@@ -39,38 +39,20 @@ export default function DefaultFamilySelector() {
     }
 
     setLoading(true)
-    const q = query(collectionGroup(firestore, 'members'), where(documentId(), '==', user.uid))
-    const unsub = onSnapshot(q, async (snap) => {
-      const ids = Array.from(
-        new Set(
-          snap.docs
-            .map((d) => d.ref.parent.parent?.id)
-            .filter((v): v is string => typeof v === 'string' && v.length > 0)
-        )
-      )
-
-      const out: Family[] = []
-      await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const fam = await getDoc(doc(firestore, 'families', id))
-            if (fam.exists()) {
-              const data = fam.data() as any
-              out.push({ id, name: typeof data?.name === 'string' ? data.name : undefined })
-            } else {
-              out.push({ id })
-            }
-          } catch {
-            out.push({ id })
-          }
+    const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: Family[] = snap.docs.map((d) => {
+          const data = d.data() as any
+          return { id: d.id, name: typeof data?.name === 'string' ? data.name : undefined }
         })
-      )
-
-      out.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-      setFamilies(out)
-      setLoading(false)
-    })
-
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        setFamilies(list)
+        setLoading(false)
+      },
+      () => setLoading(false)
+    )
     return () => unsub()
   }, [user?.uid])
 
@@ -94,7 +76,6 @@ export default function DefaultFamilySelector() {
     })()
   }, [user?.uid])
 
-  // Persist helper
   const persistPreferred = async (next: string | null) => {
     if (!user?.uid) return
     setSaving(true)
@@ -110,7 +91,7 @@ export default function DefaultFamilySelector() {
         await setDoc(userRef, { preferredFamily: next }, { merge: true })
       })
       toast.success(next ? 'Default family updated' : 'Default family cleared')
-    } catch (e) {
+    } catch {
       toast.error('Could not update default family')
     } finally {
       setSaving(false)
@@ -131,7 +112,7 @@ export default function DefaultFamilySelector() {
       ) : families.length === 0 ? (
         <p className="text-xs text-muted-foreground">You haven’t joined any families yet.</p>
       ) : (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full">
           <Select
             value={preferred ?? ''}
             onValueChange={(val) => persistPreferred(val === '' ? null : val)}
@@ -140,10 +121,7 @@ export default function DefaultFamilySelector() {
               <SelectValue placeholder="Choose default…" />
             </SelectTrigger>
             <SelectContent>
-              {/* Optional "None" when user has multiple families */}
-              {families.length > 1 && (
-                <SelectItem value="">— None —</SelectItem>
-              )}
+              {families.length > 1 && <SelectItem value="">— None —</SelectItem>}
               {families.map((f) => (
                 <SelectItem key={f.id} value={f.id}>
                   {f.name || f.id}
@@ -153,13 +131,7 @@ export default function DefaultFamilySelector() {
           </Select>
 
           {canClear && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => persistPreferred(null)}
-              disabled={saving}
-              title="Clear default"
-            >
+            <Button variant="outline" size="sm" onClick={() => persistPreferred(null)} disabled={saving}>
               Clear
             </Button>
           )}

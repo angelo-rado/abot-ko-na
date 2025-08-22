@@ -1,18 +1,12 @@
+// FamilyPicker (patched hydration)
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
 import {
-  doc,
-  getDoc,
-  updateDoc,
-  setDoc,
-  collectionGroup,
-  onSnapshot,
-  query,
-  where,
-  documentId,
+  doc, getDoc, updateDoc, setDoc,
+  collection, onSnapshot, query, where,
 } from 'firebase/firestore'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -23,7 +17,7 @@ type Family = { id: string; name?: string }
 type FamilyPickerProps = {
   familyId: string | null
   onFamilyChange: (id: string | null) => void
-  families: Family[]               // external list still supported
+  families: Family[]
   loading?: boolean
 }
 
@@ -39,65 +33,36 @@ export default function FamilyPicker({
   const [preferredFamily, setPreferredFamily] = useState<string | null>(null)
   const [settingDefault, setSettingDefault] = useState(false)
 
-  // 🔄 Self-hydration when external families are empty/outdated
   const [hydratedFamilies, setHydratedFamilies] = useState<Family[] | null>(null)
 
-  // choose which list to show: prop wins when provided; fallback to hydrated
   const availableFamilies = useMemo<Family[]>(() => {
     if (families && families.length > 0) return families
     return hydratedFamilies ?? []
   }, [families, hydratedFamilies])
 
-  // === Hydrate from membership subcollection when needed ===
+  // 🔄 Hydrate from families.members when parent doesn't provide a list
   useEffect(() => {
     if (!user?.uid) { setHydratedFamilies(null); return }
-    if (families && families.length > 0) { setHydratedFamilies(null); return } // parent controls list
+    if (families && families.length > 0) { setHydratedFamilies(null); return }
 
-    const q = query(collectionGroup(firestore, 'members'), where(documentId(), '==', user.uid))
-    const unsub = onSnapshot(q, async (snap) => {
-      const ids = Array.from(
-        new Set(
-          snap.docs
-            .map((d) => d.ref.parent.parent?.id)
-            .filter((v): v is string => typeof v === 'string' && v.length > 0)
-        )
-      )
-
-      // fetch family names (best-effort)
-      const out: Family[] = []
-      await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const fam = await getDoc(doc(firestore, 'families', id))
-            if (fam.exists()) {
-              const data = fam.data() as any
-              out.push({ id, name: typeof data?.name === 'string' ? data.name : undefined })
-            } else {
-              out.push({ id }) // still listable by id
-            }
-          } catch {
-            out.push({ id })
-          }
-        })
-      )
-
+    const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
+    const unsub = onSnapshot(q, (snap) => {
+      const out: Family[] = snap.docs.map((d) => {
+        const data = d.data() as any
+        return { id: d.id, name: typeof data?.name === 'string' ? data.name : undefined }
+      })
       out.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       setHydratedFamilies(out)
     })
-
     return () => unsub()
   }, [user?.uid, families])
 
-  // === Load preferred family from LS or user doc on mount ===
+  // Load preferred from LS or user doc
   useEffect(() => {
     let cancelled = false
-
     try {
       const stored = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_FAMILY_KEY) : null
-      if (stored && !cancelled) {
-        setPreferredFamily(stored)
-        return
-      }
+      if (stored && !cancelled) { setPreferredFamily(stored); return }
     } catch {}
 
     ;(async () => {
@@ -107,24 +72,20 @@ export default function FamilyPicker({
         const snap = await getDoc(userRef)
         if (snap.exists()) {
           const data = snap.data() as Record<string, any>
-          if (data?.preferredFamily) {
-            if (!cancelled) {
-              setPreferredFamily(data.preferredFamily as string)
-              try { localStorage.setItem(LOCAL_FAMILY_KEY, data.preferredFamily as string) } catch {}
-            }
+          if (data?.preferredFamily && !cancelled) {
+            setPreferredFamily(data.preferredFamily as string)
+            try { localStorage.setItem(LOCAL_FAMILY_KEY, data.preferredFamily as string) } catch {}
           }
         }
       } catch {}
     })()
-
     return () => { cancelled = true }
   }, [user?.uid])
 
-  // === Propagate preferredFamily to parent once available ===
+  // Propagate preferred to parent if parent hasn't selected yet
   useEffect(() => {
     if (!preferredFamily) return
-    if (familyId) return // parent already chose
-
+    if (familyId) return
     if (availableFamilies.some(f => f.id === preferredFamily)) {
       onFamilyChange(preferredFamily)
     }
@@ -132,35 +93,27 @@ export default function FamilyPicker({
   }, [
     preferredFamily,
     familyId,
-    // depend on a stable signature of availableFamilies
-    // (avoids reruns from referential changes)
     availableFamilies.length,
     availableFamilies.map(f => f.id).join('|'),
   ])
 
-  // === Auto-pick when the user has exactly one family and no preferred ===
+  // Auto-pick single family
   useEffect(() => {
     if (!user?.uid) return
     if (preferredFamily) return
     if (!availableFamilies || availableFamilies.length !== 1) return
 
     const only = availableFamilies[0]
-    persistPreferredFamily(only.id).then(() => {
-      onFamilyChange(only.id)
-    }).catch((err) => {
-      console.warn('Failed to persist default for single family', err)
-    })
+    persistPreferredFamily(only.id).then(() => onFamilyChange(only.id)).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [availableFamilies, user?.uid]) // don't include preferredFamily to avoid loops
+  }, [availableFamilies, user?.uid])
 
-  // === Helper: persist preferred family locally + server ===
   const persistPreferredFamily = async (id: string | null) => {
     setPreferredFamily(id)
     try {
       if (id) localStorage.setItem(LOCAL_FAMILY_KEY, id)
       else localStorage.removeItem(LOCAL_FAMILY_KEY)
     } catch {}
-
     if (!user?.uid) return
     setSettingDefault(true)
     try {
@@ -168,8 +121,6 @@ export default function FamilyPicker({
       await updateDoc(userRef, { preferredFamily: id }).catch(async () => {
         await setDoc(userRef, { preferredFamily: id }, { merge: true })
       })
-    } catch (err) {
-      console.warn('Could not persist preferredFamily to Firestore', err)
     } finally {
       setSettingDefault(false)
     }
@@ -192,10 +143,7 @@ export default function FamilyPicker({
     <div className="mb-4">
       <label className="text-sm text-muted-foreground">Family Picker:</label>
 
-      <Select
-        value={familyId ?? ''}
-        onValueChange={(val) => onFamilyChange(val === '' ? null : val)}
-      >
+      <Select value={familyId ?? ''} onValueChange={(val) => onFamilyChange(val === '' ? null : val)}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="Select Family" />
         </SelectTrigger>
@@ -230,16 +178,11 @@ export default function FamilyPicker({
                       onClick={async (e) => {
                         e.stopPropagation()
                         e.preventDefault()
-
                         if (isDefault) {
-                          if (availableFamilies.length === 1) {
-                            console.log('[FamilyPicker] Only one family exists — cannot unset default')
-                            return
-                          }
+                          if (availableFamilies.length === 1) return
                           await persistPreferredFamily(null)
                           return
                         }
-
                         await persistPreferredFamily(f.id)
                         onFamilyChange(f.id)
                       }}
