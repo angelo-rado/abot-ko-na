@@ -196,11 +196,6 @@ export default function HomePage() {
           <Link href="/settings" className="text-sm underline">Change</Link>
         </div>
 
-        {/* Your existing home content that uses `familyId` */}
-        <div className="text-sm text-muted-foreground">
-          {familyId ? `Showing home for family ${familyId}` : 'Select a family in Settings to get started'}
-        </div>
-
         {/* Who's Home Card */}
         <Card>
           <CardHeader>

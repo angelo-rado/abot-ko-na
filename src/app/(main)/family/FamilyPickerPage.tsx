@@ -7,8 +7,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
 import {
   collection,
-  doc,
-  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -25,7 +23,6 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import JoinFamilyModal from '@/app/components/JoinFamilyModal'
 import CreateFamilyModal from '@/app/components/CreateFamilyModal'
-import { useSelectedFamily } from '@/lib/selected-family'
 
 type Family = {
   id: string
@@ -34,8 +31,6 @@ type Family = {
   createdAt?: Date | null
   memberCount?: number
 }
-
-const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
 function toDate(v: any): Date | null {
   if (!v) return null
@@ -51,7 +46,6 @@ export default function FamilyPickerPage() {
   const search = useSearchParams()
   const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
 
-  const { setFamilyId } = useSelectedFamily()
   const cleanedJoinedToast = useRef<boolean>(false)
 
   const [families, setFamilies] = useState<Family[]>([])
@@ -141,20 +135,12 @@ export default function FamilyPickerPage() {
     [families, user?.uid]
   )
 
-  // unified selection (provider + persist + route)
-  const selectFamily = useCallback(
+  // ✅ Navigate to family page (do NOT set default here; Settings controls default)
+  const goToFamily = useCallback(
     async (fid: string) => {
-      try { localStorage.setItem(LOCAL_FAMILY_KEY, fid) } catch {}
-      try {
-        if (user?.uid) {
-          const { updateDoc } = await import('firebase/firestore')
-          await updateDoc(doc(firestore, 'users', user.uid), { preferredFamily: fid })
-        }
-      } catch { /* best-effort */ }
-      await setFamilyId(fid)
-      router.push('/deliveries')
+      router.push(`/family/${fid}`)
     },
-    [router, setFamilyId, user?.uid]
+    [router]
   )
 
   const renderFamilyCard = (f: Family) => {
@@ -173,11 +159,11 @@ export default function FamilyPickerPage() {
           tabIndex={0}
           aria-label={`Open ${f.name || 'family'}`}
           className="group hover:shadow-md transition-shadow cursor-pointer"
-          onClick={() => selectFamily(f.id)}
+          onClick={() => goToFamily(f.id)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault()
-              selectFamily(f.id)
+              goToFamily(f.id)
             }
           }}
         >
