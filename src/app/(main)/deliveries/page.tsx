@@ -3,12 +3,13 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import {
-  collection, query, where, orderBy, onSnapshot, doc,
+  collection, query, orderBy, onSnapshot, doc,
   getDoc, updateDoc, setDoc, deleteDoc,
 } from 'firebase/firestore'
 
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
+import { useSelectedFamily } from '@/lib/selected-family'
 import FamilyPicker from '@/app/components/FamilyPicker'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -20,7 +21,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { useRouter } from 'next/navigation'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
-import BulkEditBar from './BulkEditBar' // ✅ NEW
+import BulkEditBar from './BulkEditBar'
 
 // ✅ Controlled AlertDialog (no Trigger) – avoids Children.only crash
 import {
@@ -34,11 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
-/* ---------------------------
-   Helpers
----------------------------- */
-const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
-
+/* --------------------------- Helpers ---------------------------- */
 function isMultiple(d: any) {
   if (!d) return false
   if (d.type === 'single') return false
@@ -60,17 +57,13 @@ function etaLabel(raw: any) {
     if (typeof raw?.seconds === 'number') return new Date(raw.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const d = new Date(raw)
     if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch { }
+  } catch {}
   return ''
 }
 
 export default function DeliveriesPage() {
   const { user, loading: authLoading } = useAuth()
-
-  const [families, setFamilies] = useState<any[]>([])
-  const [familiesLoading, setFamiliesLoading] = useState(true)
-  const [familyId, setFamilyId] = useState<string | null>(null)
-
+  const { families, familyId, setFamilyId, loadingFamilies } = useSelectedFamily()
   const [deliveries, setDeliveries] = useState<any[]>([])
   const [loadingDeliveries, setLoadingDeliveries] = useState(true)
   const [tab, setTab] = useState<'upcoming' | 'archived'>('upcoming')
@@ -81,7 +74,7 @@ export default function DeliveriesPage() {
   const [openForm, setOpenForm] = useState(false)
   const [editingDelivery, setEditingDelivery] = useState<any | null>(null)
 
-  const [unsubDeliveries, setUnsubDeliveries] = useState<() => void>(() => () => { })
+  // ✅ fix: init confirmResolveRef with null to satisfy TS
   const confirmResolveRef = useRef<((v: boolean) => void) | null>(null)
   const [confirmTitle, setConfirmTitle] = useState<string>('')
   const [confirmMessage, setConfirmMessage] = useState<string>('')
@@ -126,74 +119,23 @@ export default function DeliveriesPage() {
     setConfirmOpen(true)
   }), [])
 
-  // Families
-  useEffect(() => {
-    let unsub: (() => void) | null = null
-      ; (async () => {
-        if (!user?.uid) {
-          setFamilies([]); setFamilyId(null); setFamiliesLoading(false)
-          return
-        }
-
-        setFamiliesLoading(true)
-        const q = query(collection(firestore, 'families'), where('members', 'array-contains', user.uid))
-        const unsubFn = onSnapshot(q, async (snapshot) => {
-          const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
-          setFamilies(list)
-
-          if (familyId && !list.some((f) => f.id === familyId)) {
-            try { localStorage.removeItem(LOCAL_FAMILY_KEY) } catch { }
-            const userRef = doc(firestore, 'users', user.uid)
-            await updateDoc(userRef, { preferredFamily: null }).catch(() => {
-              return setDoc(userRef, { preferredFamily: null }, { merge: true })
-            })
-
-            if (list.length > 0) {
-              setFamilyId(list[0].id)
-              try { localStorage.setItem(LOCAL_FAMILY_KEY, list[0].id) } catch { }
-            } else setFamilyId(null)
-          } else if (!familyId && list.length > 0) {
-            let preferred: string | null = null
-            try { preferred = localStorage.getItem(LOCAL_FAMILY_KEY) } catch { }
-            if (!preferred) {
-              const snap = await getDoc(doc(firestore, 'users', user.uid))
-              if (snap.exists()) {
-                const data = snap.data() as any
-                preferred = data?.preferredFamily
-              }
-            }
-            setFamilyId(preferred || list[0].id)
-          }
-          setFamiliesLoading(false)
-        }, (err) => {
-          console.error('[Families] snapshot error', err)
-          setFamiliesLoading(false)
-        })
-        unsub = () => unsubFn()
-      })()
-    return () => { try { unsub?.() } catch { } }
-  }, [user?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Persist selection
-  const selectFamily = async (id: string | null) => {
-    setFamilyId(id)
-    if (!user?.uid) return
-    try { localStorage.setItem(LOCAL_FAMILY_KEY, id || '') } catch { }
-    try { await updateDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }) }
-    catch { await setDoc(doc(firestore, 'users', user.uid), { preferredFamily: id }, { merge: true }) }
-  }
+  // Persist selection through the provider
+  const selectFamily = async (id: string | null) => { await setFamilyId(id) }
 
   // deliveries listener
   useEffect(() => {
-    if (!familyId) return
+    if (!familyId) {
+      setDeliveries([])
+      setLoadingDeliveries(false)
+      return
+    }
 
     setLoadingDeliveries(true)
-    try { unsubDeliveries?.() } catch { }
-    const q = query(
+    const qy = query(
       collection(firestore, 'families', familyId, 'deliveries'),
       orderBy('createdAt', 'desc')
     )
-    const unsub = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(qy, (snapshot) => {
       const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
       setDeliveries(list)
       setLoadingDeliveries(false)
@@ -202,9 +144,8 @@ export default function DeliveriesPage() {
       setLoadingDeliveries(false)
     })
 
-    setUnsubDeliveries(() => unsub)
-    return () => { try { unsub() } catch { } }
-  }, [familyId, user?.uid]) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { try { unsub() } catch {} }
+  }, [familyId])
 
   /* ---------------- Partition & filtering ---------------- */
   const isArchived = useCallback((d: any) => {
@@ -244,13 +185,12 @@ export default function DeliveriesPage() {
     catch (err) { console.error('delete failed', err); showToast('Delete failed') }
   }
 
-  // ✅ NEW: derived selected count
+  // ✅ derived selected count
   const selectedCount = useMemo(
     () => Object.values(selectedIds).filter(Boolean).length,
     [selectedIds]
   )
 
-  // ✅ NEW: bulk handlers for bottom bar
   const handleBulkDelete = useCallback(async () => {
     const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
     if (ids.length === 0) return
@@ -298,7 +238,7 @@ export default function DeliveriesPage() {
   const singles = filtered.filter(isSingle)
   const multiples = filtered.filter(isMultiple)
 
-  if (authLoading) {
+  if (authLoading || loadingFamilies) {
     return (
       <main className="flex items-center justify-center h-screen">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -307,11 +247,11 @@ export default function DeliveriesPage() {
   }
 
   return (
-    <div className="px-4 py-6 pb-24 max-w-4xl mx-auto space-y-6 bg-background text-foreground">{/* ⬅️ pb-24 for sticky bar */}
+    <div className="px-4 py-6 pb-24 max-w-4xl mx-auto space-y-6 bg-background text-foreground">
       {/* Top controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1">
-          {familiesLoading || authLoading ? (
+          {loadingFamilies ? (
             <div>
               <label className="text-sm text-muted-foreground">Viewing Dashboard for:</label>
               <Skeleton className="h-10 w-full mt-2" />
@@ -319,9 +259,9 @@ export default function DeliveriesPage() {
           ) : (
             <FamilyPicker
               familyId={familyId}
-              onFamilyChange={(id) => selectFamily(id)}
+              onFamilyChange={selectFamily}
               families={families}
-              loading={familiesLoading}
+              loading={loadingFamilies}
             />
           )}
         </div>
@@ -395,7 +335,7 @@ export default function DeliveriesPage() {
       ) : families.length === 0 ? (
         <div className="text-center py-10 space-y-4">
           <p className="text-muted-foreground text-sm">
-            You haven't joined or created a family yet. Deliveries require a family group.
+            You haven&apos;t joined or created a family yet. Deliveries require a family group.
           </p>
           <div className="flex justify-center">
             <Button onClick={() => router.push('/family')}>Go to Family</Button>
@@ -618,18 +558,16 @@ export default function DeliveriesPage() {
         </>
       )}
 
-      {/* ✅ Sticky bulk actions inside the scroller */}
-      {selectionMode && (
-        <BulkEditBar
-          visible
-          selectedCount={selectedCount}
-          onEdit={handleBulkEdit}
-          onDelete={handleBulkDelete}
-          onCancel={handleCancel}
-        />
-      )}
+      {/* ✅ Sticky bulk actions — only when in selection mode */}
+      <BulkEditBar
+        visible={selectionMode}
+        selectedCount={selectedCount}
+        onEdit={handleBulkEdit}
+        onDelete={handleBulkDelete}
+        onCancel={handleCancel}
+      />
 
-      {/* 🔁 Controlled AlertDialog replacement — no Trigger, no Children.only */}
+      {/* Confirm dialog */}
       <AlertDialog
         open={confirmOpen}
         onOpenChange={(v) => {

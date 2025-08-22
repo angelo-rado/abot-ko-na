@@ -393,6 +393,11 @@ export default function HomePage() {
         loading={familiesLoading}
       />
 
+      {/* Your existing home content that uses `familyId` goes here */}
+      <div className="text-sm text-muted-foreground">
+        {familyId ? `Showing home for family ${familyId}` : 'Select a family to get started'}
+      </div>
+
       {/* Who's Home Card */}
       <Card>
         <CardHeader>

@@ -10,6 +10,7 @@ import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
 import PTR from '../components/PullToRefresh'
+import { SelectedFamilyProvider } from '@/lib/selected-family'
 
 /** ==== Push config ==== */
 const VAPID_KEY =
@@ -69,7 +70,7 @@ function RouteFlash() {
         else if (type === 'warning') (toast as any).warning?.(msg) ?? toast.message(msg)
         else toast.success(msg)
       })
-    } catch {}
+    } catch { }
   }, [])
   return null
 }
@@ -78,7 +79,7 @@ function RouteFlash() {
 function StandaloneShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const softRefresh = async () => {
-    try { router.refresh() } catch {}
+    try { router.refresh() } catch { }
     await new Promise((r) => setTimeout(r, 250))
   }
   return (
@@ -131,7 +132,7 @@ function SwipeShell({
       if (isIOSWebKit()) {
         window.dispatchEvent(new CustomEvent('abot-safari-fallback', { detail: { uid: u.uid } }))
       } else {
-        ;(async () => {
+        ; (async () => {
           try {
             if (!('serviceWorker' in navigator) || !('Notification' in window) || !VAPID_KEY) return
             const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js')
@@ -148,7 +149,7 @@ function SwipeShell({
                 body: JSON.stringify({ token, userId: u.uid }),
               })
             }
-          } catch {}
+          } catch { }
         })()
       }
     })
@@ -294,7 +295,7 @@ function SwipeShell({
   const getPaneScrollEl = (i: number) => () => paneRefs.current[i] as Element | Document | null
 
   const softRefresh = async () => {
-    try { router.refresh() } catch {}
+    try { router.refresh() } catch { }
     await new Promise((r) => setTimeout(r, 250))
   }
 
@@ -386,17 +387,19 @@ export default function MainLayout({
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <RouteFlash />
-      {isStandalone ? (
-        <StandaloneShell>{children}</StandaloneShell>
-      ) : (
-        <SwipeShell
-          home={home ?? children}
-          deliveries={deliveries}
-          family={family}
-          settings={settings}
-        />
-      )}
+      <SelectedFamilyProvider>
+        <RouteFlash />
+        {isStandalone ? (
+          <StandaloneShell>{children}</StandaloneShell>
+        ) : (
+          <SwipeShell
+            home={home ?? children}
+            deliveries={deliveries}
+            family={family}
+            settings={settings}
+          />
+        )}
+      </SelectedFamilyProvider>
     </ThemeProvider>
   )
 }
