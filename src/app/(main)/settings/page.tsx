@@ -51,9 +51,9 @@ export default function SettingsPage() {
   useEffect(() => setMounted(true), []);
   const currentTheme = mounted ? (theme ?? 'system') : 'system';
 
-  if (!isOnline) {
-    return <p className="text-center text-red-500">You're offline — cached content only.</p>;
-  }
+  const offlineBanner = !isOnline ? (
+  <p className="text-center text-red-500">You're offline — cached content only.</p>
+) : null
 
   // auth gate
   useEffect(() => {
@@ -215,6 +215,8 @@ export default function SettingsPage() {
   };
 
   return (
+    <>
+    {offlineBanner}
     <main className="max-w-xl mx-auto p-6 space-y-6">
       <div className="space-y-2">
         <h1 className="text-xl font-semibold">Settings</h1>
@@ -311,5 +313,6 @@ export default function SettingsPage() {
 
       <LogoutButton />
     </main>
+    </>
   );
 }

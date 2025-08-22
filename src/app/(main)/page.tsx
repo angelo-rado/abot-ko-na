@@ -64,9 +64,9 @@ export default function HomePage() {
   const [now, setNow] = useState(0)
 
   const isOnline = useOnlineStatus()
-  if (!isOnline) {
-    return <p className="text-center text-red-500">You're offline — cached content only.</p>
-  }
+  const offlineBanner = !isOnline ? (
+  <p className="text-center text-red-500">You're offline — cached content only.</p>
+) : null
 
   // --- NEW: initialize familyId early (localStorage -> user doc) so auto-presence can start fast ---
   useEffect(() => {
@@ -380,6 +380,8 @@ export default function HomePage() {
   }
 
   return (
+    <>
+    {offlineBanner}
     <main className="max-w-2xl mx-auto p-6 space-y-6">
       <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
       <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
@@ -759,5 +761,6 @@ export default function HomePage() {
         )}
       </div>
     </main>
+    </>
   )
 }

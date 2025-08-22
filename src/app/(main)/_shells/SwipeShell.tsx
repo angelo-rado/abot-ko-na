@@ -1,17 +1,15 @@
-// app/(main)/layout.tsx
+// app/(main)/_shells/SwipeShell.tsx
 'use client'
 
 import React, { useMemo, useRef, useEffect, useState } from 'react'
-import { ThemeProvider } from 'next-themes'
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
-import PTR from '../components/PullToRefresh'
+import PullToRefresh from '@/app/components/PullToRefresh'
 
-/** ==== Push config ==== */
 const VAPID_KEY =
   (
     process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
@@ -19,7 +17,6 @@ const VAPID_KEY =
     ''
   ).trim() || undefined
 
-/** ==== Small helpers ==== */
 function isIOSWebKit() {
   if (typeof navigator === 'undefined') return false
   const ua = navigator.userAgent
@@ -35,14 +32,6 @@ function useViewportWidth() {
   }, [])
   return w
 }
-function safeRenderNode(node: React.ReactNode): React.ReactNode {
-  if (node == null) return null
-  if (typeof node === 'string' || typeof node === 'number') return node
-  if (Array.isArray(node)) return <>{node as any}</>
-  // @ts-ignore
-  if (React.isValidElement?.(node)) return node as any
-  return null
-}
 function detectModalOpen(): boolean {
   if (typeof document === 'undefined') return false
   return !!document.querySelector(
@@ -54,50 +43,16 @@ function detectModalOpen(): boolean {
     ].join(', ')
   )
 }
-
-/** ==== Route flash (one-time toast across navigation) ==== */
-function RouteFlash() {
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem('abot:flash')
-      if (!raw) return
-      sessionStorage.removeItem('abot:flash')
-      const { type, msg } = JSON.parse(raw) as { type?: string; msg?: string }
-      if (!msg) return
-      import('sonner').then(({ toast }) => {
-        if (type === 'error') toast.error(msg)
-        else if (type === 'warning') (toast as any).warning?.(msg) ?? toast.message(msg)
-        else toast.success(msg)
-      })
-    } catch {}
-  }, [])
+function safeRenderNode(node: React.ReactNode): React.ReactNode {
+  if (node == null) return null
+  if (typeof node === 'string' || typeof node === 'number') return node
+  if (Array.isArray(node)) return <>{node as any}</>
+  // @ts-ignore
+  if (React.isValidElement?.(node)) return node as any
   return null
 }
 
-/** ==== Standalone shell (no swipe nav) ==== */
-function StandaloneShell({ children }: { children: React.ReactNode }) {
-  const router = useRouter()
-  const softRefresh = async () => {
-    try { router.refresh() } catch {}
-    await new Promise((r) => setTimeout(r, 250))
-  }
-  return (
-    <div id="main-scroll" className="h-[100dvh] overflow-y-auto overscroll-contain">
-      <PTR
-        getScrollEl={() => document.getElementById('main-scroll')}
-        onRefresh={softRefresh}
-        className="min-h-[100dvh]"
-        safetyTimeoutMs={2500}
-        minSpinMs={400}
-      >
-        {children}
-      </PTR>
-    </div>
-  )
-}
-
-/** ==== Swipe shell (tabs + swipe + PTR per pane) ==== */
-function SwipeShell({
+export default function SwipeShell({
   home, deliveries, family, settings,
 }: {
   home: React.ReactNode
@@ -162,7 +117,7 @@ function SwipeShell({
     { label: 'Settings', href: '/settings', Icon: SettingsIcon, node: settings },
   ]
 
-  // Swipe constants (less sensitive)
+  // Swipe tuning
   const EDGE = 12
   const STIFF = 420
   const DAMP = 38
@@ -289,7 +244,6 @@ function SwipeShell({
     animate(x, -index * width + edge, { type: 'spring', stiffness: STIFF, damping: DAMP })
   }
 
-  // pane refs to drive PTR per pane
   const paneRefs = React.useRef<Array<HTMLDivElement | null>>([])
   const getPaneScrollEl = (i: number) => () => paneRefs.current[i] as Element | Document | null
 
@@ -344,7 +298,7 @@ function SwipeShell({
               transform: 'translateZ(0)',
             }}
           >
-            <PTR
+            <PullToRefresh
               getScrollEl={getPaneScrollEl(i)}
               onRefresh={softRefresh}
               className="min-h-full"
@@ -352,51 +306,10 @@ function SwipeShell({
               minSpinMs={400}
             >
               {safeRenderNode(node)}
-            </PTR>
+            </PullToRefresh>
           </div>
         ))}
       </motion.div>
     </div>
-  )
-}
-
-/** ==== Main layout (hook-stable parent) ==== */
-export default function MainLayout({
-  children,
-  home,
-  deliveries,
-  family,
-  settings,
-}: {
-  children: React.ReactNode
-  home: React.ReactNode
-  deliveries: React.ReactNode
-  family: React.ReactNode
-  settings: React.ReactNode
-}) {
-  const pathname = usePathname()
-  const STANDALONE_PREFIXES = useMemo(
-    () => ['/family/join', '/login', '/onboarding', '/family/create'],
-    []
-  )
-  const isStandalone = useMemo(
-    () => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)),
-    [pathname, STANDALONE_PREFIXES]
-  )
-
-  return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <RouteFlash />
-      {isStandalone ? (
-        <StandaloneShell>{children}</StandaloneShell>
-      ) : (
-        <SwipeShell
-          home={home ?? children}
-          deliveries={deliveries}
-          family={family}
-          settings={settings}
-        />
-      )}
-    </ThemeProvider>
   )
 }
