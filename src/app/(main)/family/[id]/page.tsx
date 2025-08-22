@@ -1,3 +1,4 @@
+// src/app/family/[id]/page.tsx
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
@@ -13,7 +14,7 @@ import {
   updateDoc
 } from 'firebase/firestore'
 import { formatDistanceToNow } from 'date-fns'
-import { Users as UsersIcon, CalendarDays, Loader2, MoreVertical } from 'lucide-react'
+import { Users as UsersIcon, CalendarDays, Loader2 } from 'lucide-react'
 
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
@@ -26,7 +27,7 @@ import InviteModal from '@/app/components/InviteModal'
 import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
 import JoinedToastOnce from '../_components/JoinedToastOnce'
 
-// NEW: shadcn AlertDialog for "Leave" confirmation
+// shadcn AlertDialog for "Leave" confirmation
 import {
   AlertDialog,
   AlertDialogAction,
@@ -151,6 +152,23 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
+  // If my member doc is missing name/photo, gently hydrate it (prevents others seeing raw UID)
+  useEffect(() => {
+    if (!id || !user || !members?.some(m => m.uid === user.uid)) return
+    const me = members.find(m => m.uid === user.uid)!
+    if (!me.name || !me.photoURL) {
+      setDoc(
+        doc(firestore, 'families', String(id), 'members', user.uid),
+        {
+          uid: user.uid,
+          name: pickNameFrom(user) ?? user.email ?? user.uid,
+          photoURL: (user as any)?.photoURL ?? null,
+        },
+        { merge: true }
+      ).catch(() => {})
+    }
+  }, [id, user, members])
+
   const isOwner = !!(user && family?.createdBy === user.uid)
   const isMember = !!(user && members?.some((m) => m.uid === user.uid))
   const memberCount = members?.length ?? 0
@@ -167,30 +185,37 @@ export default function FamilyDetailPage() {
 
     setBusy(targetUid)
     try {
-      // 1) Remove subcollection member doc (always allowed for owner or self by your rules)
+      // 1) Remove subcollection member doc
       await deleteDoc(doc(firestore, 'families', String(id), 'members', targetUid))
 
-      // 2) Update the family doc's members array so list queries stay accurate
+      // 2) Update the family doc's members array
       await updateDoc(doc(firestore, 'families', String(id)), {
         members: arrayRemove(targetUid),
-      }).catch(() => {
-        // If the field doesn't exist yet, ignore (optional)
-      })
+      }).catch(() => { /* ignore if field missing */ })
 
-      // 3) Only update the user's own doc when they leave themselves
+      // 3) Update the user's doc when they remove themselves
       if (removingSelf) {
+        const uref = doc(firestore, 'users', targetUid)
         await setDoc(
-          doc(firestore, 'users', targetUid),
+          uref,
           { joinedFamilies: arrayRemove(String(id)) },
           { merge: true }
-        ).catch(() => {
-          // If your UI no longer relies on users.joinedFamilies, this is optional
-        })
+        ).catch(() => {})
 
-        // clear local selection and navigate back
-        if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) {
-          localStorage.removeItem(LOCAL_FAMILY_KEY)
-        }
+        // If this was their default family, clear preferredFamily
+        try {
+          const usnap = await getDoc(uref)
+          const preferred = usnap.exists() ? (usnap.data() as any)?.preferredFamily : null
+          if (preferred === String(id)) {
+            await updateDoc(uref, { preferredFamily: null }).catch(() =>
+              setDoc(uref, { preferredFamily: null }, { merge: true })
+            )
+          }
+        } catch {}
+
+        // Clear legacy local key
+        try { if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) localStorage.removeItem(LOCAL_FAMILY_KEY) } catch {}
+
         toast.success('You left the family.')
         router.replace('/family')
       } else {
@@ -226,120 +251,121 @@ export default function FamilyDetailPage() {
   const created = family.createdAt ? formatDistanceToNow(family.createdAt, { addSuffix: true }) : null
 
   return (
-    <><JoinedToastOnce />
-    <div className="max-w-2xl mx-auto p-4 space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold truncate">{family.name || 'Untitled Family'}</h1>
-          <div className="mt-1 text-xs text-muted-foreground flex items-center gap-3">
-            <span className="inline-flex items-center gap-1">
-              <UsersIcon className="w-3.5 h-3.5" />
-              {memberCount} {memberCount === 1 ? 'member' : 'members'}
-            </span>
-            {created && (
+    <>
+      <JoinedToastOnce />
+      <div className="max-w-2xl mx-auto p-4 space-y-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold truncate">{family.name || 'Untitled Family'}</h1>
+            <div className="mt-1 text-xs text-muted-foreground flex items-center gap-3">
               <span className="inline-flex items-center gap-1">
-                <CalendarDays className="w-3.5 h-3.5" />
-                {created}
+                <UsersIcon className="w-3.5 h-3.5" />
+                {memberCount} {memberCount === 1 ? 'member' : 'members'}
               </span>
+              {created && (
+                <span className="inline-flex items-center gap-1">
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  {created}
+                </span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Owner actions */}
+            {isOwner && (
+              <>
+                <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
+                <Button onClick={() => setManageOpen(true)}>Manage</Button>
+              </>
+            )}
+
+            {/* Member-only action: Leave */}
+            {!isOwner && isMember && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="destructive"
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={busy === user?.uid}
+                    title="Leave this family"
+                  >
+                    {busy === user?.uid ? 'Leaving…' : 'Leave'}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Leave this family?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You’ll be removed from <strong>{family.name || 'this family'}</strong>. You can rejoin later if invited.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={busy === user?.uid}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => handleRemoveMember(user!.uid)}
+                      disabled={busy === user?.uid}
+                    >
+                      Yes, leave
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Owner actions */}
-          {isOwner && (
-            <>
-              <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
-              <Button onClick={() => setManageOpen(true)}>Manage</Button>
-            </>
-          )}
 
-          {/* Member-only action: Leave (must be to the RIGHT of the Manage button) */}
-          {!isOwner && isMember && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="destructive"
-                  onClick={(e) => e.stopPropagation()}
-                  disabled={busy === user?.uid}
-                  title="Leave this family"
-                >
-                  {busy === user?.uid ? 'Leaving…' : 'Leave'}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Leave this family?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    You’ll be removed from <strong>{family.name || 'this family'}</strong>. You can rejoin later if invited.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={busy === user?.uid}>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => handleRemoveMember(user!.uid)}
-                    disabled={busy === user?.uid}
-                  >
-                    Yes, leave
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-        </div>
-      </div>
+        <Separator />
 
-      <Separator />
-
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Members</h2>
-        <ul className="divide-y rounded-md border overflow-hidden">
-          {members!.map(m => {
-            const owner = m.uid === family.createdBy
-            const role = owner ? 'Owner' : (m.role || 'Member')
-            return (
-              <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar className="h-8 w-8">
-                    {m.photoURL ? (
-                      <AvatarImage src={m.photoURL} alt={m.name ?? m.uid} />
-                    ) : (
-                      <AvatarFallback>{initials(m.name, m.uid)}</AvatarFallback>
-                    )}
-                  </Avatar>
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{m.name || m.uid}</div>
-                    <div className="mt-1">
-                      <Badge variant={owner ? 'secondary' : 'outline'} className="text-[10px]">
-                        {role}
-                      </Badge>
+        <section className="space-y-3">
+          <h2 className="text-lg font-semibold">Members</h2>
+          <ul className="divide-y rounded-md border overflow-hidden">
+            {members!.map(m => {
+              const owner = m.uid === family.createdBy
+              const role = owner ? 'Owner' : (m.role || 'Member')
+              return (
+                <li key={m.uid} className="flex items-center justify-between p-3 text-sm">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Avatar className="h-8 w-8">
+                      {m.photoURL ? (
+                        <AvatarImage src={m.photoURL} alt={m.name ?? m.uid} />
+                      ) : (
+                        <AvatarFallback>{initials(m.name, m.uid)}</AvatarFallback>
+                      )}
+                    </Avatar>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{m.name || m.uid}</div>
+                      <div className="mt-1">
+                        <Badge variant={owner ? 'secondary' : 'outline'} className="text-[10px]">
+                          {role}
+                        </Badge>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </li>
-            )
-          })}
-          {members!.length === 0 && (
-            <li className="p-3 text-muted-foreground">No members yet.</li>
-          )}
-        </ul>
-      </section>
+                </li>
+              )
+            })}
+            {members!.length === 0 && (
+              <li className="p-3 text-muted-foreground">No members yet.</li>
+            )}
+          </ul>
+        </section>
 
-      {isOwner && (
-        <>
-          <InviteModal
-            open={inviteOpen}
-            onOpenChange={setInviteOpen}
-            familyId={String(id)}
-            familyName={family?.name ?? undefined}
-          />
-          <ManageFamilyDialog
-            open={manageOpen}
-            onOpenChange={setManageOpen}
-            family={family}
-          />
-        </>
-      )}
-    </div>
+        {isOwner && (
+          <>
+            <InviteModal
+              open={inviteOpen}
+              onOpenChange={setInviteOpen}
+              familyId={String(id)}
+              familyName={family?.name ?? undefined}
+            />
+            <ManageFamilyDialog
+              open={manageOpen}
+              onOpenChange={setManageOpen}
+              family={family}
+            />
+          </>
+        )}
+      </div>
     </>
   )
 }

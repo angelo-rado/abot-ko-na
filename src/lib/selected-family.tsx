@@ -24,39 +24,85 @@ type Ctx = {
 }
 
 const LOCAL_KEY = 'abot:selectedFamily'
+const JUST_JOINED_KEY = 'abot:justJoinedFamily'
 const SelectedFamilyCtx = createContext<Ctx | null>(null)
 
+/**
+ * SelectedFamilyProvider
+ * - Fast-adopts users/{uid}.preferredFamily (no need to wait for membership list)
+ * - Falls back to first membership when preferredFamily is absent
+ * - Ensures your member profile doc (name/photoURL) whenever familyId is set
+ */
 export function SelectedFamilyProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const [families, setFamilies] = useState<Family[]>([])
-  const [loadingFamilies, setLoadingFamilies] = useState(false)
   const [familyId, setFamilyIdState] = useState<string | null>(null)
+  const [loadingFamilies, setLoadingFamilies] = useState<boolean>(true)
 
-  // listener cleanup
-  const unsubRef = useRef<(() => void) | null>(null)
+  // internal “ready” trackers to keep loading state accurate
+  const prefReadyRef = useRef(false)
+  const membershipReadyRef = useRef(false)
 
-  useEffect(() => {
-    if (unsubRef.current) {
-      try { unsubRef.current() } catch {}
-      unsubRef.current = null
+  const membersUnsubRef = useRef<(() => void) | null>(null)
+  const userUnsubRef = useRef<(() => void) | null>(null)
+
+  // --- helpers
+  const endLoadingIfReady = () => {
+    if (prefReadyRef.current && membershipReadyRef.current) {
+      setLoadingFamilies(false)
     }
+  }
+
+  const adoptFamilyId = (id: string | null) => {
+    setFamilyIdState((prev) => (prev === id ? prev : id))
+  }
+
+  // --- Reset on auth change
+  useEffect(() => {
+    // cleanup old listeners
+    try { membersUnsubRef.current?.() } catch {}
+    try { userUnsubRef.current?.() } catch {}
+    membersUnsubRef.current = null
+    userUnsubRef.current = null
+
+    setFamilies([])
+    setFamilyIdState(null)
+    setLoadingFamilies(true)
+    prefReadyRef.current = false
+    membershipReadyRef.current = false
 
     if (!user?.uid) {
-      setFamilies([])
-      setFamilyIdState(null)
       setLoadingFamilies(false)
       return
     }
 
-    setLoadingFamilies(true)
+    // Listen to users/{uid} for preferredFamily (fast path)
+    userUnsubRef.current = onSnapshot(
+      doc(firestore, 'users', user.uid),
+      (snap) => {
+        prefReadyRef.current = true
+        const data = snap.exists() ? (snap.data() as any) : null
+        const preferred = (data?.preferredFamily ?? null) as string | null
 
-    // membership lives at families/{id}/members/{uid} and member docs have 'uid' field
+        // If preferred is present, adopt immediately (don’t wait for membership list)
+        if (preferred) {
+          adoptFamilyId(preferred)
+          try { localStorage.setItem(LOCAL_KEY, preferred) } catch {}
+        }
+        endLoadingIfReady()
+      },
+      () => {
+        prefReadyRef.current = true
+        endLoadingIfReady()
+      }
+    )
+
+    // Membership list via collectionGroup('members') where uid == user.uid
     const qy = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
-
-    const unsub = onSnapshot(
+    membersUnsubRef.current = onSnapshot(
       qy,
       async (snap) => {
-        const ids = Array.from(
+        const rawIds = Array.from(
           new Set(
             snap.docs
               .map((d) => d.ref.parent.parent?.id)
@@ -64,54 +110,75 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
           )
         )
 
-        const out: Family[] = []
+        // Smooth handoff from join flows: include JUST_JOINED_KEY if still present
+        let ids = rawIds.slice()
+        try {
+          const jj = sessionStorage.getItem(JUST_JOINED_KEY)
+          if (jj && !ids.includes(jj)) ids.push(jj)
+          // clear it once membership sees the family (or immediately)
+          if (jj && rawIds.includes(jj)) sessionStorage.removeItem(JUST_JOINED_KEY)
+        } catch {}
+
+        // Hydrate names (best-effort)
+        const list: Family[] = []
         await Promise.all(
           ids.map(async (id) => {
             try {
               const fam = await getDoc(doc(firestore, 'families', id))
               if (fam.exists()) {
                 const data = fam.data() as any
-                out.push({ id, name: typeof data?.name === 'string' ? data.name : undefined })
+                list.push({ id, name: typeof data?.name === 'string' ? data.name : undefined })
               } else {
-                out.push({ id })
+                list.push({ id })
               }
             } catch {
-              out.push({ id })
+              list.push({ id })
             }
           })
         )
-        out.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-        setFamilies(out)
+        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        setFamilies(list)
 
-        // Single source of truth: users/{uid}.preferredFamily (Settings writes this)
-        let next: string | null = null
-        /* local default removed; Settings drives preferredFamily */
-
-        if (!next) {
-          try {
-            const u = await getDoc(doc(firestore, 'users', user.uid))
-            const pf = (u.exists() ? (u.data() as any).preferredFamily : null) ?? null
-            if (pf) next = pf
-          } catch {}
+        // If no current familyId, adopt first membership
+        if (!familyId && list.length > 0) {
+          adoptFamilyId(list[0].id)
         }
 
-        if (next && !out.some((f) => f.id === next)) {
-          next = out[0]?.id ?? null
-        }
-        setFamilyIdState(next ?? out[0]?.id ?? null)
-        setLoadingFamilies(false)
+        membershipReadyRef.current = true
+        endLoadingIfReady()
       },
-      () => setLoadingFamilies(false)
+      () => {
+        setFamilies([])
+        membershipReadyRef.current = true
+        endLoadingIfReady()
+      }
     )
 
-    unsubRef.current = unsub
-    return () => { try { unsub(); } catch {} }
+    return () => {
+      try { membersUnsubRef.current?.() } catch {}
+      try { userUnsubRef.current?.() } catch {}
+      membersUnsubRef.current = null
+      userUnsubRef.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid])
 
+  // Ensure your member profile is hydrated for the current family (fix: others seeing UID)
+  useEffect(() => {
+    if (!user?.uid || !familyId) return
+    const ref = doc(firestore, 'families', familyId, 'members', user.uid)
+    setDoc(ref, {
+      uid: user.uid,
+      name: (user as any).displayName ?? (user as any).name ?? (user as any).email ?? user.uid,
+      photoURL: (user as any).photoURL ?? null,
+    }, { merge: true }).catch(() => {})
+  }, [user?.uid, user?.name, user?.photoURL, user?.email, familyId])
+
+  // Persist & broadcast preferred family
   const persistPreferred = async (id: string | null) => {
-    setFamilyIdState(id)
-    // keep a harmless write for legacy users (we no longer READ localStorage)
+    adoptFamilyId(id)
     try { localStorage.setItem(LOCAL_KEY, id ?? '') } catch {}
+
     if (!user?.uid) return
     try {
       const uref = doc(firestore, 'users', user.uid)
@@ -129,9 +196,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
     try {
       const u = await getDoc(doc(firestore, 'users', user.uid))
       const pf = (u.exists() ? (u.data() as any).preferredFamily : null) ?? null
-      if (pf && families.some((f) => f.id === pf)) {
-        await persistPreferred(pf)
-      }
+      if (pf) await persistPreferred(pf)
     } catch {}
   }
 

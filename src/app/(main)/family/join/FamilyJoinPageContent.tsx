@@ -10,6 +10,7 @@ import {
   getDoc,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
@@ -17,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
+const JUST_JOINED_KEY = 'abot:justJoinedFamily'
 
 type InviteDoc = {
   familyId: string
@@ -61,7 +63,6 @@ export default function FamilyJoinPageContent() {
   const [familyName, setFamilyName] = useState<string | null>(null)
   const [inviteExists, setInviteExists] = useState<boolean | null>(null) // null = unknown; true/false = confident
   const [expired, setExpired] = useState(false)
-  const [effectiveFamilyId, setEffectiveFamilyId] = useState<string | null>(null) // resolved family id (from invite or fallback)
 
   const triedAutoJoinRef = useRef(false)
 
@@ -80,7 +81,6 @@ export default function FamilyJoinPageContent() {
           const inv = invSnap.data() as InviteDoc
           if (!alive) return
           setInviteExists(true)
-          setEffectiveFamilyId(inv.familyId || null)
 
           // expiry hint
           if (inv?.expiresAt?.toDate) {
@@ -109,7 +109,6 @@ export default function FamilyJoinPageContent() {
           if (!alive) return
           if (famSnap.exists()) {
             setInviteExists(true) // exists (via family fallback)
-            setEffectiveFamilyId(key)
             const name = (famSnap.data() as any)?.name
             setFamilyName(typeof name === 'string' ? name : null)
             return
@@ -118,9 +117,7 @@ export default function FamilyJoinPageContent() {
           setInviteExists(false)
         } catch {
           // If we can't read family due to rules, we don't know—leave as null (no red error)
-          if (alive) {
-            setInviteExists((prev) => prev === null ? null : prev)
-          }
+          if (alive) setInviteExists((prev) => (prev === null ? null : prev))
         }
       } catch {
         // could not read invite due to rules; leave inviteExists as null (don't show red error)
@@ -128,7 +125,7 @@ export default function FamilyJoinPageContent() {
     })()
 
     return () => { alive = false }
-  }, [key, user])
+  }, [key])
 
   // Auto-join after login if requested
   useEffect(() => {
@@ -139,6 +136,10 @@ export default function FamilyJoinPageContent() {
       void handleJoin() // do not await
     }
   }, [autoJoin, loading, user, key])
+
+  function deriveDisplayName(u: any): string {
+    return u?.displayName || u?.name || u?.email || u?.uid || 'User'
+  }
 
   async function handleJoin() {
     if (!key) {
@@ -153,7 +154,7 @@ export default function FamilyJoinPageContent() {
 
     setJoining(true)
     try {
-      // Try invite first
+      // Resolve familyId from invite (best-effort) OR treat key as familyId
       let familyId: string | null = null
       let viaInvite = false
 
@@ -173,16 +174,12 @@ export default function FamilyJoinPageContent() {
         console.warn('[join] invite lookup error', err?.code || err?.message || err)
       }
 
-      // Fallback: treat key as a familyId
       if (!familyId) {
         familyId = key
       }
+      if (!familyId) throw new Error('Invite is invalid.')
 
-      if (!familyId) {
-        throw new Error('Invite is invalid.')
-      }
-
-      // Create/merge membership
+      // 1) Create/merge membership document
       await setDoc(
         doc(firestore, 'families', familyId, 'members', user.uid),
         {
@@ -193,18 +190,40 @@ export default function FamilyJoinPageContent() {
         { merge: true }
       )
 
-      // Update user doc (best effort)
+      // 2) Ensure the **family doc** members array is updated (many lists rely on this)
+      try {
+        await updateDoc(doc(firestore, 'families', familyId), {
+          members: arrayUnion(user.uid),
+        })
+      } catch (e) {
+        // If rules restrict this for non-owners, it’s best-effort
+        console.warn('[join] unable to update families.members array', e)
+      }
+
+      // 3) Hydrate your visible profile in the member doc so others see your name/photo immediately
+      await setDoc(
+        doc(firestore, 'families', familyId, 'members', user.uid),
+        {
+          uid: user.uid,
+          name: deriveDisplayName(user),
+          photoURL: (user as any)?.photoURL ?? null,
+        },
+        { merge: true }
+      )
+
+      // 4) Update user doc: mark joined + set preferredFamily (provider will pick this up instantly)
       await setDoc(
         doc(firestore, 'users', user.uid),
         { joinedFamilies: arrayUnion(familyId), preferredFamily: familyId },
         { merge: true }
       )
 
+      // 5) Local/session hints to smooth the very first render after deep-link joins
       try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
+      try { sessionStorage.setItem(JUST_JOINED_KEY, familyId) } catch {}
 
       if (viaInvite) {
-        // You can optionally increment usage or log join here via a callable or rules-safe write
-        // left as best-effort / TODO
+        // Optionally log usage/increment counters via callable or rule-safe write
       }
 
       toast.success('Joined family!')
