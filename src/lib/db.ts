@@ -29,6 +29,9 @@ export interface Delivery {
 export interface Setting {
   id: string
   value: any
+  // legacy keys used by HomeLocationMap
+  homeLat?: number
+  homeLon?: number
 }
 
 export interface Family {
