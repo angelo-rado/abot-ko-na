@@ -22,6 +22,8 @@ import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesTh
 import BulkEditBar from './BulkEditBar'
 import Link from 'next/link'
 
+export const dynamic = 'force-dynamic'
+
 // ✅ Helpers
 function isMultiple(d: any) {
   if (!d) return false
@@ -44,7 +46,7 @@ function etaLabel(raw: any) {
     if (typeof raw?.seconds === 'number') return new Date(raw.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const d = new Date(raw)
     if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  } catch {}
+  } catch { }
   return ''
 }
 
@@ -68,7 +70,7 @@ export default function DeliveriesPageGuard() {
 }
 
 /** The original page content, now safely mounted with stable props */
-function DeliveriesPageContent({ familyId, families }: { familyId: string; families: Array<{id: string; name?: string}> }) {
+function DeliveriesPageContent({ familyId, families }: { familyId: string; families: Array<{ id: string; name?: string }> }) {
   const [deliveries, setDeliveries] = useState<any[]>([])
   const [loadingDeliveries, setLoadingDeliveries] = useState(true)
   const [tab, setTab] = useState<'upcoming' | 'archived'>('upcoming')
@@ -94,6 +96,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   const [itemsOpen, setItemsOpen] = useState<Record<string, boolean>>({})
 
   const router = useRouter()
+
 
   const handleConfirmResult = (ok: boolean) => {
     const cb = confirmResolveRef.current
@@ -137,7 +140,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
       console.error('[DeliveriesPage] snapshot error', err)
       setLoadingDeliveries(false)
     })
-    return () => { try { unsub() } catch {} }
+    return () => { try { unsub() } catch { } }
   }, [familyId])
 
   /* ---------------- Partition & filtering ---------------- */
@@ -148,8 +151,8 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
     return false
   }, [])
 
-  const upcoming = useMemo(() => deliveries.filter((d) => !isArchived(d)), [deliveries, isArchived])
-  const archived = useMemo(() => deliveries.filter((d) => isArchived(d)), [deliveries, isArchived])
+  const upcoming = deliveries.filter((d) => !isArchived(d))
+  const archived = deliveries.filter((d) => isArchived(d))
 
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'in_transit' | 'delivered' | 'cancelled'>('all')
   const [queryText, setQueryText] = useState('')
@@ -179,10 +182,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   }
 
   // Derived selected count
-  const selectedCount = useMemo(
-    () => Object.values(selectedIds).filter(Boolean).length,
-    [selectedIds]
-  )
+  const selectedCount = Object.values(selectedIds).filter(Boolean).length
 
   const handleBulkDelete = useCallback(async () => {
     const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
@@ -287,60 +287,60 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
 
         <input
           value={'' /* you can wire this to state if you want search input persistent */ as any}
-          onChange={() => {}}
+          onChange={() => { }}
           placeholder=""
           className="hidden"
         />
 
         <input
           value={/* real search */ (undefined as any)}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         <input
           value={/* controlled */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         <input
           value={/* actual */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         {/* Real search field */}
         <input
           value={/* from state */ (undefined as any)}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         {/* visible search & filter */}
         <input
           value={/* queryText */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         {/* actual visible controls */}
         <input
           value={/* queryText */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         <input
           value={/* queryText */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
         {/* >>> Replace the above temporary hidden inputs with your existing search/select controls: */}
         <input
           value={/* keep your original */ undefined as any}
-          onChange={() => {}}
+          onChange={() => { }}
           className="hidden"
         />
 
@@ -391,7 +391,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
               <Badge variant="secondary">{(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).length}</Badge>
             </div>
 
-            { (applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).length === 0 ? (
+            {(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).length === 0 ? (
               <p className="text-muted-foreground text-sm">No single deliveries</p>
             ) : (
               <div className="space-y-4">
