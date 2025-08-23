@@ -31,6 +31,15 @@ export interface SettingRow {
   key?: string
   value?: any
   updatedAt?: number
+
+  // app-specific optional fields (used by your UI)
+  homeLat?: number
+  homeLon?: number   // longitude
+  homeLng?: number   // alias for older/newer code paths
+  homeRadius?: number
+
+  // allow other dynamic settings without TS errors
+  [k: string]: any
 }
 
 export interface FamilyRow {
