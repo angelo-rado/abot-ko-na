@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { firestore } from '@/lib/firebase';
 import { useSelectedFamily } from '@/lib/selected-family';
@@ -19,11 +19,7 @@ export default function DefaultFamilySelector() {
   const { families, loadingFamilies, familyId, setFamilyId } = useSelectedFamily();
 
   // Resolved display name for the currently selected family
-  const providerName = useMemo(() => {
-    if (!familyId) return null;
-    const f = families.find((x) => x.id === familyId);
-    return f?.name ?? null;
-  }, [families, familyId]);
+  const providerName = !familyId ? null : (families.find((x) => x.id === familyId)?.name ?? null)
 
   const [resolvedName, setResolvedName] = useState<string | null>(null);
   const [loadingName, setLoadingName] = useState(false);
@@ -82,11 +78,7 @@ export default function DefaultFamilySelector() {
   }
 
   // Build items list sorted by name (fallback to id for stable order)
-  const items = useMemo(() => {
-    const copy = [...families];
-    copy.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    return copy;
-  }, [families]);
+  const items = [...families].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 
   return (
     <div className="space-y-2">

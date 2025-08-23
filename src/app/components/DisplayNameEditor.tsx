@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useAuth } from '@/lib/useAuth'
 import { firestore } from '@/lib/firebase'
@@ -82,7 +82,7 @@ export default function DisplayNameEditor() {
     return () => { alive = false }
   }, [user?.uid, auth])
 
-  const changed = useMemo(() => normalizeName(draft) !== normalizeName(serverName), [draft, serverName])
+  const changed = normalizeName(draft) !== normalizeName(serverName)
   const disabled = !authed || !online || saving || !initialLoadedRef.current
 
   async function save() {

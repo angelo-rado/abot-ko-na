@@ -1,7 +1,7 @@
 // src/app/family/[id]/page.tsx
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import {
@@ -78,7 +78,7 @@ export default function FamilyDetailPage() {
   const router = useRouter()
   const { user } = useAuth()
   const search = useSearchParams()
-  const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
+  const joinedFlag = search.get('joined') === '1'
 
   const [family, setFamily] = useState<Family | null | undefined>()
   const [members, setMembers] = useState<MemberRow[] | undefined>()

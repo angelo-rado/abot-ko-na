@@ -45,8 +45,8 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
   // Reset on auth change
   useEffect(() => {
     // cleanup previous listeners
-    try { membersUnsubRef.current?.() } catch {}
-    try { userUnsubRef.current?.() } catch {}
+    try { membersUnsubRef.current?.() } catch { }
+    try { userUnsubRef.current?.() } catch { }
     membersUnsubRef.current = null
     userUnsubRef.current = null
 
@@ -87,7 +87,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
           const jj = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(JUST_JOINED_KEY) : null
           if (jj && !ids.includes(jj)) ids.push(jj)
           if (jj && rawIds.includes(jj)) sessionStorage.removeItem(JUST_JOINED_KEY)
-        } catch {}
+        } catch { }
 
         // Best-effort hydrate names
         const list: Family[] = []
@@ -120,8 +120,8 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
     )
 
     return () => {
-      try { membersUnsubRef.current?.() } catch {}
-      try { userUnsubRef.current?.() } catch {}
+      try { membersUnsubRef.current?.() } catch { }
+      try { userUnsubRef.current?.() } catch { }
       membersUnsubRef.current = null
       userUnsubRef.current = null
     }
@@ -136,7 +136,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       name: (user as any).displayName ?? (user as any).name ?? (user as any).email ?? user.uid,
       photoURL: (user as any).photoURL ?? null,
       updatedAt: Date.now(),
-    }, { merge: true }).catch(() => {})
+    }, { merge: true }).catch(() => { })
   }, [user?.uid, user?.name, user?.photoURL, familyId])
 
   // Persist preferred family to users/{uid}
@@ -148,7 +148,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       setFamilyIdState(id)
     } catch {
       // fallback to update
-      try { await updateDoc(uref, { preferredFamily: id ?? null }) } catch {}
+      try { await updateDoc(uref, { preferredFamily: id ?? null }) } catch { }
       setFamilyIdState(id)
     }
   }
@@ -161,13 +161,19 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
       const data = snap.exists() ? (snap.data() as any) : null
       const preferred: string | null = typeof data?.preferredFamily === 'string' ? data.preferredFamily : null
       setFamilyIdState(preferred ?? null)
-    } catch {}
+    } catch { }
   }
 
-  const value = useMemo<Ctx>(
-    () => ({ families, loadingFamilies, familyId, setFamilyId: persistPreferred, reloadPreferred }),
-    [families, loadingFamilies, familyId]
-  )
+  const setFamilyId = React.useCallback(persistPreferred, [user?.uid])
+  const reloadPreferredStable = React.useCallback(reloadPreferred, [user?.uid])
+
+  const value: Ctx = {
+    families,
+    loadingFamilies,
+    familyId,
+    setFamilyId,
+    reloadPreferred: reloadPreferredStable,
+  }
 
   return <SelectedFamilyCtx.Provider value={value}>{children}</SelectedFamilyCtx.Provider>
 }

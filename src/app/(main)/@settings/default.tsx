@@ -1,1 +1,2 @@
-export default function DefaultSettings() { return null; }
+'use client'
+export default function DefaultSettings() { return null }

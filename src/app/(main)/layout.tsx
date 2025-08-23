@@ -1,7 +1,7 @@
 // app/(main)/layout.tsx
 'use client'
 
-import React, { useMemo, useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { ThemeProvider } from 'next-themes'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
@@ -111,11 +111,11 @@ function SwipeShell({
   const router = useRouter()
   const pathname = usePathname()
 
-  useEffect(() => { try { initOutboxProcessor() } catch {} }, [])
+  useEffect(() => { try { initOutboxProcessor() } catch { } }, [])
 
   // outbox toast/status listeners
   useEffect(() => {
-    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c>1?'s':''}…`) }
+    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c > 1 ? 's' : ''}…`) }
     const onErr = (e: any) => { const msg = e?.detail?.error || 'Sync error'; toast.error(msg) }
     const onDone = () => { toast.success('All offline changes synced') }
     window.addEventListener('abot-sync-start', onStart as any)
@@ -196,10 +196,10 @@ function SwipeShell({
   const width = useViewportWidth()
   const x = useMotionValue(0)
 
-  const index = useMemo(() => {
+  const index = (() => {
     const i = nav.findIndex(n => pathname === n.href || pathname.startsWith(n.href + '/'))
     return i === -1 ? 0 : i
-  }, [pathname])
+  })()
 
   useEffect(() => {
     const edge = index === 0 ? -EDGE : index === nav.length - 1 ? EDGE : 0
@@ -397,11 +397,11 @@ export default function MainLayout({
 }) {
   const pathname = usePathname()
 
-  useEffect(() => { try { initOutboxProcessor() } catch {} }, [])
+  useEffect(() => { try { initOutboxProcessor() } catch { } }, [])
 
   // outbox toast/status listeners
   useEffect(() => {
-    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c>1?'s':''}…`) }
+    const onStart = (e: any) => { const c = e?.detail?.count ?? 0; if (c) toast(`Syncing ${c} change${c > 1 ? 's' : ''}…`) }
     const onErr = (e: any) => { const msg = e?.detail?.error || 'Sync error'; toast.error(msg) }
     const onDone = () => { toast.success('All offline changes synced') }
     window.addEventListener('abot-sync-start', onStart as any)
@@ -414,14 +414,8 @@ export default function MainLayout({
     }
   }, [])
 
-  const STANDALONE_PREFIXES = useMemo(
-    () => ['/family/join', '/login', '/onboarding', '/family/create'],
-    []
-  )
-  const isStandalone = useMemo(
-    () => STANDALONE_PREFIXES.some((p) => pathname.startsWith(p)),
-    [pathname, STANDALONE_PREFIXES]
-  )
+  const STANDALONE_PREFIXES = ['/family/join', '/login', '/onboarding', '/family/create'] as const
+  const isStandalone = STANDALONE_PREFIXES.some((p) => pathname.startsWith(p))
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>

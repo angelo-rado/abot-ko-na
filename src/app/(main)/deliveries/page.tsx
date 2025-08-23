@@ -1,7 +1,7 @@
 /* eslint-disable */
 'use client'
 
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   collection, query, orderBy, onSnapshot, doc,
   deleteDoc,

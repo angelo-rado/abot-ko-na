@@ -1,7 +1,7 @@
 /* eslint-disable */
 'use client'
 
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
@@ -44,7 +44,7 @@ export default function FamilyPickerPage() {
   const { user, loading: authLoading } = useAuth()
   const router = useRouter()
   const search = useSearchParams()
-  const joinedFlag = useMemo(() => search.get('joined') === '1', [search])
+  const joinedFlag = search.get('joined') === '1'
 
   const cleanedJoinedToast = useRef<boolean>(false)
 
@@ -126,14 +126,8 @@ export default function FamilyPickerPage() {
     return () => unsub()
   }, [authLoading, user?.uid])
 
-  const owned = useMemo(
-    () => families.filter((f) => f.createdBy === user?.uid),
-    [families, user?.uid]
-  )
-  const joined = useMemo(
-    () => families.filter((f) => f.createdBy !== user?.uid),
-    [families, user?.uid]
-  )
+  const owned = families.filter((f) => f.createdBy === user?.uid)
+  const joined = families.filter((f) => f.createdBy !== user?.uid)
 
   // ✅ Navigate to family page (do NOT set default here; Settings controls default)
   const goToFamily = useCallback(

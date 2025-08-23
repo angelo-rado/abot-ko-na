@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import {
@@ -206,20 +206,19 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
       'expectedDate'
     )
     return () => {
-      try { unsub && unsub() } catch {}
+      try { unsub && unsub() } catch { }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId, parent?.id, parentCollection])
 
   /** ------------ NEW: ETA logic & edit gating ------------ */
-  const eta: Date | null = useMemo(() => {
-    const pEta = toDate(parent?.expectedDate)
+  const pEta = toDate(parent?.expectedDate)
+  const eta: Date | null = (() => {
     if (pEta) return pEta
     if (!items?.length) return null
-    const dates = items.map((it) => toDate(it.expectedDate)).filter(Boolean) as Date[]
-    if (!dates.length) return null
-    return new Date(Math.max(...dates.map((d) => d.getTime())))
-  }, [parent?.expectedDate, items])
+    const dates = (items.map((it) => toDate(it.expectedDate)).filter(Boolean) as Date[])
+    return dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null
+  })()
 
   const isPastETA = !!eta && eta.getTime() < Date.now()
   const delivered = parent?.status === 'delivered'

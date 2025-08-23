@@ -1,13 +1,10 @@
 // app/(main)/_shells/SwipeShell.tsx
 'use client'
 
-import React, { useMemo, useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
 import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
-import { getAuth, onAuthStateChanged } from 'firebase/auth'
-import { getFirebaseMessaging } from '@/lib/firebase'
-import { getToken } from 'firebase/messaging'
 import PullToRefresh from '@/app/components/PullToRefresh'
 
 const VAPID_KEY =
@@ -27,20 +24,17 @@ export default function SwipeShell({ children }: { children: React.ReactNode[] |
   const x = useMotionValue(0)
   const [width, setWidth] = useState(0)
 
-  const nav = useMemo(
-    () => ([
-      { label: 'Home', href: '/home', Icon: HomeIcon },
-      { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon },
-      { label: 'Family', href: '/family', Icon: UsersIcon },
-      { label: 'Settings', href: '/settings', Icon: SettingsIcon },
-    ]),
-    []
-  )
+  const nav = [
+    { label: 'Home', href: '/home', Icon: HomeIcon },
+    { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon },
+    { label: 'Family', href: '/family', Icon: UsersIcon },
+    { label: 'Settings', href: '/settings', Icon: SettingsIcon },
+  ]
 
-  const index = useMemo(() => {
+  const index = (() => {
     const i = nav.findIndex(n => pathname === n.href || pathname.startsWith(n.href + '/'))
     return i === -1 ? 0 : i
-  }, [pathname, nav])
+  })()
 
   useEffect(() => {
     const edge = index === 0 ? -EDGE : index === nav.length - 1 ? EDGE : 0
@@ -92,8 +86,8 @@ export default function SwipeShell({ children }: { children: React.ReactNode[] |
   const safeRenderNode = (node: React.ReactNode) => node
 
   const softRefresh = async () => {
-    try { router.refresh() } catch {}
-    try { window.dispatchEvent(new CustomEvent('abot-refresh')) } catch {}
+    try { router.refresh() } catch { }
+    try { window.dispatchEvent(new CustomEvent('abot-refresh')) } catch { }
     setRefreshNonce((n) => n + 1)
     await new Promise((r) => setTimeout(r, 250))
   }
