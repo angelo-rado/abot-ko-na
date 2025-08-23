@@ -3,14 +3,23 @@
 import Dexie, { Table } from 'dexie'
 
 export interface Presence {
-  id: string // typically `${familyId}:${userId}`
-  familyId: string
-  userId: string
+  id: string                         // e.g. `${familyId}:${userId}` or just userId
+  familyId?: string                  // optional to support legacy/simple callers
+  userId?: string
+
+  // fields your code writes/reads
+  name?: string                      // display name
   status?: 'home' | 'away' | 'unknown'
+  auto?: boolean                     // whether status was set automatically
+
+  // optional location + freshness
   lat?: number
   lng?: number
   accuracy?: number
   updatedAt: number
+
+  // allow future flags without breaking TS
+  [k: string]: any
 }
 
 export interface Delivery {
@@ -169,3 +178,7 @@ export const db = new AbotKoNaDB()
 export async function ensureDbOpen(): Promise<void> {
   if (!db.isOpen()) await db.open()
 }
+
+export type UserSettings = SettingRow;
+
+export type OutboxTask = OutboxItem
