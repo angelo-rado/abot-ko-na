@@ -23,6 +23,7 @@ export default function DefaultFamilySelector() {
 
   const [resolvedName, setResolvedName] = useState<string | null>(null);
   const [loadingName, setLoadingName] = useState(false);
+  const NONE = '__none__'
 
   // If provider didn't give us a name for the selected id yet, fetch it once.
   useEffect(() => {
@@ -58,14 +59,14 @@ export default function DefaultFamilySelector() {
   const display = resolvedName ?? providerName ?? (familyId ? 'Untitled family' : null);
 
   const handleChange = async (id: string) => {
-    // Persist selection (or clear with empty string)
     try {
-      await setFamilyId(id || null);
-      toast.success('Default family updated');
+      const resolved = id === NONE ? null : id
+      await setFamilyId(resolved)
+      toast.success('Default family updated')
     } catch {
-      toast.error('Failed to update default family');
+      toast.error('Failed to update default family')
     }
-  };
+  }
 
   // Loading skeleton if we haven't determined anything yet and no selection
   if (loadingFamilies && !familyId) {
@@ -84,16 +85,17 @@ export default function DefaultFamilySelector() {
     <div className="space-y-2">
       <Label className="text-sm">Default family</Label>
       <Select
-        value={familyId ?? ''}
+        value={familyId ?? ''}                  // unchanged
         onValueChange={(val) => handleChange(val)}
       >
         <SelectTrigger className="w-full">
           <SelectValue placeholder={loadingName ? 'Loading…' : (display ?? 'Select a family')} />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem key="__none" value="">
+          <SelectItem key="__none" value={NONE}>
             <span className="text-muted-foreground">— None —</span>
           </SelectItem>
+
           {items.map((f) => (
             <SelectItem key={f.id} value={f.id}>
               {f.name || 'Untitled family'}
