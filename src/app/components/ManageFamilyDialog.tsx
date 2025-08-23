@@ -1,22 +1,15 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { enqueue, isOnline as isNetOnline } from '@/lib/offline'
 import {
-  doc,
-  getDoc,
-  updateDoc,
-  collection,
-  getDocs,
-  deleteDoc,
-  writeBatch,
-  serverTimestamp,
-  onSnapshot,
-  arrayRemove,
+  doc, getDoc, updateDoc, collection, getDocs, deleteDoc,
+  writeBatch, serverTimestamp, onSnapshot, arrayRemove
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
@@ -26,9 +19,7 @@ import SetFamilyHomeLocation from './SetFamilyHomeLocation'
 import DeleteFamilyButton from './DeleteFamilyButton'
 import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/useAuth'
-// ✅ use shadcn tooltip wrapper, not radix primitives
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { useRouter } from 'next/navigation'
 
 type Family = {
   id: string
@@ -56,8 +47,18 @@ type Props = {
   onOpenChange: (open: boolean) => void
 }
 
+const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
+
+function initials(name?: string | null, uid?: string) {
+  if (!name && uid) return uid.slice(0, 2).toUpperCase()
+  if (!name) return '👤'
+  return name.split(' ').map(s => s[0]).slice(0, 2).join('').toUpperCase()
+}
+
 export default function ManageFamilyDialog({ family, open, onOpenChange }: Props) {
   const { user } = useAuth()
+  const router = useRouter()
+
   const mountedRef = useRef(true)
   useEffect(() => {
     mountedRef.current = true
@@ -68,10 +69,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const [isSaving, setIsSaving] = useState(false)
   const [members, setMembers] = useState<Member[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
-  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [busy, setBusy] = useState(false)
-  const router = useRouter()
 
   // current user's role in this family (owner | admin | member | null)
   const [myRole, setMyRole] = useState<string | null>(null)
@@ -91,7 +89,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       startMembersRealtime()
       startMyRoleRealtime()
     } else {
-      // closed: cleanup
+      // closed: cleanup (keep hook order stable by not conditionally calling hooks)
       stopMembersRealtime()
       stopMyRoleRealtime()
       setMembers([])
@@ -107,14 +105,14 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   const stopMembersRealtime = () => {
     if (membersUnsubRef.current) {
-      try { membersUnsubRef.current() } catch { }
+      try { membersUnsubRef.current() } catch {}
       membersUnsubRef.current = null
     }
   }
 
   const stopMyRoleRealtime = () => {
     if (myRoleUnsubRef.current) {
-      try { myRoleUnsubRef.current() } catch { }
+      try { myRoleUnsubRef.current() } catch {}
       myRoleUnsubRef.current = null
     }
   }
@@ -159,7 +157,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         } as Member
       })
 
-      // find which profiles are missing
+      // hydrate missing profile bits
       const toFetch = docs.filter(m => !m.name && !m.photoURL && !m.email).map(m => m.id)
       await Promise.all(toFetch.map(async uid => {
         const p = await fetchProfileOnce(uid)
@@ -199,18 +197,13 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       if (!mountedRef.current) return
       if (snap.exists()) {
         const md = snap.data() as any
-        if (family && family.createdBy === user.uid) {
-          setMyRole('owner')
-        } else {
-          setMyRole(md?.role ?? 'member')
-        }
+        if (family && family.createdBy === user.uid) setMyRole('owner')
+        else setMyRole(md?.role ?? 'member')
       } else {
         if (family && family.createdBy === user.uid) setMyRole('owner')
         else setMyRole(null)
       }
-    }, (err) => {
-      console.warn('myRole subscription error', err)
-    })
+    }, () => {})
 
     myRoleUnsubRef.current = unsub
   }, [family?.id, user?.uid, family?.createdBy])
@@ -238,20 +231,17 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       const memberRef = doc(firestore, 'families', family.id, 'members', memberId)
       await updateDoc(memberRef, { role: nextRole })
       toast.success(`Role updated to ${nextRole}`)
-      // realtime listener will confirm authoritative state
     } catch (err) {
       console.error('toggleRole failed', err)
       toast.error('Failed to update role')
-      // revert optimistic
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: currentRole } : m))
     } finally {
       setBusy(false)
     }
   }
 
-  // Remove member (owner/admin). No client writes to users/{uid} (rules block it) — server does the cleanup.
+  // Remove member (owner/admin). Server function cleans users/{uid}.
   const removeMember = async (memberId: string) => {
-    // OFFLINE: queue removal and optimistically update UI
     if (typeof navigator !== 'undefined' && !isNetOnline()) {
       if (!family?.id) return
       try {
@@ -259,108 +249,41 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         await enqueue({ op: 'removeMember', familyId: family.id, payload: { familyId: family.id, uid: memberId } })
         toast("Member will be removed when you're back online", { icon: '📶' })
         return
-      } catch { }
+      } catch {}
     }
 
     if (!family?.id || !user?.uid) return
     const ownerId = family.owner ?? family.createdBy ?? null
-    if (ownerId && memberId === ownerId) {
-      toast('Cannot remove the owner', { icon: '⚠️' })
-      return
-    }
-    if (!isOwner && !isAdmin) {
-      toast.error('You do not have permission to remove members')
-      return
-    }
+    if (ownerId && memberId === ownerId) { toast('Cannot remove the owner', { icon: '⚠️' }); return }
+    if (!isOwner && !isAdmin) { toast.error('You do not have permission to remove members'); return }
 
     setBusy(true)
     const prev = members
     setMembers(prev => prev.filter(m => m.id !== memberId))
 
     try {
-      // 1) authoritative: delete membership doc
       await deleteDoc(doc(firestore, 'families', family.id, 'members', memberId))
-
-      // 2) best-effort: maintain families/{id}.members array (helps queries)
       try {
-        await updateDoc(doc(firestore, 'families', family.id), {
-          members: arrayRemove(memberId),
-        })
-      } catch (e) {
-        console.warn('arrayRemove on family doc failed (non-fatal)', e)
-      }
-
-      // 3) DO NOT mutate users/{memberId} here (rules forbid). Cloud Function
-      //    onFamilyMemberRemoved handles user doc cleanup with admin rights.
-
+        await updateDoc(doc(firestore, 'families', family.id), { members: arrayRemove(memberId) })
+      } catch {}
       toast.success('Member removed')
     } catch (err) {
       console.error('removeMember failed', err)
       toast.error('Failed to remove member')
-      setMembers(prev) // revert optimistic
+      setMembers(prev)
     } finally {
       setBusy(false)
     }
   }
 
-  // Owner-only delete family
-  const handleDeleteFamily = async () => {
-    if (!family?.id) return
-    if (!isOwner) {
-      toast.error('Only the owner can delete the family')
-      return
-    }
-    setDeleting(true)
-    try {
-      const familyId = family.id
-      const subcols = ['members', 'deliveries', 'presence', 'tokens'] as const
-      for (const sub of subcols) {
-        const snap = await getDocs(collection(firestore, 'families', familyId, sub))
-        if (!snap.empty) {
-          const batch = writeBatch(firestore)
-          snap.docs.forEach(d => batch.delete(d.ref))
-          await batch.commit()
-        }
-      }
-
-      await deleteDoc(doc(firestore, 'families', familyId))
-
-      try {
-        if (localStorage.getItem('abot:selectedFamily') === familyId) {
-          localStorage.removeItem('abot:selectedFamily')
-        }
-      } catch { }
-
-      toast.success('Family deleted')
-      onOpenChange(false)
-
-      setTimeout(() => {
-        router.replace('/family?deleted=1')
-        router.refresh()
-      }, 0)
-    } catch (err) {
-      console.error('Failed to delete family', err)
-      toast.error('Failed to delete family')
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-
   const handleSaveName = async () => {
     if (!family?.id) return
-    if (!isOwner) {
-      toast.error('Only the owner can rename the family')
-      return
-    }
-    if ((editingName ?? '').trim() === (family.name ?? '').trim()) {
-      onOpenChange(false)
-      return
-    }
+    if (!isOwner) { toast.error('Only the owner can rename the family'); return }
+    if ((editingName ?? '').trim() === (family.name ?? '').trim()) { onOpenChange(false); return }
+
     setIsSaving(true)
     try {
-      const famRef = doc(firestore, 'families', family.id)
-      await updateDoc(famRef, {
+      await updateDoc(doc(firestore, 'families', family.id), {
         name: editingName.trim(),
         updatedAt: serverTimestamp(),
       })
@@ -384,109 +307,120 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) { stopMembersRealtime(); stopMyRoleRealtime() } onOpenChange(v) }}>
-      {/* ✅ Silence Radix warning by adding aria-describedby={undefined} */}
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) { stopMembersRealtime(); stopMyRoleRealtime() }
+        onOpenChange(v)
+      }}
+    >
+      {/* Keep provider OUT of list maps to preserve a stable hook tree */}
       <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
-        <DialogHeader>
-          <DialogTitle>Manage {family?.name ?? 'family'}</DialogTitle>
-        </DialogHeader>
+        <TooltipProvider delayDuration={200}>
+          <DialogHeader>
+            <DialogTitle>Manage {family?.name ?? 'family'}</DialogTitle>
+          </DialogHeader>
 
-        <div className="space-y-6">
-          {renderReadOnlyBanner()}
+          <div className="space-y-6">
+            {renderReadOnlyBanner()}
 
-          {/* Family name editor — only owner can rename */}
-          {isOwner ? (
-            <div>
-              <label className="text-sm font-medium block mb-2">Family name</label>
-              <div className="flex gap-2">
-                <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
-                <Button type="button" onClick={handleSaveName} disabled={isSaving || editingName.trim() === ''}>
-                  {isSaving ? 'Saving…' : 'Save'}
-                </Button>
+            {/* Family name editor — only owner can rename */}
+            {isOwner ? (
+              <div>
+                <label className="text-sm font-medium block mb-2">Family name</label>
+                <div className="flex gap-2">
+                  <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                  <Button type="button" onClick={handleSaveName} disabled={isSaving || editingName.trim() === ''}>
+                    {isSaving ? 'Saving…' : 'Save'}
+                  </Button>
+                </div>
               </div>
-            </div>
-          ) : (
+            ) : (
+              <div>
+                <label className="text-sm font-medium block mb-2">Family name</label>
+                <div className="text-sm">{family?.name}</div>
+              </div>
+            )}
+
+            {/* Set home location — owner & admin */}
+            {(isOwner || isAdmin) && family?.id && (
+              <div>
+                <SetFamilyHomeLocation familyId={family.id} />
+              </div>
+            )}
+
+            {/* Members list */}
             <div>
-              <label className="text-sm font-medium block mb-2">Family name</label>
-              <div className="text-sm">{family?.name}</div>
-            </div>
-          )}
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium">Members</h3>
+                <div className="text-xs text-muted-foreground">
+                  {membersLoading ? 'Loading…' : `${members.length} member${members.length !== 1 ? 's' : ''}`}
+                </div>
+              </div>
 
-          {/* Set home location — owner & admin */}
-          {(isOwner || isAdmin) && family?.id && (
-            <div>
-              <SetFamilyHomeLocation familyId={family.id} />
-            </div>
-          )}
-
-          {/* Members list */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium">Members</h3>
-              <div className="text-xs text-muted-foreground">{membersLoading ? 'Loading…' : `${members.length} member${members.length !== 1 ? 's' : ''}`}</div>
-            </div>
-
-            <div className="space-y-2 max-h-64 overflow-auto">
-              {membersLoading ? (
-                <>
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-muted" />
-                        <div>
-                          <div className="h-4 w-36 bg-muted rounded" />
+              <div className="space-y-2 max-h-64 overflow-auto">
+                {membersLoading ? (
+                  <>
+                    {[...Array(3)].map((_, i) => (
+                      <div key={i} className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-muted" />
+                          <div><div className="h-4 w-36 bg-muted rounded" /></div>
                         </div>
+                        <div className="h-8 w-24 bg-muted rounded" />
                       </div>
-                      <div className="h-8 w-24 bg-muted rounded" />
-                    </div>
-                  ))}
-                </>
-              ) : members.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No members yet</div>
-              ) : (
-                members.map((m) => {
-                  const ownerId = family?.owner ?? family?.createdBy ?? null
-                  const isMemberOwner = ownerId && m.id === ownerId
-                  const canChangeRole = (isOwner || isAdmin) && !isMemberOwner
-                  const canRemove = (isOwner || isAdmin) && !isMemberOwner
+                    ))}
+                  </>
+                ) : members.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No members yet</div>
+                ) : (
+                  members.map((m) => {
+                    const ownerId = family?.owner ?? family?.createdBy ?? null
+                    const isMemberOwner = ownerId && m.id === ownerId
+                    const canChangeRole = (isOwner || isAdmin) && !isMemberOwner
+                    const canRemove = (isOwner || isAdmin) && !isMemberOwner
 
-                  return (
-                    <div key={m.id} className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar>
-                          {m.photoURL ? <AvatarImage src={m.photoURL} alt={m.name ?? 'Member'} /> : <AvatarFallback>{(m.name ?? '?').split(' ').map(s => s[0]).join('').slice(0, 2).toUpperCase()}</AvatarFallback>}
-                        </Avatar>
-                        <div className="min-w-0">
-                          <div className="font-medium truncate flex items-center gap-2">
-                            <span>{m.name ?? 'Unnamed'}</span>
-                            {isMemberOwner ? (
-                              <Badge variant="secondary">Owner</Badge>
-                            ) : m.role ? (
-                              <Badge variant="outline">{m.role}</Badge>
-                            ) : null}
+                    return (
+                      <div key={m.id} className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Avatar className="h-8 w-8">
+                            {m.photoURL
+                              ? <AvatarImage src={m.photoURL} alt={m.name ?? m.id} />
+                              : <AvatarFallback>{initials(m.name, m.id)}</AvatarFallback>}
+                          </Avatar>
+                          <div className="min-w-0">
+                            <div className="font-medium truncate flex items-center gap-2">
+                              <span>{m.name ?? 'Unnamed'}</span>
+                              {isMemberOwner ? (
+                                <Badge variant="secondary">Owner</Badge>
+                              ) : m.role ? (
+                                <Badge variant="outline">{m.role}</Badge>
+                              ) : null}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">{m.email}</div>
                           </div>
-                          <div className="text-xs text-muted-foreground truncate">{m.email}</div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-2">
-                        {canChangeRole ? (
-                          <button
-                            type="button"
-                            className={cn('inline-flex items-center gap-2 text-sm px-2 py-1 rounded', 'bg-muted/10')}
-                            onClick={() => toggleRole(m.id, m.role)}
-                            title={m.role === 'admin' ? 'Demote to member' : 'Promote to admin'}
-                            disabled={busy}
-                          >
-                            <ArrowUpDown className="w-4 h-4" />
-                            <span>{m.role ?? 'member'}</span>
-                          </button>
-                        ) : (
-                          <div className="text-xs text-muted-foreground px-2 py-1">—</div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {canChangeRole ? (
+                            <button
+                              type="button"
+                              className={cn(
+                                'inline-flex items-center gap-2 text-sm px-2 py-1 rounded',
+                                'bg-muted/10'
+                              )}
+                              onClick={() => toggleRole(m.id, m.role)}
+                              title={m.role === 'admin' ? 'Demote to member' : 'Promote to admin'}
+                              disabled={busy}
+                            >
+                              <ArrowUpDown className="w-4 h-4" />
+                              <span>{m.role ?? 'member'}</span>
+                            </button>
+                          ) : (
+                            <div className="text-xs text-muted-foreground px-2 py-1">—</div>
+                          )}
 
-                        {canRemove ? (
-                          <TooltipProvider>
+                          {canRemove ? (
                             <Tooltip>
                               <TooltipTrigger asChild>
                                 <Button
@@ -504,62 +438,42 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                                 <p>Kick Member</p>
                               </TooltipContent>
                             </Tooltip>
-                          </TooltipProvider>
-                        ) : (
-                          <div className="w-8" />
-                        )}
+                          ) : (
+                            <div className="w-8" />
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Danger zone: delete only visible to owner */}
-          {isOwner && (
-            <div>
-              <h4 className="text-sm font-medium mb-2">Danger zone</h4>
-              <p className="text-xs text-muted-foreground mb-3">Deleting the family will remove the family and its members from it. This action is irreversible.</p>
-
-              <div className="flex gap-2">
-                {family ? (
-                  <DeleteFamilyButton family={family} onClose={() => onOpenChange(false)} />
-                ) : (
-                  <Button type="button" variant="destructive" onClick={() => setConfirmDeleteOpen(true)} disabled={deleting}>
-                    {deleting ? 'Deleting…' : 'Delete family'}
-                  </Button>
+                    )
+                  })
                 )}
               </div>
             </div>
-          )}
-        </div>
 
-        <DialogFooter className="flex justify-end gap-2">
-          <Button type="button" variant="outline" onClick={() => { stopMembersRealtime(); stopMyRoleRealtime(); onOpenChange(false) }}>Close</Button>
-        </DialogFooter>
-      </DialogContent>
-
-      {/* Fallback confirm delete dialog if DeleteFamilyButton isn't used */}
-      <Dialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
-        {/* ✅ Silence warning here too */}
-        <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>Delete family?</DialogTitle>
-          </DialogHeader>
-          <div>
-            <p className="text-sm text-muted-foreground">
-              Are you sure you want to permanently delete <strong>{family?.name}</strong>? This cannot be undone.
-            </p>
-            <div className="flex gap-2 justify-end mt-4">
-              <Button type="button" variant="outline" onClick={() => setConfirmDeleteOpen(false)}>Cancel</Button>
-              <Button type="button" variant="destructive" onClick={handleDeleteFamily} disabled={deleting}>
-                {deleting ? 'Deleting…' : 'Delete family'}
-              </Button>
-            </div>
+            {/* Danger zone: delete only visible to owner (uses stable AlertDialog internally) */}
+            {isOwner && family && (
+              <div>
+                <h4 className="text-sm font-medium mb-2">Danger zone</h4>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Deleting the family will remove the family and its members from it. This action is irreversible.
+                </p>
+                <div className="flex gap-2">
+                  <DeleteFamilyButton family={family} onClose={() => onOpenChange(false)} />
+                </div>
+              </div>
+            )}
           </div>
-        </DialogContent>
-      </Dialog>
+
+          <DialogFooter className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => { stopMembersRealtime(); stopMyRoleRealtime(); onOpenChange(false) }}
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </TooltipProvider>
+      </DialogContent>
     </Dialog>
   )
 }
