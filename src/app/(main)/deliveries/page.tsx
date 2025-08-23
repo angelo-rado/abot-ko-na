@@ -68,9 +68,10 @@ function etaLabel(raw: any) {
  */
 export default function DeliveriesPageGuard() {
   const { user, loading: authLoading } = useAuth()
-  const { families, familyId, loadingFamilies } = useSelectedFamily()
+  const { families = [], familyId, loadingFamilies } = useSelectedFamily()
 
-  if (authLoading || loadingFamilies || !user || !familyId) {
+  // 1) Still loading auth/families -> show spinner
+  if (authLoading || loadingFamilies || !user) {
     return (
       <main className="flex items-center justify-center h-screen">
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
@@ -78,6 +79,40 @@ export default function DeliveriesPageGuard() {
     )
   }
 
+  // 2) Loaded, but no default family selected -> show CTA instead of spinner
+  if (!familyId) {
+    const hasFamilies = Array.isArray(families) && families.length > 0
+    return (
+      <main className="flex items-center justify-center h-screen px-4">
+        <div className="text-center space-y-4 max-w-md">
+          <h2 className="text-lg font-semibold">No default family selected</h2>
+          <p className="text-sm text-muted-foreground">
+            {hasFamilies
+              ? 'Select a default family to view deliveries.'
+              : "You haven't joined or created a family yet. Deliveries require a family group."}
+          </p>
+          <div className="flex items-center justify-center gap-2">
+            {hasFamilies ? (
+              <>
+                <Link href="/settings">
+                  <Button>Set default in Settings</Button>
+                </Link>
+                <Link href="/family">
+                  <Button variant="outline">Manage Families</Button>
+                </Link>
+              </>
+            ) : (
+              <Link href="/family">
+                <Button>Create or Join a Family</Button>
+              </Link>
+            )}
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  // 3) Ready -> mount the heavy page
   return <DeliveriesPageContent familyId={familyId} families={families} />
 }
 
