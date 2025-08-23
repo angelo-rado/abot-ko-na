@@ -28,29 +28,20 @@ type Props = {
   familyId: string
   order?: any
   delivery?: any
-  /** optional handler supplied by list page */
+  /** optional trash icon trigger (parent handles confirm) */
   onDelete?: () => void
 }
 
 type Status = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
-/** -----------------------------------------------------------
- *  Name lookup cache & helpers
- *  --------------------------------------------------------- */
+/* ---------- name lookup cache ---------- */
 const userNameCache: Record<string, string> = {}
 
 function useUserName(userId?: string) {
   const [name, setName] = useState<string>('')
-
   useEffect(() => {
-    if (!userId) {
-      setName('')
-      return
-    }
-    if (userNameCache[userId]) {
-      setName(userNameCache[userId])
-      return
-    }
+    if (!userId) { setName(''); return }
+    if (userNameCache[userId]) { setName(userNameCache[userId]); return }
     let mounted = true
     const ref = doc(firestore, 'users', userId)
     getDoc(ref)
@@ -61,23 +52,18 @@ function useUserName(userId?: string) {
           setName(userId)
           return
         }
-        const data = snap.data()
-        const displayName =
-          (data?.displayName as string) || (data?.name as string) || userId
+        const data = snap.data() as any
+        const displayName = data?.displayName || data?.name || userId
         userNameCache[userId] = displayName
         setName(displayName)
       })
-      .catch((err) => {
-        console.error('useUserName getDoc error', err)
+      .catch(() => {
         if (!mounted) return
         userNameCache[userId] = userId
         setName(userId)
       })
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [userId])
-
   return name
 }
 
@@ -87,9 +73,7 @@ function UserName({ userId }: { userId?: string }) {
   return <>{name || userId}</>
 }
 
-/** -----------------------------------------------------------
- *  Date helpers
- *  --------------------------------------------------------- */
+/* ---------- date helpers (unchanged) ---------- */
 function toDate(input: any): Date | null {
   if (!input) return null
   if (typeof input?.toDate === 'function') return input.toDate()
@@ -100,26 +84,21 @@ function toDate(input: any): Date | null {
   }
   return null
 }
-
 function daysDiff(a: Date, b = new Date()) {
   const _a = new Date(a.getFullYear(), a.getMonth(), a.getDate())
   const _b = new Date(b.getFullYear(), b.getMonth(), b.getDate())
   const msPerDay = 1000 * 60 * 60 * 24
   return Math.round((_a.getTime() - _b.getTime()) / msPerDay)
 }
-
 function monthsDiff(a: Date, b = new Date()) {
   return (a.getFullYear() - b.getFullYear()) * 12 + (a.getMonth() - b.getMonth())
 }
-
 function formatTimeShort(d: Date) {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 }
-
 function shortDate(d: Date) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
-
 function friendlyExpectedLabel(raw: any) {
   const d = raw instanceof Date ? raw : toDate(raw)
   if (!d) return ''
@@ -136,7 +115,6 @@ function friendlyExpectedLabel(raw: any) {
   }
   return `${shortDate(d)} at ${formatTimeShort(d)}`
 }
-
 function friendlyDeliveredLabel(raw: any) {
   const d = toDate(raw)
   if (!d) return ''
@@ -150,14 +128,10 @@ function friendlyDeliveredLabel(raw: any) {
   return `${shortDate(d)} at ${formatTimeShort(d)}`
 }
 
-/** -----------------------------------------------------------
- *  Public helper for list rows (use to hide Edit outside the card)
- *  --------------------------------------------------------- */
+/* ---------- small helper exported elsewhere ---------- */
 export function deliveryIsLocked(parent: any, childItems?: any[]): boolean {
   const delivered = parent?.status === 'delivered'
   const cancelled = parent?.status === 'cancelled'
-
-  // Prefer parent.expectedDate; if absent, take the latest item ETA
   const pEta = toDate(parent?.expectedDate)
   let eta: Date | null = pEta
   if (!eta && Array.isArray(childItems) && childItems.length) {
@@ -165,11 +139,10 @@ export function deliveryIsLocked(parent: any, childItems?: any[]): boolean {
     if (dates.length) eta = new Date(Math.max(...dates.map((d) => d.getTime())))
   }
   const pastETA = !!eta && eta.getTime() < Date.now()
-
   return delivered || cancelled || pastETA
 }
 
-/** ========================================================= */
+/* ===================================================== */
 
 export default function DeliveryCard({ familyId, order, delivery, onDelete }: Props) {
   const parent = order ?? delivery
@@ -181,10 +154,10 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   const [loadingItems, setLoadingItems] = useState(false)
   const [processing, setProcessing] = useState(false)
 
-  // NEW: confirmation dialog state
+  // confirmation dialog state for mark-delivered
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  // subscribe to items for non-single parents
+  // subscribe to items (unchanged)
   useEffect(() => {
     if (!parent?.id) return
     const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
@@ -198,23 +171,14 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
       familyId,
       parentCollection,
       parent.id,
-      (rows) => {
-        setItems(rows)
-        setLoadingItems(false)
-      },
-      (err) => {
-        console.error('subscribeToItems error', err)
-        setLoadingItems(false)
-      },
+      (rows) => { setItems(rows); setLoadingItems(false) },
+      () => { setLoadingItems(false) },
       'expectedDate'
     )
-    return () => {
-      try { unsub && unsub() } catch { }
-    }
+    return () => { try { unsub && unsub() } catch {} }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [familyId, parent?.id, parentCollection])
 
-  /** ------------ NEW: ETA logic & edit gating ------------ */
   const pEta = toDate(parent?.expectedDate)
   const eta: Date | null = (() => {
     if (pEta) return pEta
@@ -222,33 +186,22 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
     const dates = (items.map((it) => toDate(it.expectedDate)).filter(Boolean) as Date[])
     return dates.length ? new Date(Math.max(...dates.map((d) => d.getTime()))) : null
   })()
-
   const isPastETA = !!eta && eta.getTime() < Date.now()
   const delivered = parent?.status === 'delivered'
   const cancelled = parent?.status === 'cancelled'
 
-  // Remove edit affordances once ETA has passed OR if delivered/cancelled.
-  // (Note: list-row Edit buttons live outside this component—use deliveryIsLocked() there too.)
-  const canEdit = !isPastETA && !delivered && !cancelled
-
-  /** ------------ Items helpers ------------ */
   const onMarkItem = async (itemId: string) => {
     setProcessing(true)
     try {
       const res = await markChildItemAsReceived(familyId, parentCollection, parent.id, itemId)
       if (!res || res.success === false) alert(res?.message ?? 'Failed')
-    } catch (err) {
-      console.error(err)
-      alert('Failed to mark item')
     } finally {
       setProcessing(false)
     }
   }
 
-  /** ------------ UPDATED: mark parent delivered (archive) ------------ */
   const onMarkParent = async () => {
     if (delivered || cancelled) return
-
     setProcessing(true)
     try {
       if (parentType === 'order') {
@@ -278,6 +231,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
           if (!res || res.success === false) {
             alert(res?.message ?? 'Failed')
             setProcessing(false)
+            setConfirmOpen(false)
             return
           }
           await updateDoc(ref, {
@@ -288,11 +242,10 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
         }
       }
     } catch (err) {
-      console.error(err)
       alert('Failed to mark as delivered')
     } finally {
       setProcessing(false)
-      setConfirmOpen(false) // always close the dialog
+      setConfirmOpen(false)
     }
   }
 
@@ -302,11 +255,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
         <CardHeader>
           <CardTitle>No delivery/order provided</CardTitle>
         </CardHeader>
-        <CardContent>
-          <div className="text-sm text-muted-foreground">
-            Component expects either an <code>order</code> (legacy) or <code>delivery</code> prop.
-          </div>
-        </CardContent>
+        <CardContent />
       </Card>
     )
   }
@@ -316,7 +265,6 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
   const pendingCount = items.filter((it) => it.status === 'pending' || it.status === 'in_transit').length
 
-  /** -------------------------- UI -------------------------- */
   function StatusBadge({ status }: { status: Status }) {
     const map: Record<Status, { label: string; className: string }> = {
       pending: { label: 'Pending', className: 'bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs' },
@@ -350,27 +298,34 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-1 justify-end w-full sm:w-auto">
-            {/* Hide internal expand/edit affordance if locked */}
-            {!isPastETA && !delivered && !cancelled && !isSingle && (
-              <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
-                {expanded ? 'Collapse' : `Items (${pendingCount})`}
+          <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
+            {/* optional trash icon (parent handles confirm) */}
+            {onDelete ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onDelete}
+                title="Delete"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span className="sr-only">Delete</span>
               </Button>
-            )}
+            ) : null}
 
-            {/* Minimal icon: Mark-as-delivered (only when past ETA and not already delivered/cancelled) */}
+            {/* minimal icon for marking delivered (kept same logic via dialog) */}
             {isPastETA && !delivered && !cancelled && (
               <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
                 <AlertDialogTrigger asChild>
                   <Button
                     type="button"
-                    size="icon"
                     variant="ghost"
+                    size="icon"
                     disabled={processing}
-                    title="Mark as delivered"
-                    aria-label="Mark as delivered"
+                    title="Mark as delivered (archives)"
                   >
                     <Check className="h-4 w-4" />
+                    <span className="sr-only">Mark as delivered</span>
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
@@ -391,17 +346,10 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
               </AlertDialog>
             )}
 
-            {/* Minimal icon: Delete (delegates to parent page) */}
-            {onDelete && (
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                title="Delete"
-                aria-label="Delete"
-                onClick={onDelete}
-              >
-                <Trash2 className="h-4 w-4" />
+            {/* expand/collapse – unchanged */}
+            {!isPastETA && !delivered && !cancelled && !isSingle && (
+              <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
+                {expanded ? 'Collapse' : `Items (${pendingCount})`}
               </Button>
             )}
           </div>
@@ -464,7 +412,6 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
                         )}
                       </div>
 
-                      {/* per-item receive control stays, independent of parent locking */}
                       {it.status !== 'delivered' && (
                         <div className="flex items-center gap-2">
                           <Button
