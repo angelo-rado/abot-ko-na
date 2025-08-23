@@ -70,7 +70,7 @@ export default function DeliveriesPageGuard() {
   const { user, loading: authLoading } = useAuth()
   const { families = [], familyId, loadingFamilies } = useSelectedFamily()
 
-  // 1) Still loading auth/families -> show spinner
+  // 1) Still loading auth/families -> spinner
   if (authLoading || loadingFamilies || !user) {
     return (
       <main className="flex items-center justify-center h-screen">
@@ -79,41 +79,40 @@ export default function DeliveriesPageGuard() {
     )
   }
 
-  // 2) Loaded, but no default family selected -> show CTA instead of spinner
-  if (!familyId) {
-    const hasFamilies = Array.isArray(families) && families.length > 0
+  // 2) Compute effective family (default or first available)
+  const effectiveId = familyId || (families[0]?.id ?? null)
+
+  // 2a) If we auto-picked one, persist softly so future pages see it
+  // (use the same key used elsewhere in the app)
+  React.useEffect(() => {
+    if (!familyId && families.length > 0 && typeof window !== 'undefined') {
+      try {
+        window.localStorage.setItem('abot:selectedFamily', families[0].id)
+      } catch {}
+    }
+  }, [familyId, families])
+
+  // 3) No families at all -> CTA (not a spinner)
+  if (!effectiveId) {
     return (
       <main className="flex items-center justify-center h-screen px-4">
         <div className="text-center space-y-4 max-w-md">
-          <h2 className="text-lg font-semibold">No default family selected</h2>
+          <h2 className="text-lg font-semibold">No family yet</h2>
           <p className="text-sm text-muted-foreground">
-            {hasFamilies
-              ? 'Select a default family to view deliveries.'
-              : "You haven't joined or created a family yet. Deliveries require a family group."}
+            You haven&apos;t joined or created a family. Deliveries require a family group.
           </p>
           <div className="flex items-center justify-center gap-2">
-            {hasFamilies ? (
-              <>
-                <Link href="/settings">
-                  <Button>Set default in Settings</Button>
-                </Link>
-                <Link href="/family">
-                  <Button variant="outline">Manage Families</Button>
-                </Link>
-              </>
-            ) : (
-              <Link href="/family">
-                <Button>Create or Join a Family</Button>
-              </Link>
-            )}
+            <Link href="/family">
+              <Button>Create or Join a Family</Button>
+            </Link>
           </div>
         </div>
       </main>
     )
   }
 
-  // 3) Ready -> mount the heavy page
-  return <DeliveriesPageContent familyId={familyId} families={families} />
+  // 4) Ready -> mount the heavy page with the effective family
+  return <DeliveriesPageContent familyId={effectiveId} families={families} />
 }
 
 /** The original page content, now safely mounted with stable props */
