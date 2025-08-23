@@ -456,7 +456,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.2 }}
             >
-              <DialogContent className="max-h-[90vh] overflow-y-auto">
+              <DialogContent aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
                 </DialogHeader>
@@ -694,7 +694,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               exit={{ opacity: 0, y: 4, scale: 0.98 }}
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
             >
-              <DialogContent>
+              <DialogContent aria-describedby={undefined}>
                 <DialogHeader>
                   <DialogTitle>
                     {confirmContext === 'switch' ? 'Switch to Single delivery?' : 'Discard this delivery?'}
@@ -775,3 +775,4 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     </>
   )
 }
+

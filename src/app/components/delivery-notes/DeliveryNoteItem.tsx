@@ -226,7 +226,7 @@ export default function DeliveryNoteItem({
 
       {/* Controlled AlertDialog: no Trigger, so no React.Children.only */}
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent aria-describedby={undefined}>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete note?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -248,3 +248,4 @@ export default function DeliveryNoteItem({
     </>
   )
 }
+

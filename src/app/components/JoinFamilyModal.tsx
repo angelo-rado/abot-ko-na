@@ -229,7 +229,7 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md animate-in fade-in zoom-in duration-200">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md animate-in fade-in zoom-in duration-200">
         <DialogHeader>
           <DialogTitle className="text-lg font-semibold">Join a Family</DialogTitle>
         </DialogHeader>
@@ -273,3 +273,4 @@ export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: P
     </Dialog>
   )
 }
+

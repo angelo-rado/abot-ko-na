@@ -71,78 +71,30 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const [membersLoading, setMembersLoading] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  // current user's role in this family (owner | admin | member | null)
   const [myRole, setMyRole] = useState<string | null>(null)
   const isOwner = Boolean(family && (family.owner ?? family.createdBy) === user?.uid)
   const isAdmin = myRole === 'admin'
 
-  // profile cache to avoid repeated users/{uid} reads
   const profileCacheRef = useRef<Record<string, { name?: string; email?: string; photoURL?: string }>>({})
 
-  // Realtime listener unsubs
   const membersUnsubRef = useRef<(() => void) | null>(null)
   const myRoleUnsubRef = useRef<(() => void) | null>(null)
 
+  // (Un)subscribe based on open/family.id; keep hook order stable
   useEffect(() => {
-    if (open && family?.id) {
-      setEditingName(family.name ?? '')
-      startMembersRealtime()
-      startMyRoleRealtime()
-    } else {
-      // closed: cleanup (keep hook order stable by not conditionally calling hooks)
-      stopMembersRealtime()
-      stopMyRoleRealtime()
+    if (!open || !family?.id) {
+      if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
+      if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
       setMembers([])
       setMembersLoading(false)
       setMyRole(null)
+      return
     }
-    return () => {
-      stopMembersRealtime()
-      stopMyRoleRealtime()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, family?.id])
 
-  const stopMembersRealtime = () => {
-    if (membersUnsubRef.current) {
-      try { membersUnsubRef.current() } catch {}
-      membersUnsubRef.current = null
-    }
-  }
-
-  const stopMyRoleRealtime = () => {
-    if (myRoleUnsubRef.current) {
-      try { myRoleUnsubRef.current() } catch {}
-      myRoleUnsubRef.current = null
-    }
-  }
-
-  const fetchProfileOnce = async (uid: string) => {
-    const cache = profileCacheRef.current
-    if (cache[uid]) return cache[uid]
-    try {
-      const snap = await getDoc(doc(firestore, 'users', uid))
-      if (snap.exists()) {
-        const d = snap.data() as any
-        const p = { name: d?.name ?? d?.displayName, email: d?.email, photoURL: d?.photoURL ?? d?.photo }
-        cache[uid] = p
-        return p
-      }
-    } catch (err) {
-      console.warn('fetchProfileOnce failed for', uid, err)
-    }
-    cache[uid] = {}
-    return cache[uid]
-  }
-
-  // start realtime members subscription
-  const startMembersRealtime = useCallback(() => {
-    if (!family?.id) return
-    stopMembersRealtime()
-    setMembersLoading(true)
-
+    // Members realtime
     const membersRef = collection(firestore, 'families', family.id, 'members')
-    const unsub = onSnapshot(membersRef, async (snap) => {
+    setMembersLoading(true)
+    membersUnsubRef.current = onSnapshot(membersRef, async (snap) => {
       if (!mountedRef.current) return
       const docs: Member[] = snap.docs.map(d => {
         const data = d.data() as any
@@ -157,16 +109,33 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         } as Member
       })
 
-      // hydrate missing profile bits
       const toFetch = docs.filter(m => !m.name && !m.photoURL && !m.email).map(m => m.id)
       await Promise.all(toFetch.map(async uid => {
-        const p = await fetchProfileOnce(uid)
-        const idx = docs.findIndex(x => x.id === uid)
-        if (idx >= 0) docs[idx] = { ...docs[idx], name: p.name, email: p.email, photoURL: p.photoURL }
+        if (profileCacheRef.current[uid]) return
+        try {
+          const snap = await getDoc(doc(firestore, 'users', uid))
+          if (snap.exists()) {
+            const u = snap.data() as any
+            profileCacheRef.current[uid] = {
+              name: u?.name ?? u?.displayName,
+              email: u?.email,
+              photoURL: u?.photoURL ?? u?.photo
+            }
+          } else {
+            profileCacheRef.current[uid] = {}
+          }
+        } catch { profileCacheRef.current[uid] = {} }
+      }))
+
+      const enriched = docs.map(m => ({
+        ...m,
+        name: m.name ?? profileCacheRef.current[m.id]?.name,
+        email: m.email ?? profileCacheRef.current[m.id]?.email,
+        photoURL: m.photoURL ?? profileCacheRef.current[m.id]?.photoURL
       }))
 
       const ownerId = family?.owner ?? family?.createdBy ?? null
-      const sorted = docs.slice().sort((a, b) => {
+      const sorted = enriched.slice().sort((a, b) => {
         if (a.id === ownerId) return -1
         if (b.id === ownerId) return 1
         return (a.name ?? '').toLowerCase().localeCompare((b.name ?? '').toLowerCase())
@@ -176,71 +145,48 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         setMembers(sorted)
         setMembersLoading(false)
       }
-    }, (err) => {
-      console.warn('members realtime error', err)
+    }, () => {
       if (mountedRef.current) {
         setMembersLoading(false)
         toast.error('Failed to subscribe to members')
       }
     })
 
-    membersUnsubRef.current = unsub
-  }, [family?.id])
-
-  // start realtime subscription for current user's member doc
-  const startMyRoleRealtime = useCallback(() => {
-    if (!family?.id || !user?.uid) return
-    stopMyRoleRealtime()
-
-    const myRef = doc(firestore, 'families', family.id, 'members', user.uid)
-    const unsub = onSnapshot(myRef, (snap) => {
-      if (!mountedRef.current) return
-      if (snap.exists()) {
-        const md = snap.data() as any
+    // My role realtime
+    if (user?.uid) {
+      const myRef = doc(firestore, 'families', family.id, 'members', user.uid)
+      myRoleUnsubRef.current = onSnapshot(myRef, (snap) => {
+        if (!mountedRef.current) return
         if (family && family.createdBy === user.uid) setMyRole('owner')
-        else setMyRole(md?.role ?? 'member')
-      } else {
-        if (family && family.createdBy === user.uid) setMyRole('owner')
-        else setMyRole(null)
-      }
-    }, () => {})
+        else setMyRole(snap.exists() ? ((snap.data() as any)?.role ?? 'member') : null)
+      })
+    }
 
-    myRoleUnsubRef.current = unsub
-  }, [family?.id, user?.uid, family?.createdBy])
+    return () => {
+      if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
+      if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
+    }
+  }, [open, family?.id, family?.createdBy, user?.uid])
 
-  // Toggle role optimistically
   const toggleRole = async (memberId: string, currentRole: string | null | undefined) => {
     if (!family?.id || !user?.uid) return
     const ownerId = family.owner ?? family.createdBy ?? null
-    if (ownerId && memberId === ownerId) {
-      toast('Owner role cannot be changed', { icon: '⚠️' })
-      return
-    }
-    if (!isOwner && !isAdmin) {
-      toast.error('You do not have permission to change roles')
-      return
-    }
+    if (ownerId && memberId === ownerId) { toast('Owner role cannot be changed', { icon: '⚠️' }); return }
+    if (!isOwner && !isAdmin) { toast.error('You do not have permission to change roles'); return }
 
     const nextRole = currentRole === 'admin' ? 'member' : 'admin'
     setBusy(true)
-
-    // optimistic update
     setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: nextRole } : m))
-
     try {
-      const memberRef = doc(firestore, 'families', family.id, 'members', memberId)
-      await updateDoc(memberRef, { role: nextRole })
+      await updateDoc(doc(firestore, 'families', family.id, 'members', memberId), { role: nextRole })
       toast.success(`Role updated to ${nextRole}`)
     } catch (err) {
       console.error('toggleRole failed', err)
       toast.error('Failed to update role')
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: currentRole } : m))
-    } finally {
-      setBusy(false)
-    }
+    } finally { setBusy(false) }
   }
 
-  // Remove member (owner/admin). Server function cleans users/{uid}.
   const removeMember = async (memberId: string) => {
     if (typeof navigator !== 'undefined' && !isNetOnline()) {
       if (!family?.id) return
@@ -263,24 +209,19 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
     try {
       await deleteDoc(doc(firestore, 'families', family.id, 'members', memberId))
-      try {
-        await updateDoc(doc(firestore, 'families', family.id), { members: arrayRemove(memberId) })
-      } catch {}
+      try { await updateDoc(doc(firestore, 'families', family.id), { members: arrayRemove(memberId) }) } catch {}
       toast.success('Member removed')
     } catch (err) {
       console.error('removeMember failed', err)
       toast.error('Failed to remove member')
       setMembers(prev)
-    } finally {
-      setBusy(false)
-    }
+    } finally { setBusy(false) }
   }
 
   const handleSaveName = async () => {
     if (!family?.id) return
     if (!isOwner) { toast.error('Only the owner can rename the family'); return }
-    if ((editingName ?? '').trim() === (family.name ?? '').trim()) { onOpenChange(false); return }
-
+    if ((editingName ?? '').trim() === (family?.name ?? '').trim()) { onOpenChange(false); return }
     setIsSaving(true)
     try {
       await updateDoc(doc(firestore, 'families', family.id), {
@@ -292,9 +233,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     } catch (err) {
       console.error('Failed to update family name', err)
       toast.error('Failed to save name')
-    } finally {
-      setIsSaving(false)
-    }
+    } finally { setIsSaving(false) }
   }
 
   const renderReadOnlyBanner = () => {
@@ -308,14 +247,18 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   return (
     <Dialog
+      key={family?.id ?? 'no-family'}
       open={open}
       onOpenChange={(v) => {
-        if (!v) { stopMembersRealtime(); stopMyRoleRealtime() }
+        if (!v) {
+          if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
+          if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
+        }
         onOpenChange(v)
       }}
     >
-      {/* Keep provider OUT of list maps to preserve a stable hook tree */}
       <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
+        {/* Single provider here to keep list stable */}
         <TooltipProvider delayDuration={200}>
           <DialogHeader>
             <DialogTitle>Manage {family?.name ?? 'family'}</DialogTitle>
@@ -324,7 +267,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
           <div className="space-y-6">
             {renderReadOnlyBanner()}
 
-            {/* Family name editor — only owner can rename */}
+            {/* Family name editor */}
             {isOwner ? (
               <div>
                 <label className="text-sm font-medium block mb-2">Family name</label>
@@ -342,7 +285,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               </div>
             )}
 
-            {/* Set home location — owner & admin */}
+            {/* Set home location */}
             {(isOwner || isAdmin) && family?.id && (
               <div>
                 <SetFamilyHomeLocation familyId={family.id} />
@@ -405,10 +348,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
                           {canChangeRole ? (
                             <button
                               type="button"
-                              className={cn(
-                                'inline-flex items-center gap-2 text-sm px-2 py-1 rounded',
-                                'bg-muted/10'
-                              )}
+                              className={cn('inline-flex items-center gap-2 text-sm px-2 py-1 rounded', 'bg-muted/10')}
                               onClick={() => toggleRole(m.id, m.role)}
                               title={m.role === 'admin' ? 'Demote to member' : 'Promote to admin'}
                               disabled={busy}
@@ -449,7 +389,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               </div>
             </div>
 
-            {/* Danger zone: delete only visible to owner (uses stable AlertDialog internally) */}
+            {/* Danger zone — use dedicated button (stable AlertDialog internally) */}
             {isOwner && family && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Danger zone</h4>
@@ -467,7 +407,11 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
             <Button
               type="button"
               variant="outline"
-              onClick={() => { stopMembersRealtime(); stopMyRoleRealtime(); onOpenChange(false) }}
+              onClick={() => {
+                if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
+                if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
+                onOpenChange(false)
+              }}
             >
               Close
             </Button>
@@ -477,3 +421,4 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     </Dialog>
   )
 }
+

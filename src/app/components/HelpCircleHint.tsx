@@ -40,7 +40,7 @@ export function HelpCircleHint({
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent aria-describedby={undefined} className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
@@ -50,3 +50,4 @@ export function HelpCircleHint({
     </>
   )
 }
+

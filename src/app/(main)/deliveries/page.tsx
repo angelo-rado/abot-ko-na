@@ -3,7 +3,7 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
-  collection, query, orderBy, onSnapshot, doc,
+  collection, query as fsQuery, orderBy, onSnapshot, doc,
   deleteDoc,
 } from 'firebase/firestore'
 
@@ -63,14 +63,22 @@ function etaLabel(raw: any) {
 }
 
 /**
- * Guard wrapper — only mounts heavy content when user & familyId are ready.
- * This prevents changing the number of hooks between renders (#310).
+ * Guard wrapper — only mounts heavy content when user is ready.
+ * Also auto-falls back to first family if default isn't set.
+ * (Avoids React #310 by keeping hooks outside branches.)
  */
 export default function DeliveriesPageGuard() {
   const { user, loading: authLoading } = useAuth()
   const { families = [], familyId, loadingFamilies } = useSelectedFamily()
 
-  // 1) Still loading auth/families -> spinner
+  // Persist a soft default family when none is set (unconditional hook)
+  useEffect(() => {
+    if (!familyId && families.length > 0 && typeof window !== 'undefined') {
+      try { window.localStorage.setItem('abot:selectedFamily', families[0].id) } catch {}
+    }
+  }, [familyId, families])
+
+  // Still loading -> spinner (does NOT wait for familyId)
   if (authLoading || loadingFamilies || !user) {
     return (
       <main className="flex items-center justify-center h-screen">
@@ -79,20 +87,9 @@ export default function DeliveriesPageGuard() {
     )
   }
 
-  // 2) Compute effective family (default or first available)
+  // Default to first family if none picked; show CTA if no families at all
   const effectiveId = familyId || (families[0]?.id ?? null)
 
-  // 2a) If we auto-picked one, persist softly so future pages see it
-  // (use the same key used elsewhere in the app)
-  React.useEffect(() => {
-    if (!familyId && families.length > 0 && typeof window !== 'undefined') {
-      try {
-        window.localStorage.setItem('abot:selectedFamily', families[0].id)
-      } catch {}
-    }
-  }, [familyId, families])
-
-  // 3) No families at all -> CTA (not a spinner)
   if (!effectiveId) {
     return (
       <main className="flex items-center justify-center h-screen px-4">
@@ -111,7 +108,6 @@ export default function DeliveriesPageGuard() {
     )
   }
 
-  // 4) Ready -> mount the heavy page with the effective family
   return <DeliveriesPageContent familyId={effectiveId} families={families} />
 }
 
@@ -176,7 +172,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   // Live deliveries listener
   useEffect(() => {
     setLoadingDeliveries(true)
-    const qy = query(
+    const qy = fsQuery(
       collection(firestore, 'families', familyId, 'deliveries'),
       orderBy('createdAt', 'desc')
     )
@@ -615,7 +611,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
           else setConfirmOpen(true)
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent aria-describedby={undefined}>
           <AlertDialogHeader>
             <AlertDialogTitle>{confirmTitle || 'Are you sure?'}</AlertDialogTitle>
             {confirmMessage ? (
@@ -638,3 +634,4 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
     </div>
   )
 }
+

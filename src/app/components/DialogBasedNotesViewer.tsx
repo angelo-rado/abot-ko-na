@@ -15,7 +15,7 @@ export function DeliveryNotesDialog({ note, receiverNote }: { note?: string; rec
           View Notes
         </div>
       </DialogTrigger>
-      <DialogContent className="max-w-sm">
+      <DialogContent aria-describedby={undefined} className="max-w-sm">
         <DialogHeader>
           <DialogTitle>Delivery Notes</DialogTitle>
         </DialogHeader>
@@ -37,3 +37,4 @@ export function DeliveryNotesDialog({ note, receiverNote }: { note?: string; rec
     </Dialog>
   )
 }
+

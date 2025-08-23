@@ -42,7 +42,7 @@ export default function FamilyCreatedSuccess({ familyName, familyId, onClose }: 
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && handleClose()}>
-      <DialogContent className="sm:max-w-md animate-in fade-in zoom-in duration-300">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md animate-in fade-in zoom-in duration-300">
         <DialogHeader>
           <DialogTitle className="text-green-600">Family Created!</DialogTitle>
         </DialogHeader>
@@ -62,3 +62,4 @@ export default function FamilyCreatedSuccess({ familyName, familyId, onClose }: 
     </Dialog>
   )
 }
+

@@ -33,3 +33,4 @@ export default function StandaloneShell({ children }: { children: React.ReactNod
     </div>
   )
 }
+

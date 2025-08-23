@@ -245,3 +245,4 @@ export default function PullToRefresh({
   )
 }
 // .animate-spin-slow { animation: spin 1.2s linear infinite; }
+

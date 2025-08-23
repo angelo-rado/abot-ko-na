@@ -45,3 +45,4 @@ export default class PageErrorBoundary extends React.Component<
     return this.props.children
   }
 }
+

@@ -17,3 +17,4 @@ export default function FamilySlotError({ error, reset }: { error: Error; reset:
     </div>
   );
 }
+
