@@ -3,13 +3,14 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore'
+
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
-import { useSelectedFamily } from '@/lib/useSelectedFamily'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import BulkEditBar from './BulkEditBar'
 import { Button } from '@/components/ui/button'
+
 import {
   Tabs,
   TabsList,
@@ -60,11 +61,13 @@ function formatDate(ts?: any) {
   return ''
 }
 
-function DeliveriesPageInner({ familyId }: { familyId: string }) {
-  useAutoPresence(familyId || undefined)
+function DeliveriesPage() {
+  const { user } = useAuth()
+  const familyId = user?.familyId ?? undefined
+  useAutoPresence(familyId)
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
-  const [selectedTab, setSelectedTab] = useState<'upcoming' | 'archived'>('upcoming')
+  const [tab, setTab] = useState<'upcoming' | 'archived'>('upcoming')
   const [queryText, setQueryText] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -111,7 +114,7 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
     confirmResolveRef.current = null
   }
 
-  // live subscribe
+  // live subscribe (only if we have familyId)
   useEffect(() => {
     if (!familyId) return
     const col = collection(firestore, 'families', familyId, 'deliveries')
@@ -123,20 +126,18 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
     return () => unsub()
   }, [familyId])
 
-  const filtered = deliveries.filter((r) => {
-    // Tabs are Upcoming vs Archived (not status)
-    if (selectedTab === 'upcoming') {
-      // upcoming: not archived and not explicitly cancelled
-      if (r.archived) return false
-      if (r.status === 'cancelled') return false
+  // Upcoming vs Archived filter (NOT by status)
+  const filtered = deliveries.filter((d) => {
+    if (tab === 'upcoming') {
+      if (d.archived) return false
+      // treat cancelled as not-upcoming (optional; keep if this matches your original)
+      if (d.status === 'cancelled') return false
     } else {
-      // archived: archived flag true
-      if (!r.archived) return false
+      if (!d.archived) return false
     }
-
     if (queryText) {
       const q = queryText.toLowerCase()
-      const s = [r.title, r.note, r.receiverNote].filter(Boolean).join(' ').toLowerCase()
+      const s = [d.title, d.note, d.receiverNote].filter(Boolean).join(' ').toLowerCase()
       if (!s.includes(q)) return false
     }
     return true
@@ -154,7 +155,7 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
 
   const selectedCount = Object.values(selectedIds).filter(Boolean).length
 
-  // Single delete (offline-aware lib helper)
+  // Single delete (uses offline-aware lib helper)
   async function handleDelete(deliveryId: string) {
     if (!familyId) { showToast('No family selected'); return }
     const ok = await showConfirm('Delete delivery', 'This cannot be undone.', { danger: true, confirmLabel: 'Delete' })
@@ -224,13 +225,13 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
         </div>
       </div>
 
-      <Tabs value={selectedTab} onValueChange={(v) => setSelectedTab(v as any)} className="w-full">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
         <TabsList>
           <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
           <TabsTrigger value="archived">Archived</TabsTrigger>
         </TabsList>
 
-        <TabsContent value={selectedTab} className="mt-4">
+        <TabsContent value={tab} className="mt-4">
           <div className="mb-2 flex items-center justify-between">
             {selectionMode ? (
               <div className="flex items-center gap-3">
@@ -274,7 +275,6 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
                     </div>
                   ) : null}
 
-                  {/* keep original layout: the top-right Delete button */}
                   <div className="flex justify-end mb-2">
                     {!selectionMode && (
                       <Button variant="destructive" size="sm" onClick={() => handleDelete(d.id)}>
@@ -282,13 +282,7 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
                       </Button>
                     )}
                   </div>
-
-                  {/* Pass onDelete so the card can show a trash icon (minimal addition) */}
-                  <DeliveryCard
-                    familyId={familyId}
-                    delivery={d}
-                    onDelete={() => handleDelete(d.id)}
-                  />
+                  <DeliveryCard familyId={String(familyId || '')} delivery={d} />
                 </div>
               )
             })}
@@ -320,13 +314,6 @@ function DeliveriesPageInner({ familyId }: { familyId: string }) {
       </AlertDialog>
     </div>
   )
-}
-
-function DeliveriesPage() {
-  const { user } = useAuth()
-  const { familyId } = useSelectedFamily(user?.familyId ?? null)
-  if (!user || !familyId) return null
-  return <DeliveriesPageInner familyId={familyId || ''} />
 }
 
 export default function DeliveriesPageGuard() {
