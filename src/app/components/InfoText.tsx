@@ -10,3 +10,4 @@ export default function InfoText({ children }: { children: React.ReactNode }) {
     </p>
   )
 }
+

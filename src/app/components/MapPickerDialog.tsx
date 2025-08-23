@@ -97,7 +97,7 @@ export default function MapPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl w-full">
+      <DialogContent aria-describedby={undefined} className="max-w-3xl w-full">
         <DialogHeader>
           <DialogTitle>Pick Home Location</DialogTitle>
         </DialogHeader>
@@ -160,3 +160,4 @@ export default function MapPickerDialog({
     </Dialog>
   );
 }
+

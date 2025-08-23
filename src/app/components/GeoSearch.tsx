@@ -54,3 +54,4 @@ export default function GeoSearch({ onSelectLocation }: GeoSearchProps) {
 
   return null;
 }
+

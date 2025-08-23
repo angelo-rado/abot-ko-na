@@ -328,7 +328,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
                     <span className="sr-only">Mark as delivered</span>
                   </Button>
                 </AlertDialogTrigger>
-                <AlertDialogContent>
+                <AlertDialogContent aria-describedby={undefined}>
                   <AlertDialogHeader>
                     <AlertDialogTitle>Mark as delivered?</AlertDialogTitle>
                     <AlertDialogDescription>
@@ -436,3 +436,4 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
     </Card>
   )
 }
+

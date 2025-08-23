@@ -5,3 +5,4 @@ export default function JoinRouteLayout({ children }: { children: React.ReactNod
   // Ensure auth/theme/providers are available on /family/join
   return <Providers>{children}</Providers>
 }
+

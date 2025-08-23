@@ -84,7 +84,7 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Invite to {familyName || 'Family'}</DialogTitle>
         </DialogHeader>
@@ -110,3 +110,4 @@ export default function InviteModal({ familyId, familyName, open, onOpenChange }
     </Dialog>
   )
 }
+

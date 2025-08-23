@@ -33,7 +33,7 @@ export function ReceiverNoteDialog({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Mark as Received</DialogTitle>
         </DialogHeader>
@@ -65,3 +65,4 @@ export function ReceiverNoteDialog({
     </Dialog>
   )
 }
+
