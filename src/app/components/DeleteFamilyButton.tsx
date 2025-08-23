@@ -28,6 +28,20 @@ type Props = {
 }
 
 const CHUNK_SIZE = 400
+const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
+
+// util: delete all docs in a subcollection in chunks (best-effort)
+async function deleteSubcolDocs(familyId: string, subcol: string) {
+  const ref = collection(firestore, 'families', familyId, subcol)
+  const snap = await getDocs(ref)
+  if (snap.empty) return
+  const refs = snap.docs.map(d => d.ref)
+  for (let i = 0; i < refs.length; i += CHUNK_SIZE) {
+    const batch = writeBatch(firestore)
+    refs.slice(i, i + CHUNK_SIZE).forEach(r => batch.delete(r))
+    await batch.commit()
+  }
+}
 
 export default function DeleteFamilyButton({ family, onClose }: Props) {
   const { user } = useAuth()
@@ -45,46 +59,51 @@ export default function DeleteFamilyButton({ family, onClose }: Props) {
     }
 
     setLoading(true)
+    const familyId = family.id
 
     try {
-      const familyId = family.id
-
-      // Step 1: Gather member UIDs
+      // 1) Gather member UIDs (from prop or live read)
       let memberUIDs: string[] = Array.isArray(family.members) ? [...family.members] : []
-
       if (memberUIDs.length === 0) {
         const membersSnap = await getDocs(collection(firestore, 'families', familyId, 'members'))
         memberUIDs = membersSnap.docs.map((d) => d.id)
       }
 
-      // Step 2: Delete members subcollection in batches
-      const memberDocRefs = memberUIDs.map((uid) =>
-        doc(firestore, 'families', familyId, 'members', uid)
-      )
-      for (let i = 0; i < memberDocRefs.length; i += CHUNK_SIZE) {
-        const chunk = memberDocRefs.slice(i, i + CHUNK_SIZE)
-        const batch = writeBatch(firestore)
-        chunk.forEach((ref) => batch.delete(ref))
-        await batch.commit()
+      // 2) Best-effort: delete common subcollections (members, deliveries, presence, tokens)
+      await deleteSubcolDocs(familyId, 'members')
+      await deleteSubcolDocs(familyId, 'deliveries').catch(() => {})
+      await deleteSubcolDocs(familyId, 'presence').catch(() => {})
+      await deleteSubcolDocs(familyId, 'tokens').catch(() => {})
+
+      // 3) Best-effort: remove family from users/{uid}.familiesJoined (may be blocked by rules; ignore failures)
+      if (memberUIDs.length) {
+        for (let i = 0; i < memberUIDs.length; i += CHUNK_SIZE) {
+          const chunk = memberUIDs.slice(i, i + CHUNK_SIZE)
+          const batch = writeBatch(firestore)
+          chunk.forEach((uid) => {
+            batch.update(doc(firestore, 'users', uid), { familiesJoined: arrayRemove(familyId) } as any)
+          })
+          await batch.commit().catch(() => {}) // non-fatal
+        }
       }
 
-      // Step 3: Remove family from users' familiesJoined
-      const userDocRefs = memberUIDs.map((uid) => doc(firestore, 'users', uid))
-      for (let i = 0; i < userDocRefs.length; i += CHUNK_SIZE) {
-        const chunk = userDocRefs.slice(i, i + CHUNK_SIZE)
-        const batch = writeBatch(firestore)
-        chunk.forEach((userRef) =>
-          batch.update(userRef, { familiesJoined: arrayRemove(family.id) } as any)
-        )
-        await batch.commit()
-      }
-
-      // Step 4: Delete family doc
+      // 4) Delete family doc last
       await deleteDoc(doc(firestore, 'families', familyId))
+
+      // 5) Clear client-selected family and leave the detail route immediately
+      try {
+        if (localStorage.getItem(LOCAL_FAMILY_KEY) === familyId) {
+          localStorage.removeItem(LOCAL_FAMILY_KEY)
+        }
+      } catch {}
 
       toast.success('Family deleted')
       onClose?.()
-      router.replace('/family')
+      setConfirmOpen(false)
+
+      // Hard exit from /family/[id] so children don’t render while tearing down
+      router.replace('/family?deleted=1')
+      router.refresh()
     } catch (err) {
       console.error('Failed to delete family', err)
       toast.error('Failed to delete family. Try again or contact support.')

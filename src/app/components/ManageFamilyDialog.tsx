@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge'
 import { useAuth } from '@/lib/useAuth'
 // ✅ use shadcn tooltip wrapper, not radix primitives
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRouter } from 'next/navigation'
 
 type Family = {
   id: string
@@ -70,12 +71,14 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [busy, setBusy] = useState(false)
+  const router = useRouter()
 
   // current user's role in this family (owner | admin | member | null)
   const [myRole, setMyRole] = useState<string | null>(null)
   const isOwner = Boolean(family && (family.owner ?? family.createdBy) === user?.uid)
   const isAdmin = myRole === 'admin'
   const canManage = isOwner || isAdmin
+  const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
   // profile cache to avoid repeated users/{uid} reads
   const profileCacheRef = useRef<Record<string, { name?: string; email?: string; photoURL?: string }>>({})
@@ -311,17 +314,33 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     }
     setDeleting(true)
     try {
-      const membersRef = collection(firestore, 'families', family.id, 'members')
-      const memSnap = await getDocs(membersRef)
-      if (!mountedRef.current) return
-      if (!memSnap.empty) {
-        const batch = writeBatch(firestore)
-        memSnap.docs.forEach(d => batch.delete(d.ref))
-        await batch.commit()
+      const familyId = family.id
+
+      // Best-effort: delete common subcollections
+      const subcols = ['members', 'deliveries', 'presence', 'tokens'] as const
+      for (const sub of subcols) {
+        const snap = await getDocs(collection(firestore, 'families', familyId, sub))
+        if (!snap.empty) {
+          const batch = writeBatch(firestore)
+          snap.docs.forEach(d => batch.delete(d.ref))
+          await batch.commit()
+        }
       }
-      await deleteDoc(doc(firestore, 'families', family.id))
+
+      // Delete family doc last
+      await deleteDoc(doc(firestore, 'families', familyId))
+
+      // Clear client-selected family and redirect out of the detail route
+      try {
+        if (localStorage.getItem(LOCAL_FAMILY_KEY) === familyId) {
+          localStorage.removeItem(LOCAL_FAMILY_KEY)
+        }
+      } catch { }
+
       toast.success('Family deleted')
       onOpenChange(false)
+      router.replace('/family?deleted=1')
+      router.refresh()
     } catch (err) {
       console.error('Failed to delete family', err)
       toast.error('Failed to delete family')

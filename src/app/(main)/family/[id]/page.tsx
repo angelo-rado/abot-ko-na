@@ -40,6 +40,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Skeleton } from '@/components/ui/skeleton'
 
 type Family = {
   id: string
@@ -232,10 +233,48 @@ export default function FamilyDetailPage() {
 
   if (!id) return null
 
+  // ----- Improved loading UX: full-page skeletons -----
   if (family === undefined || members === undefined) {
     return (
-      <div className="max-w-2xl mx-auto p-6 text-muted-foreground flex items-center gap-2">
-        <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+      <div className="max-w-2xl mx-auto p-4 space-y-6" aria-busy="true">
+        <div className="flex items-start justify-between gap-3">
+          <Button variant="ghost" size="icon" disabled className="shrink-0">
+            <ChevronLeft className="w-5 h-5" />
+          </Button>
+
+          <div className="min-w-0 flex-1">
+            <Skeleton className="h-7 w-56" />
+            <div className="mt-2 flex items-center gap-3">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="h-4 w-36" />
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <Skeleton className="h-9 w-24" />
+            <Skeleton className="h-9 w-24" />
+          </div>
+        </div>
+
+        <Separator />
+
+        <section className="space-y-3">
+          <Skeleton className="h-5 w-24" />
+          <ul className="divide-y rounded-md border overflow-hidden">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <li key={i} className="flex items-center justify-between p-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Skeleton className="h-8 w-8 rounded-full" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                </div>
+                <Skeleton className="h-6 w-16" />
+              </li>
+            ))}
+          </ul>
+        </section>
       </div>
     )
   }
