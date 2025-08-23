@@ -22,11 +22,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
+import { Check, Trash2 } from 'lucide-react'
 
 type Props = {
   familyId: string
   order?: any
   delivery?: any
+  /** optional handler supplied by list page */
+  onDelete?: () => void
 }
 
 type Status = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
@@ -168,7 +171,7 @@ export function deliveryIsLocked(parent: any, childItems?: any[]): boolean {
 
 /** ========================================================= */
 
-export default function DeliveryCard({ familyId, order, delivery }: Props) {
+export default function DeliveryCard({ familyId, order, delivery, onDelete }: Props) {
   const parent = order ?? delivery
   const parentType: 'order' | 'delivery' = order ? 'order' : 'delivery'
   const parentCollection = parentType === 'order' ? 'orders' : 'deliveries'
@@ -347,7 +350,7 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
+          <div className="flex flex-wrap gap-1 justify-end w-full sm:w-auto">
             {/* Hide internal expand/edit affordance if locked */}
             {!isPastETA && !delivered && !cancelled && !isSingle && (
               <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
@@ -355,16 +358,19 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
               </Button>
             )}
 
-            {/* Show Mark-as-delivered only when past ETA and not already delivered/cancelled */}
+            {/* Minimal icon: Mark-as-delivered (only when past ETA and not already delivered/cancelled) */}
             {isPastETA && !delivered && !cancelled && (
               <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
                 <AlertDialogTrigger asChild>
                   <Button
                     type="button"
+                    size="icon"
+                    variant="ghost"
                     disabled={processing}
-                    title="Mark as delivered (archives this record, cannot be undone)"
+                    title="Mark as delivered"
+                    aria-label="Mark as delivered"
                   >
-                    {processing ? 'Processing…' : 'Mark as delivered'}
+                    <Check className="h-4 w-4" />
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent>
@@ -383,6 +389,20 @@ export default function DeliveryCard({ familyId, order, delivery }: Props) {
                   </AlertDialogFooter>
                 </AlertDialogContent>
               </AlertDialog>
+            )}
+
+            {/* Minimal icon: Delete (delegates to parent page) */}
+            {onDelete && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                title="Delete"
+                aria-label="Delete"
+                onClick={onDelete}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
             )}
           </div>
         </CardTitle>

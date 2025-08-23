@@ -9,7 +9,6 @@ import { useAuth } from '@/lib/useAuth'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import BulkEditBar from './BulkEditBar'
-import { Button } from '@/components/ui/button'
 
 import {
   Tabs,
@@ -270,14 +269,11 @@ function DeliveriesPage() {
                     </div>
                   ) : null}
 
-                  <div className="flex justify-end mb-2">
-                    {!selectionMode && (
-                      <Button variant="destructive" size="sm" onClick={() => handleDelete(d.id)}>
-                        Delete
-                      </Button>
-                    )}
-                  </div>
-                  <DeliveryCard familyId={String(familyId || '')} delivery={d} />
+                  <DeliveryCard
+                    familyId={String(familyId || '')}
+                    delivery={d}
+                    onDelete={() => handleDelete(d.id)}
+                  />
                 </div>
               )
             })}
