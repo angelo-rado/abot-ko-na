@@ -2,6 +2,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { collection, query, orderBy, onSnapshot } from 'firebase/firestore'
 
 import { firestore } from '@/lib/firebase'
@@ -34,6 +35,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { deleteDelivery as deleteDeliveryApi } from '@/lib/deliveries'
+import { Pencil, Trash2, Plus } from 'lucide-react'
 
 type Delivery = {
   id: string
@@ -51,19 +53,16 @@ type Delivery = {
   archived?: boolean
 }
 
-function formatDate(ts?: any) {
-  try {
-    if (!ts) return ''
-    if (ts.toDate) return ts.toDate().toLocaleDateString()
-    if (ts.seconds) return new Date(ts.seconds * 1000).toLocaleDateString()
-    if (typeof ts === 'number') return new Date(ts).toLocaleDateString()
-  } catch {}
-  return ''
-}
-
 function DeliveriesPage() {
   const { user } = useAuth()
-  const familyId = user?.familyId ?? undefined
+
+  // Derive default family id in a forgiving way
+  const familyId =
+    (user as any)?.familyId ||
+    (user as any)?.defaultFamilyId ||
+    (Array.isArray((user as any)?.families) && (user as any).families[0]?.id) ||
+    undefined
+
   useAutoPresence(familyId)
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
@@ -71,7 +70,7 @@ function DeliveriesPage() {
   const [queryText, setQueryText] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // selection
+  // selection + "modes"
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({})
 
@@ -114,7 +113,7 @@ function DeliveriesPage() {
     confirmResolveRef.current = null
   }
 
-  // live subscribe (only if we have familyId)
+  // live subscribe (do not block render if familyId missing)
   useEffect(() => {
     if (!familyId) return
     const col = collection(firestore, 'families', familyId, 'deliveries')
@@ -126,12 +125,12 @@ function DeliveriesPage() {
     return () => unsub()
   }, [familyId])
 
-  // Upcoming vs Archived filter (NOT by status)
+  // Upcoming vs Archived (original behavior – not by status buckets)
   const filtered = deliveries.filter((d) => {
     if (tab === 'upcoming') {
       if (d.archived) return false
-      // treat cancelled as not-upcoming (optional; keep if this matches your original)
-      if (d.status === 'cancelled') return false
+      // (Optionally exclude cancelled from "upcoming"; keep if it matches your original)
+      // if (d.status === 'cancelled') return false
     } else {
       if (!d.archived) return false
     }
@@ -155,7 +154,7 @@ function DeliveriesPage() {
 
   const selectedCount = Object.values(selectedIds).filter(Boolean).length
 
-  // Single delete (uses offline-aware lib helper)
+  // Single delete (offline-aware)
   async function handleDelete(deliveryId: string) {
     if (!familyId) { showToast('No family selected'); return }
     const ok = await showConfirm('Delete delivery', 'This cannot be undone.', { danger: true, confirmLabel: 'Delete' })
@@ -163,11 +162,8 @@ function DeliveriesPage() {
     try {
       setLoading(true)
       const res = await deleteDeliveryApi(familyId, deliveryId)
-      if (res?.offline) {
-        showToast('Queued delete (offline)')
-      } else {
-        showToast('Deleted')
-      }
+      if (res?.offline) showToast('Queued delete (offline)')
+      else showToast('Deleted')
     } catch (err) {
       console.error('delete failed', err)
       showToast('Delete failed')
@@ -179,7 +175,7 @@ function DeliveriesPage() {
   const handleBulkDelete = useCallback(async () => {
     if (!familyId) { showToast('No family selected'); return }
     const ids = Object.keys(selectedIds).filter((k) => selectedIds[k])
-    if (ids.length === 0) return
+    if (ids.length === 0) { showToast('No items selected'); return }
     const ok = await showConfirm(`Delete ${ids.length} deliveries?`, 'This cannot be undone.', {
       danger: true,
       confirmLabel: 'Delete',
@@ -214,14 +210,38 @@ function DeliveriesPage() {
             className="h-9 w-56"
           />
           <Separator orientation="vertical" className="h-6" />
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="selectMode"
-              checked={selectionMode}
-              onCheckedChange={(v) => setSelectionMode(Boolean(v))}
-            />
-            <Label htmlFor="selectMode" className="cursor-pointer select-none">Select</Label>
-          </div>
+          {/* Edit toggle (restores "edit mode" affordance) */}
+          <Button
+            type="button"
+            variant={selectionMode ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setSelectionMode((s) => !s)}
+            title="Toggle edit mode"
+          >
+            <Pencil className="h-4 w-4 mr-2" />
+            {selectionMode ? 'Done' : 'Edit'}
+          </Button>
+
+          {/* Delete mode: when in selection mode, this triggers bulk delete */}
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => (selectionMode ? handleBulkDelete() : setSelectionMode(true))}
+            title={selectionMode ? 'Delete selected' : 'Select to delete'}
+            disabled={loading}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            {selectionMode ? 'Delete selected' : 'Delete'}
+          </Button>
+
+          {/* Add new (+) restored */}
+          <Button asChild size="sm" title="Add delivery">
+            <Link href="/deliveries/new">
+              <Plus className="h-4 w-4 mr-2" />
+              New
+            </Link>
+          </Button>
         </div>
       </div>
 
@@ -263,9 +283,8 @@ function DeliveriesPage() {
           <div className={cn('grid gap-3', selectionMode ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-2')}>
             {filtered.map((d) => {
               const checked = !!selectedIds[d.id]
-              const onCheck = (v: boolean) => {
-                setSelectedIds((prev) => ({ ...prev, [d.id]: v }))
-              }
+              const onCheck = (v: boolean) => setSelectedIds((prev) => ({ ...prev, [d.id]: v }))
+
               return (
                 <div key={d.id} className={cn(selectionMode && checked ? 'ring-2 ring-primary rounded-lg' : '')}>
                   {selectionMode ? (
@@ -277,11 +296,12 @@ function DeliveriesPage() {
 
                   <div className="flex justify-end mb-2">
                     {!selectionMode && (
-                      <Button variant="destructive" size="sm" onClick={() => handleDelete(d.id)}>
-                        Delete
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(d.id)} title="Delete delivery">
+                        <Trash2 className="h-4 w-4" />
                       </Button>
                     )}
                   </div>
+
                   <DeliveryCard familyId={String(familyId || '')} delivery={d} />
                 </div>
               )
