@@ -77,8 +77,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const [myRole, setMyRole] = useState<string | null>(null)
   const isOwner = Boolean(family && (family.owner ?? family.createdBy) === user?.uid)
   const isAdmin = myRole === 'admin'
-  const canManage = isOwner || isAdmin
-  const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
   // profile cache to avoid repeated users/{uid} reads
   const profileCacheRef = useRef<Record<string, { name?: string; email?: string; photoURL?: string }>>({})
@@ -315,8 +313,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     setDeleting(true)
     try {
       const familyId = family.id
-
-      // Best-effort: delete common subcollections
       const subcols = ['members', 'deliveries', 'presence', 'tokens'] as const
       for (const sub of subcols) {
         const snap = await getDocs(collection(firestore, 'families', familyId, sub))
@@ -327,20 +323,21 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
         }
       }
 
-      // Delete family doc last
       await deleteDoc(doc(firestore, 'families', familyId))
 
-      // Clear client-selected family and redirect out of the detail route
       try {
-        if (localStorage.getItem(LOCAL_FAMILY_KEY) === familyId) {
-          localStorage.removeItem(LOCAL_FAMILY_KEY)
+        if (localStorage.getItem('abot:selectedFamily') === familyId) {
+          localStorage.removeItem('abot:selectedFamily')
         }
       } catch { }
 
       toast.success('Family deleted')
       onOpenChange(false)
-      router.replace('/family?deleted=1')
-      router.refresh()
+
+      setTimeout(() => {
+        router.replace('/family?deleted=1')
+        router.refresh()
+      }, 0)
     } catch (err) {
       console.error('Failed to delete family', err)
       toast.error('Failed to delete family')
@@ -348,6 +345,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       setDeleting(false)
     }
   }
+
 
   const handleSaveName = async () => {
     if (!family?.id) return

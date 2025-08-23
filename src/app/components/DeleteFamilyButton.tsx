@@ -3,36 +3,31 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
-import ConfirmDialog from './ConfirmDialog'
 import { toast } from 'sonner'
 import {
-  doc,
-  collection,
-  getDocs,
-  writeBatch,
-  deleteDoc,
-  updateDoc,
-  arrayRemove,
+  doc, collection, getDocs, writeBatch, deleteDoc, arrayRemove
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
 
+// shadcn dialog (stable hooks)
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogCancel,
+  AlertDialogAction, AlertDialogTrigger
+} from '@/components/ui/alert-dialog'
+
 type Props = {
-  family: {
-    id: string
-    name?: string
-    createdBy?: string
-    members?: string[]
-  }
+  family: { id: string; name?: string; createdBy?: string; members?: string[] }
   onClose: () => void
 }
 
 const CHUNK_SIZE = 400
 const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
 
-// util: delete all docs in a subcollection in chunks (best-effort)
-async function deleteSubcolDocs(familyId: string, subcol: string) {
-  const ref = collection(firestore, 'families', familyId, subcol)
+// Best-effort helper: delete all docs in a subcollection (chunked)
+async function deleteSubcol(familyId: string, sub: string) {
+  const ref = collection(firestore, 'families', familyId, sub)
   const snap = await getDocs(ref)
   if (snap.empty) return
   const refs = snap.docs.map(d => d.ref)
@@ -44,71 +39,67 @@ async function deleteSubcolDocs(familyId: string, subcol: string) {
 }
 
 export default function DeleteFamilyButton({ family, onClose }: Props) {
-  const { user } = useAuth()
   const router = useRouter()
+  const { user } = useAuth()
+  const isOwner = !!user && user.uid === family.createdBy
 
-  const [loading, setLoading] = useState(false)
-  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const isOwner = !!user && !!family && user.uid === family.createdBy
-
-  const handleDelete = async () => {
+  const onConfirm = async () => {
     if (!isOwner) {
       toast.error('Only the family owner can delete this family.')
       return
     }
-
-    setLoading(true)
+    setBusy(true)
     const familyId = family.id
-
     try {
-      // 1) Gather member UIDs (from prop or live read)
-      let memberUIDs: string[] = Array.isArray(family.members) ? [...family.members] : []
+      // Gather members (if not provided)
+      let memberUIDs = Array.isArray(family.members) ? [...family.members] : []
       if (memberUIDs.length === 0) {
-        const membersSnap = await getDocs(collection(firestore, 'families', familyId, 'members'))
-        memberUIDs = membersSnap.docs.map((d) => d.id)
+        const ms = await getDocs(collection(firestore, 'families', familyId, 'members'))
+        memberUIDs = ms.docs.map(d => d.id)
       }
 
-      // 2) Best-effort: delete common subcollections (members, deliveries, presence, tokens)
-      await deleteSubcolDocs(familyId, 'members')
-      await deleteSubcolDocs(familyId, 'deliveries').catch(() => {})
-      await deleteSubcolDocs(familyId, 'presence').catch(() => {})
-      await deleteSubcolDocs(familyId, 'tokens').catch(() => {})
+      // Delete common subcollections first (no cascade in Firestore)
+      await deleteSubcol(familyId, 'members')
+      await deleteSubcol(familyId, 'deliveries').catch(() => {})
+      await deleteSubcol(familyId, 'presence').catch(() => {})
+      await deleteSubcol(familyId, 'tokens').catch(() => {})
 
-      // 3) Best-effort: remove family from users/{uid}.familiesJoined (may be blocked by rules; ignore failures)
+      // Best-effort: remove family from users/{uid}.familiesJoined (may fail due to rules; ignore)
       if (memberUIDs.length) {
         for (let i = 0; i < memberUIDs.length; i += CHUNK_SIZE) {
           const chunk = memberUIDs.slice(i, i + CHUNK_SIZE)
           const batch = writeBatch(firestore)
-          chunk.forEach((uid) => {
+          chunk.forEach(uid => {
             batch.update(doc(firestore, 'users', uid), { familiesJoined: arrayRemove(familyId) } as any)
           })
-          await batch.commit().catch(() => {}) // non-fatal
+          await batch.commit().catch(() => {})
         }
       }
 
-      // 4) Delete family doc last
+      // Delete the family doc last
       await deleteDoc(doc(firestore, 'families', familyId))
 
-      // 5) Clear client-selected family and leave the detail route immediately
-      try {
-        if (localStorage.getItem(LOCAL_FAMILY_KEY) === familyId) {
-          localStorage.removeItem(LOCAL_FAMILY_KEY)
-        }
-      } catch {}
+      // Clear selected-family key so we don’t re-enter a dead family
+      try { if (localStorage.getItem(LOCAL_FAMILY_KEY) === familyId) localStorage.removeItem(LOCAL_FAMILY_KEY) } catch {}
 
       toast.success('Family deleted')
+      setOpen(false)
       onClose?.()
-      setConfirmOpen(false)
 
-      // Hard exit from /family/[id] so children don’t render while tearing down
-      router.replace('/family?deleted=1')
-      router.refresh()
-    } catch (err) {
-      console.error('Failed to delete family', err)
-      toast.error('Failed to delete family. Try again or contact support.')
+      // Leave /family/[id] ASAP to avoid teardown glitches
+      // (defer one tick so dialog unmounts cleanly)
+      setTimeout(() => {
+        router.replace('/family?deleted=1')
+        router.refresh()
+      }, 0)
+    } catch (e) {
+      console.error('Delete family failed', e)
+      toast.error('Failed to delete family. Try again.')
     } finally {
-      setLoading(false)
+      setBusy(false)
     }
   }
 
@@ -119,27 +110,37 @@ export default function DeleteFamilyButton({ family, onClose }: Props) {
         This will permanently delete this family and remove all members.
       </p>
 
-      <div>
-        <Button
-          type="button"
-          onClick={() => setConfirmOpen(true)}
-          disabled={!isOwner || loading}
-          className="bg-red-600 hover:bg-red-700 text-white"
-        >
-          {loading ? 'Deleting…' : 'Delete Family'}
-        </Button>
-      </div>
+      <AlertDialog open={open} onOpenChange={setOpen}>
+        <AlertDialogTrigger asChild>
+          <Button
+            type="button"
+            disabled={!isOwner || busy}
+            className="bg-red-600 hover:bg-red-700 text-white"
+          >
+            {busy ? 'Deleting…' : 'Delete Family'}
+          </Button>
+        </AlertDialogTrigger>
 
-      <ConfirmDialog
-        open={confirmOpen}
-        onOpenChange={setConfirmOpen}
-        title={`Delete "${family.name ?? 'this family'}"?`}
-        description="This will permanently remove the family and revoke access for all members. This action cannot be undone."
-        cancelLabel="Cancel"
-        confirmLabel="Delete"
-        danger
-        onConfirm={handleDelete}
-      />
+        {/* silence radix warning if no explicit Description id */}
+        <AlertDialogContent aria-describedby={undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete “{family.name || 'this family'}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the family and revokes access for all members. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={onConfirm}
+              disabled={busy}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
