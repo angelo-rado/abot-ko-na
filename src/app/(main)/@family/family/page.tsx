@@ -1,3 +1,8 @@
 'use client'
-// This file mounts the existing family index into the @family slot
-export { default } from '@/app/(main)/family/page'
+
+import FamilyIndex from '@/app/(main)/family/page'
+export const dynamic = 'force-dynamic'
+
+export default function FamilyIndexRoute() {
+  return <FamilyIndex />
+}

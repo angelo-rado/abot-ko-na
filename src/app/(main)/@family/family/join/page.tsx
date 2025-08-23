@@ -1,2 +1,8 @@
-// Mounts the invite/join page into the @family slot
-export { default } from '@/app/(main)/family/join/page';
+'use client'
+
+import FamilyJoin from '@/app/(main)/family/join/page'
+export const dynamic = 'force-dynamic'
+
+export default function FamilyJoinRoute() {
+  return <FamilyJoin />
+}
