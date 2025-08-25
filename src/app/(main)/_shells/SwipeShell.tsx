@@ -26,7 +26,7 @@ export default function SwipeShell({ children }: { children: React.ReactNode[] |
 
   const nav = [
     { label: 'Home', href: '/home', Icon: HomeIcon },
-    { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon },
+    { label: 'MyDeliveries', href: '/deliveries', Icon: PackageIcon },
     { label: 'Family', href: '/family', Icon: UsersIcon },
     { label: 'Settings', href: '/settings', Icon: SettingsIcon },
   ]

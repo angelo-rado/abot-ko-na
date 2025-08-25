@@ -402,20 +402,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               </div>
             )}
           </div>
-
-          <DialogFooter className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
-                if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
-                onOpenChange(false)
-              }}
-            >
-              Close
-            </Button>
-          </DialogFooter>
         </TooltipProvider>
       </DialogContent>
     </Dialog>

@@ -154,6 +154,15 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
+  useEffect(() => {
+  try {
+    if (id && typeof window !== 'undefined') {
+      const key = localStorage.getItem('abot:selectedFamily')
+      if (!key) localStorage.setItem('abot:selectedFamily', String(id))
+    }
+  } catch {}
+}, [id])
+
   // If my member doc is missing name/photo, gently hydrate it (prevents others seeing raw UID)
   useEffect(() => {
     if (!id || !user || !members?.some(m => m.uid === user.uid)) return

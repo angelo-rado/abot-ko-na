@@ -51,7 +51,9 @@ function detectModalOpen(): boolean {
   return !!document.querySelector(
     [
       '[role="dialog"][data-state="open"]',
+      '[role="alertdialog"][data-state="open"]',               
       '[data-radix-portal] [role="dialog"][data-state="open"]',
+      '[data-radix-portal] [role="alertdialog"][data-state="open"]', 
       '[data-state="open"][data-side]',
       '[data-radix-portal] [data-state="open"][data-side]',
     ].join(', ')
@@ -178,7 +180,7 @@ function SwipeShell({
 
   const nav = [
     { label: 'Home', href: '/', Icon: HomeIcon, node: home },
-    { label: 'Deliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
+    { label: 'MyDeliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
     { label: 'Family', href: '/family', Icon: UsersIcon, node: family },
     { label: 'Settings', href: '/settings', Icon: SettingsIcon, node: settings },
   ]

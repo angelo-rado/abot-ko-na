@@ -13,7 +13,7 @@ import { useSelectedFamily } from '@/lib/selected-family'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Loader2, MessageSquareText, ChevronDown, ChevronRight, Package } from 'lucide-react'
+import { Plus, Loader2, MessageSquareText, Package } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -78,7 +78,6 @@ export default function DeliveriesPageGuard() {
     }
   }, [familyId, families])
 
-  // Still loading -> spinner (does NOT wait for familyId)
   if (authLoading || loadingFamilies || !user) {
     return (
       <main className="flex items-center justify-center h-screen">
@@ -87,7 +86,6 @@ export default function DeliveriesPageGuard() {
     )
   }
 
-  // Default to first family if none picked; show CTA if no families at all
   const effectiveId = familyId || (families[0]?.id ?? null)
 
   if (!effectiveId) {
@@ -108,11 +106,12 @@ export default function DeliveriesPageGuard() {
     )
   }
 
-  return <DeliveriesPageContent familyId={effectiveId} families={families} />
+  // ✅ pass myUid so we can filter “MyDeliveries”
+  return <DeliveriesPageContent familyId={effectiveId} families={families} myUid={user.uid} />
 }
 
 /** The original page content, now safely mounted with stable props */
-function DeliveriesPageContent({ familyId, families }: { familyId: string; families: Array<{ id: string; name?: string }> }) {
+function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string; families: Array<{ id: string; name?: string }>; myUid: string }) {
   // presence
   useAutoPresence(familyId)
 
@@ -138,7 +137,9 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   const toastTimerRef = useRef<number | null>(null)
 
   const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({})
-  const [itemsOpen, setItemsOpen] = useState<Record<string, boolean>>({})
+
+  // NEW: Mine-only toggle (default ON because this tab is “MyDeliveries”)
+  const [mineOnly, setMineOnly] = useState(true)
 
   const router = useRouter()
 
@@ -191,7 +192,17 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   const isArchived = useCallback((d: any) => {
     if (!d) return false
     if (d.archived === true) return true
-    if (['delivered', 'cancelled'].includes(d.status)) return true
+    const st = (d.status ? String(d.status) : '').toLowerCase()
+    if (st.includes('delivered') || st === 'cancelled' || st.includes('cancel')) return true
+    if (d.delivered === true) return true
+    if (d.deliveredAt) return true
+    if (Array.isArray(d.items) && d.items.length > 0) {
+      const allDone = d.items.every((it: any) => {
+        const s = (it?.status ? String(it.status) : '').toLowerCase()
+        return s.includes('delivered') || s.includes('cancel')
+      })
+      if (allDone) return true
+    }
     return false
   }, [])
 
@@ -212,8 +223,11 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
   }, [queryText])
 
   const applyFilters = useCallback((list: any[]) => {
-    return list.filter((d) => (filterStatus === 'all' ? true : d.status === filterStatus) && matchesQuery(d))
-  }, [filterStatus, matchesQuery])
+    return list
+      .filter((d) => (filterStatus === 'all' ? true : d.status === filterStatus))
+      .filter((d) => (mineOnly ? d?.createdBy === myUid : true))
+      .filter(matchesQuery)
+  }, [filterStatus, matchesQuery, mineOnly, myUid])
 
   const clearSelection = () => setSelectedIds({})
   const toggleSelect = (id: string) => setSelectedIds((m) => ({ ...m, [id]: !m[id] }))
@@ -329,7 +343,7 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
           ))}
         </div>
 
-        {/* Search + status filter (original controls wired back) */}
+        {/* Search + status filter */}
         <input
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
@@ -347,6 +361,12 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
           <option value="delivered">Delivered</option>
           <option value="cancelled">Cancelled</option>
         </select>
+
+        {/* NEW: Mine-only toggle */}
+        <label className="ml-auto flex items-center gap-2 text-sm">
+          <Checkbox checked={mineOnly} onCheckedChange={(v) => setMineOnly(!!v)} />
+          Mine only
+        </label>
       </div>
 
       {/* Content */}
@@ -371,14 +391,14 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
           <section>
             <div className="mb-2 flex items-center gap-2">
               <h3 className="text-lg font-semibold">Single Deliveries</h3>
-              <Badge variant="secondary">{(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).length}</Badge>
+              <Badge variant="secondary">{singles.length}</Badge>
             </div>
 
-            {(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).length === 0 ? (
+            {singles.length === 0 ? (
               <p className="text-muted-foreground text-sm">No single deliveries</p>
             ) : (
               <div className="space-y-4">
-                {(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isSingle)).map((d) => {
+                {singles.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
                   const openNotes = !!notesOpen[d.id]
@@ -452,18 +472,17 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
           <section className="mt-8">
             <div className="mb-2 flex items-center gap-2">
               <h3 className="text-lg font-semibold">Multiple Deliveries</h3>
-              <Badge variant="secondary">{(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isMultiple)).length}</Badge>
+              <Badge variant="secondary">{multiples.length}</Badge>
             </div>
 
-            {(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isMultiple)).length === 0 ? (
+            {multiples.length === 0 ? (
               <p className="text-muted-foreground text-sm">No multiple deliveries</p>
             ) : (
               <div className="space-y-4">
-                {(applyFilters((tab === 'upcoming' ? upcoming : archived)).filter(isMultiple)).map((d) => {
+                {multiples.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
                   const openNotes = !!notesOpen[d.id]
-                  const openItems = !!itemsOpen[d.id]
                   const items = Array.isArray(d.items) ? d.items : []
                   const total = itemsTotal(items) || (typeof d.codAmount === 'number' ? d.codAmount : 0)
 
@@ -488,50 +507,8 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
                           </div>
                         </div>
 
+                        {/* ✅ Keep DeliveryCard only — no extra "View items" toggle here */}
                         <DeliveryCard familyId={familyId} {...props} />
-
-                        {/* Items toggle & list */}
-                        <div className="mt-2">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={() => setItemsOpen((m) => ({ ...m, [d.id]: !m[d.id] }))}
-                          >
-                            {openItems ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
-                            {openItems ? 'Hide items' : 'View items'}
-                          </Button>
-
-                          {openItems && (
-                            <div className="mt-2 rounded border bg-muted/30">
-                              {items.length === 0 ? (
-                                <div className="text-xs text-muted-foreground px-3 py-2">No item details</div>
-                              ) : (
-                                <ul className="divide-y">
-                                  {items.map((it: any, idx: number) => {
-                                    const eta = etaLabel(it?.expectedDate || d?.expectedDate)
-                                    return (
-                                      <li key={`${it.id || idx}`} className="px-3 py-2 flex items-start justify-between">
-                                        <div>
-                                          <div className="text-sm font-medium">{it?.name || `Item ${idx + 1}`}</div>
-                                          <div className="text-xs text-muted-foreground">
-                                            {it?.status ? <span className="mr-2 capitalize">{it.status.replace('_', ' ')}</span> : null}
-                                            {eta ? <span>· ETA {eta}</span> : null}
-                                          </div>
-                                        </div>
-                                        <div className="text-sm">{currency(typeof it?.price === 'number' ? it.price : null)}</div>
-                                      </li>
-                                    )
-                                  })}
-                                  <li className="px-3 py-2 flex items-center justify-between text-sm font-medium">
-                                    <span>Items total</span>
-                                    <span>{currency(total)}</span>
-                                  </li>
-                                </ul>
-                              )}
-                            </div>
-                          )}
-                        </div>
 
                         {!selectionMode && (
                           <div className="mt-2 flex flex-wrap gap-2">
@@ -603,12 +580,21 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
         </div>
       )}
 
-      {/* ✅ Confirm dialog (resolves showConfirm) */}
+      {/* ✅ Confirm dialog (fixed onOpenChange so it really closes and locks swipes via layout) */}
       <AlertDialog
         open={confirmOpen}
         onOpenChange={(open) => {
-          if (!open && confirmResolveRef.current) handleConfirmResult(false)
-          else setConfirmOpen(true)
+          if (!open) {
+            // Treat outside click/escape as "Cancel"
+            if (confirmResolveRef.current) {
+              const cb = confirmResolveRef.current
+              confirmResolveRef.current = null
+              cb(false)
+            }
+            setConfirmOpen(false)
+          } else {
+            setConfirmOpen(true)
+          }
         }}
       >
         <AlertDialogContent aria-describedby={undefined}>
@@ -634,4 +620,3 @@ function DeliveriesPageContent({ familyId, families }: { familyId: string; famil
     </div>
   )
 }
-

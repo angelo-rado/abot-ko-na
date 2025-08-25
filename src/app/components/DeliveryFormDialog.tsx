@@ -211,18 +211,35 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   function addItemRow() {
     if (itemMode === 'single' && items.length >= 1) return
-    setItems((prev) => [
-      ...prev,
-      {
-        id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name: '',
-        price: null,
-        expectedDate: delivery?.expectedDate
-          ? parseExpectedDate(delivery.expectedDate)
-          : getLocalISOStringForTime(23, 59),
-      },
-    ])
+
+    setItems((prev) => {
+      // For multiple mode: compute the next numeric name (as a string)
+      const nextName =
+        itemMode === 'single'
+          ? ''
+          : (() => {
+            const nums = prev
+              .map((it) => (typeof it?.name === 'string' ? it.name.trim() : ''))
+              .map((n) => (/^\d+$/.test(n) ? parseInt(n, 10) : null))
+              .filter((n): n is number => n != null)
+            const next = nums.length ? Math.max(...nums) + 1 : prev.length + 1
+            return String(next < 1 ? 1 : next)
+          })()
+
+      return [
+        ...prev,
+        {
+          id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          name: nextName, // e.g. "1", "2", "3", ...
+          price: null,
+          expectedDate: delivery?.expectedDate
+            ? parseExpectedDate(delivery.expectedDate)
+            : getLocalISOStringForTime(23, 59),
+        },
+      ]
+    })
   }
+
 
   function updateItemRow(id: string, patch: Partial<ItemRow>) {
     modifiedItemsRef.current.add(id)

@@ -19,6 +19,8 @@ type MemberDoc = {
   [k: string]: any
 }
 
+type GeoState = 'granted' | 'prompt' | 'denied' | 'unknown'
+
 export default function PresenceSettings({ familyId: propFamilyId }: { familyId?: string }) {
   const { user } = useAuth()
   const mountedRef = useRef(true)
@@ -29,11 +31,10 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   const [serverPreferredResolved, setServerPreferredResolved] = useState<boolean>(false)
 
   // states for loading & saving
-  const [loaded, setLoaded] = useState<boolean>(false) // true once we've read member doc (or confirmed missing)
+  const [loaded, setLoaded] = useState<boolean>(false)
   const [savingAuto, setSavingAuto] = useState<boolean>(false)
 
-  // member doc state (doc-level)
-  // NOTE: start memberLoading as `true` to avoid flash of enabled controls on first render
+  // member doc state
   const [myMemberDoc, setMyMemberDoc] = useState<MemberDoc | null>(null)
   const [memberLoading, setMemberLoading] = useState<boolean>(true)
   const [savingStatus, setSavingStatus] = useState<boolean>(false)
@@ -41,33 +42,80 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   // derive autoPresence from member doc
   const autoPresence = (myMemberDoc?.statusSource === 'geo')
 
-  // Add these helper functions (outside the component)
-  async function checkLocationPermission(): Promise<boolean> {
-    try {
-      const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName })
-      return status.state === 'granted'
-    } catch (err) {
-      console.warn('[Presence] Permissions API unsupported or failed', err)
+  // === NEW: live geolocation permission probe ===
+  const [geoState, setGeoState] = useState<GeoState>('unknown')
+  const [geoWorking, setGeoWorking] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    async function probe() {
+      try {
+        if (typeof navigator === 'undefined' || !('permissions' in navigator)) {
+          if (alive) setGeoState('prompt')
+          return
+        }
+        // @ts-ignore - PermissionName typing varies across TS lib versions
+        const status: PermissionStatus = await (navigator as any).permissions.query({ name: 'geolocation' as any })
+        if (!alive) return
+        setGeoState(((status?.state as any) ?? 'unknown') as GeoState)
+        // react to changes (e.g., user flips browser/site permission)
+        status.onchange = () => {
+          if (!alive) return
+          setGeoState((((status as any).state as any) ?? 'unknown') as GeoState)
+        }
+      } catch {
+        if (alive) setGeoState('prompt')
+      }
+    }
+    probe()
+    return () => { alive = false }
+  }, [])
+
+  const requestLocationPermission = useCallback(async (): Promise<boolean> => {
+    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) {
+      toast.error('Geolocation is not supported on this device/browser.')
       return false
     }
-  }
-
-  async function requestLocationPermission(): Promise<boolean> {
-    return new Promise((resolve) => {
-      navigator.geolocation.getCurrentPosition(
-        () => resolve(true),
-        (err) => {
-          console.warn('[Presence] Geolocation permission denied', err)
-          resolve(false)
-        }
-      )
-    })
-  }
+    setGeoWorking(true)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          () => resolve(),
+          (err) => reject(err),
+          { enableHighAccuracy: true, timeout: 15000 }
+        )
+      })
+      toast.success('Location permission granted')
+      setGeoState('granted') // immediate UI update; Permissions API watcher will keep it in sync afterwards
+      return true
+    } catch (e: any) {
+      setGeoState('denied')
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+      if (isMobile) {
+        toast.error('Location access denied. Please enable location in your device settings.', {
+          action: {
+            label: 'How?',
+            onClick: () => {
+              if (/Android/i.test(navigator.userAgent)) {
+                window.open('intent://settings#Intent;scheme=android.settings.LOCATION_SOURCE_SETTINGS;end')
+              } else {
+                alert('To enable location on iOS:\n\n1) Open Settings\n2) Scroll to Safari (or your browser)\n3) Tap Location\n4) Set to “While Using the App”.')
+              }
+            }
+          }
+        })
+      } else {
+        toast.error('Location permission is required for auto presence.')
+      }
+      return false
+    } finally {
+      setGeoWorking(false)
+    }
+  }, [])
 
   // Resolve familyId from user's preferredFamily if not provided (single-shot)
   useEffect(() => {
     if (!user?.uid || propFamilyId) {
-      // if prop given, make sure resolvedFamilyId is that
       if (propFamilyId) setResolvedFamilyId(propFamilyId)
       setServerPreferredResolved(true)
       return
@@ -87,17 +135,16 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         setResolvedFamilyId(null)
         return
       }
-      // validate family exists
       try {
         const famRef = doc(firestore, 'families', preferred)
         const famSnap = await getDoc(famRef)
         if (!mountedRef.current) return
         if (famSnap.exists()) {
           setResolvedFamilyId(preferred)
-          try { localStorage.setItem('abot:selectedFamily', preferred) } catch { }
+          try { localStorage.setItem('abot:selectedFamily', preferred) } catch {}
         } else {
           setResolvedFamilyId(null)
-          try { localStorage.removeItem('abot:selectedFamily') } catch { }
+          try { localStorage.removeItem('abot:selectedFamily') } catch {}
         }
       } catch (err) {
         console.warn('[PresenceSettings] error validating preferredFamily', err)
@@ -110,13 +157,11 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     return () => { cancelled = true; unsub() }
   }, [user?.uid, propFamilyId])
 
-  // Subscribe to my member doc (doc-level) so we get latest statusSource quickly
+  // Subscribe to my member doc
   useEffect(() => {
-    // mark loading state clearly whenever resolvedFamilyId or user changes
     if (!user?.uid || !resolvedFamilyId) {
       setMyMemberDoc(null)
       setMemberLoading(false)
-      // mark loaded true so the switch isn't stuck if there's no family selected
       setLoaded(true)
       return
     }
@@ -125,7 +170,6 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     setLoaded(false)
     const memberRef = doc(firestore, 'families', resolvedFamilyId, 'members', user.uid)
 
-    // Attach onSnapshot for live updates
     const unsub = onSnapshot(memberRef, (snap) => {
       if (!mountedRef.current) return
       if (!snap.exists()) {
@@ -148,7 +192,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     return () => unsub()
   }, [resolvedFamilyId, user?.uid])
 
-  // Handler to toggle auto presence. It will be disabled until `loaded === true` and it's not currently saving.
+  // Toggle auto presence — uses boolean result from permission request to avoid stale reads
   const handleToggleAuto = useCallback(async (next: boolean) => {
     if (!user?.uid) {
       toast('Sign in to change presence settings.')
@@ -158,52 +202,23 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
       toast('Select a family first.')
       return
     }
-    if (!loaded || memberLoading) {
-      console.debug('[PresenceSettings] toggle clicked while loading — ignored')
-      return
-    }
-    if (savingAuto) {
-      console.debug('[PresenceSettings] toggle clicked while savingAuto — ignored')
-      return
-    }
+    if (!loaded || memberLoading) return
+    if (savingAuto) return
 
-    // If enabling auto-presence, confirm location access first
     if (next) {
-      const alreadyGranted = await checkLocationPermission()
-      if (!alreadyGranted) {
-        const granted = await requestLocationPermission()
-
-        if (!granted) {
-          const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-
-          if (isMobile) {
-            toast.error('Location access denied. Please enable location in your device settings.', {
-              action: {
-                label: 'How?',
-                onClick: () => {
-                  if (/Android/i.test(navigator.userAgent)) {
-                    // Android: attempt to open location settings (will work in some PWAs / WebViews)
-                    window.open('intent://settings#Intent;scheme=android.settings.LOCATION_SOURCE_SETTINGS;end')
-                  } else {
-                    // iOS: show helpful alert (iOS blocks direct settings links)
-                    alert('To enable location on iOS:\n\n1. Open Settings\n2. Scroll to Safari (or your browser)\n3. Tap Location\n4. Set to “While Using the App”')
-                  }
-                }
-              }
-            })
-          } else {
-            toast.error('Location permission is required for auto presence.')
-          }
-
-          return
-        }
+      if (geoState === 'denied') {
+        toast.error('Location is blocked. Enable it in your browser/site settings.')
+        return
+      }
+      if (geoState !== 'granted') {
+        const ok = await requestLocationPermission()
+        if (!ok) return
       }
     }
 
     setSavingAuto(true)
     try {
       const memberRef = doc(firestore, 'families', resolvedFamilyId, 'members', user.uid)
-
       const newSource = next ? 'geo' : 'manual'
       const writeData: any = {
         statusSource: newSource,
@@ -211,9 +226,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         name: (user as any).name ?? (user as any).displayName ?? 'Unknown',
         photoURL: (user as any).photoURL ?? null,
       }
-
       await setDoc(memberRef, writeData, { merge: true })
-
       setMyMemberDoc(prev => ({ ...(prev ?? {}), statusSource: newSource } as MemberDoc))
       toast.success(`Auto presence ${next ? 'enabled' : 'disabled'}`)
     } catch (err) {
@@ -222,26 +235,17 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     } finally {
       setSavingAuto(false)
     }
-  }, [user?.uid, resolvedFamilyId, loaded, memberLoading, savingAuto])
+  }, [user?.uid, resolvedFamilyId, loaded, memberLoading, savingAuto, geoState, requestLocationPermission])
 
-
-  // Manual status writer (used by home page buttons). Keep here for reference — not touched now.
+  // Manual status writer (kept)
   const setStatusManual = useCallback(async (status: 'home' | 'away') => {
-    // Defensive guards
     if (!user?.uid || !resolvedFamilyId) return
-    if (!loaded || memberLoading) {
-      console.debug('[PresenceSettings] setStatusManual called while loading — ignored')
-      return
-    }
-    // If autoPresence is true, prevent manual write — UI should disable buttons
+    if (!loaded || memberLoading) return
     if (autoPresence) {
       toast('Turn off auto-presence to set manually.')
       return
     }
-    if (savingStatus) {
-      console.debug('[PresenceSettings] setStatusManual called while savingStatus — ignored')
-      return
-    }
+    if (savingStatus) return
 
     setSavingStatus(true)
     try {
@@ -264,21 +268,21 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     }
   }, [user?.uid, resolvedFamilyId, autoPresence, loaded, memberLoading, savingStatus])
 
-  // UI: disable the toggle while we haven't loaded the member doc OR while saving,
-  // and also while we don't have a user/family
-  const toggleDisabled = savingAuto || !loaded || memberLoading || !user?.uid || !resolvedFamilyId
-  // Disable manual buttons while auto/on saving/loading, and when no user/family
+  // Disable logic
+  const canToggleByPermission = geoState !== 'denied'
+  const toggleDisabled = savingAuto || !loaded || memberLoading || !user?.uid || !resolvedFamilyId || !canToggleByPermission
   const manualButtonsDisabled = autoPresence || savingStatus || !loaded || memberLoading || !user?.uid || !resolvedFamilyId
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <div className="text-sm font-medium">Auto presence</div>
-          <div className="text-xs text-muted-foreground">Use location to set your presence automatically</div>
+          <div className="text-xs text-muted-foreground">
+            Use location to set your presence automatically
+          </div>
         </div>
 
-        {/* show skeleton until we know loaded; switch disabled while saving or not loaded */}
         {(!loaded || memberLoading) ? (
           <Skeleton className="h-6 w-12" />
         ) : (
@@ -288,16 +292,22 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
             disabled={toggleDisabled}
             aria-label="Auto presence toggle"
           />
-
         )}
       </div>
-      {!autoPresence && (
-        <div className="text-xs text-muted-foreground mt-1">
-          Location access is required to determine presence automatically.
-        </div>
+
+      {/* Permission helpers */}
+      {geoState === 'denied' && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Location is blocked by the browser. Allow it in Site Settings to enable auto-presence.
+        </p>
+      )}
+      {geoState !== 'granted' && (
+        <Button type="button" variant="outline" size="sm" onClick={requestLocationPermission} disabled={geoWorking}>
+          {geoWorking ? 'Requesting…' : 'Request location access'}
+        </Button>
       )}
 
-      {/* Manual presence UI (kept but will be disabled if auto is on) */}
+      {/* Manual presence UI (disabled if auto) */}
       <div className="space-y-2">
         <div className="text-sm font-medium">Manual presence</div>
         <div className="text-xs text-muted-foreground">
@@ -327,4 +337,3 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     </div>
   )
 }
-
