@@ -4,7 +4,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   collection, query as fsQuery, orderBy, onSnapshot, doc,
-  deleteDoc,
+  deleteDoc, where, // ⬅️ added where
 } from 'firebase/firestore'
 
 import { firestore } from '@/lib/firebase'
@@ -138,9 +138,6 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
 
   const [notesOpen, setNotesOpen] = useState<Record<string, boolean>>({})
 
-  // NEW: Mine-only toggle (default ON because this tab is “MyDeliveries”)
-  const [mineOnly, setMineOnly] = useState(true)
-
   const router = useRouter()
 
   const handleConfirmResult = (ok: boolean) => {
@@ -170,11 +167,12 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
     setConfirmOpen(true)
   }), [])
 
-  // Live deliveries listener
+  // Live deliveries listener — now limited to *my* deliveries at the query level
   useEffect(() => {
     setLoadingDeliveries(true)
     const qy = fsQuery(
       collection(firestore, 'families', familyId, 'deliveries'),
+      where('createdBy', '==', myUid),             // ⬅️ only my deliveries
       orderBy('createdAt', 'desc')
     )
     const unsub = onSnapshot(qy, (snapshot) => {
@@ -186,7 +184,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
       setLoadingDeliveries(false)
     })
     return () => { try { unsub() } catch { } }
-  }, [familyId])
+  }, [familyId, myUid]) // ⬅️ include myUid
 
   /* ---------------- Partition & filtering ---------------- */
   const isArchived = useCallback((d: any) => {
@@ -222,12 +220,13 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
     )
   }, [queryText])
 
+  // Always show only my deliveries (the query is already scoped; this is a safety net)
   const applyFilters = useCallback((list: any[]) => {
     return list
       .filter((d) => (filterStatus === 'all' ? true : d.status === filterStatus))
-      .filter((d) => (mineOnly ? d?.createdBy === myUid : true))
+      .filter((d) => d?.createdBy === myUid)
       .filter(matchesQuery)
-  }, [filterStatus, matchesQuery, mineOnly, myUid])
+  }, [filterStatus, matchesQuery, myUid])
 
   const clearSelection = () => setSelectedIds({})
   const toggleSelect = (id: string) => setSelectedIds((m) => ({ ...m, [id]: !m[id] }))
@@ -361,12 +360,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
           <option value="delivered">Delivered</option>
           <option value="cancelled">Cancelled</option>
         </select>
-
-        {/* NEW: Mine-only toggle */}
-        <label className="ml-auto flex items-center gap-2 text-sm">
-          <Checkbox checked={mineOnly} onCheckedChange={(v) => setMineOnly(!!v)} />
-          Mine only
-        </label>
+        {/* ⬅️ removed Mine-only toggle */}
       </div>
 
       {/* Content */}
@@ -580,12 +574,11 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
         </div>
       )}
 
-      {/* ✅ Confirm dialog (fixed onOpenChange so it really closes and locks swipes via layout) */}
+      {/* ✅ Confirm dialog */}
       <AlertDialog
         open={confirmOpen}
         onOpenChange={(open) => {
           if (!open) {
-            // Treat outside click/escape as "Cancel"
             if (confirmResolveRef.current) {
               const cb = confirmResolveRef.current
               confirmResolveRef.current = null

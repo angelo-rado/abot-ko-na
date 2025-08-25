@@ -27,6 +27,8 @@ import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
 import { AnimatePresence, motion } from 'framer-motion'
+import Link from 'next/link'
+import { MapPin } from 'lucide-react'
 
 type Props = {
   familyId: string | null
@@ -342,6 +344,26 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // Minimal "home location not set" indicator
+  const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!familyId) { setHasHomeLocation(null); return }
+    const ref = doc(firestore, 'families', familyId)
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const d = snap.data() as any
+        const has =
+          !!(d?.homeLocation && typeof d.homeLocation.lat === 'number' && typeof d.homeLocation.lng === 'number') ||
+          (typeof d?.homeLat === 'number' && typeof d?.homeLng === 'number') ||
+          (d?.home && typeof d.home.lat === 'number' && typeof d.home.lng === 'number')
+        setHasHomeLocation(!!has)
+      },
+      () => setHasHomeLocation(false)
+    )
+    return () => unsub()
+  }, [familyId])
+
   // Notes toggle state
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())
   const toggleNotes = (id: string) => {
@@ -651,6 +673,24 @@ export default function HomeDeliveriesToday({
 
   return (
     <div className="space-y-4">
+      {/* Minimal hint if Home Location not set */}
+      {hasHomeLocation === false && (
+        <div className="flex items-start gap-3 p-3 border rounded bg-muted/30">
+          <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
+          <div className="text-xs">
+            <div className="font-medium">Family Home Location not set</div>
+            <div className="text-muted-foreground">
+              Set a home location to improve Who&apos;s Home accuracy and auto-presence.
+            </div>
+            <div className="mt-2">
+              <Link href="/family">
+                <Button size="sm" variant="outline">Set Home Location</Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Summary header */}
       <div className="flex items-center justify-between p-3 bg-card text-card-foreground border rounded">
         <div>
@@ -1083,4 +1123,3 @@ export default function HomeDeliveriesToday({
     </div>
   )
 }
-
