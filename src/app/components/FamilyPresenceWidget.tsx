@@ -17,6 +17,7 @@ export type MemberPresence = {
   name: string
   photoURL?: string | null
   status: 'home' | 'away' | null
+  /** Effective source: 'geo' when either global or member autoPresence is true (or statusSource is already 'geo'). */
   statusSource?: 'geo' | 'manual' | null
   updatedAt?: number | null // milliseconds since epoch
 }
@@ -41,6 +42,9 @@ function toMillis(raw: any): number | null {
   return null
 }
 
+// small in-memory cache so we don't fetch the same user doc repeatedly in one session render
+const userDocCache: Record<string, Record<string, any> | null> = {}
+
 export default function FamilyPresenceWidget({
   familyId,
   render,
@@ -64,21 +68,27 @@ export default function FamilyPresenceWidget({
               // Support docId==uid (your structure) and arbitrary id + m.uid
               const uid: string = (typeof m?.uid === 'string' && m.uid) || memberSnap.id
 
-              // Optional user profile enrich (name/photo fallbacks)
-              let userData: Record<string, any> | null = null
-              try {
-                const userSnap = await getDoc(doc(firestore, 'users', uid))
-                userData = userSnap.exists() ? (userSnap.data() as Record<string, any>) : null
-              } catch (e) {
-                // soft-fail
+              // Fetch user doc (name/photo + GLOBAL autoPresence)
+              let userData: Record<string, any> | null =
+                Object.prototype.hasOwnProperty.call(userDocCache, uid) ? userDocCache[uid] : undefined
+
+              if (userData === undefined) {
+                try {
+                  const userSnap = await getDoc(doc(firestore, 'users', uid))
+                  userData = userSnap.exists() ? (userSnap.data() as Record<string, any>) : null
+                } catch {
+                  userData = null
+                }
+                userDocCache[uid] = userData
               }
 
-              // Effective statusSource for display:
-              // if member.autoPresence === true, prefer 'geo' visually
-              const docStatusSource = (m?.statusSource as 'geo' | 'manual' | undefined) ?? null
-              const autoPresence = m?.autoPresence === true
+              const globalAuto = userData?.autoPresence === true
+              const memberAuto = m?.autoPresence === true
+              const docSource = (m?.statusSource as 'geo' | 'manual' | undefined) ?? null
+
+              // ✅ Effective source logic
               const effectiveSource: 'geo' | 'manual' | null =
-                autoPresence ? 'geo' : (docStatusSource ?? null)
+                globalAuto || memberAuto ? 'geo' : (docSource ?? null)
 
               const updatedAt =
                 toMillis(m?.updatedAt) ??
@@ -104,7 +114,7 @@ export default function FamilyPresenceWidget({
             })
           )
 
-          // Example sort: home first, then by name
+          // Sort: home first, then by name
           rows.sort((a, b) => {
             const ah = a.status === 'home' ? 0 : 1
             const bh = b.status === 'home' ? 0 : 1

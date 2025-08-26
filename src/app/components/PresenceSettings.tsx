@@ -28,30 +28,28 @@ type MemberDoc = {
 
 type GeoState = 'granted' | 'prompt' | 'denied' | 'unknown'
 
-/** Robust membership finder for global propagation. */
-async function robustFindMembershipDocs(uid: string) {
-  // 1) Doc id equals uid
-  let snaps = await getDocs(fsQuery(collectionGroup(firestore, 'members'), where(documentId(), '==', uid)))
-  if (!snaps.empty) return snaps
+/** Collect every membership doc for this uid (docId==uid, uid field, or users/{uid}.familiesJoined). */
+async function robustFindMembershipRefs(uid: string) {
+  const refs: any[] = []
 
-  // 2) Field uid equals uid
-  snaps = await getDocs(fsQuery(collectionGroup(firestore, 'members'), where('uid', '==', uid)))
-  if (!snaps.empty) return snaps
+  // A) /families/*/members/{docId == uid}
+  const byId = await getDocs(fsQuery(collectionGroup(firestore, 'members'), where(documentId(), '==', uid)))
+  byId.forEach(s => refs.push(s.ref))
 
-  // 3) Fallback: users/{uid}.familiesJoined: string[]
-  const u = await getDoc(doc(firestore, 'users', uid))
-  const arr = (u.data()?.familiesJoined as string[] | undefined) || []
-  if (arr.length) {
-    const refs = arr.map(fid => doc(firestore, 'families', fid, 'members', uid))
-    return {
-      empty: refs.length === 0,
-      size: refs.length,
-      forEach: (fn: (s: any) => void) => refs.forEach(ref => fn({ ref })),
-      docs: refs.map(ref => ({ ref })),
-    } as any
+  // B) /families/*/members/* where field uid == uid
+  const byField = await getDocs(fsQuery(collectionGroup(firestore, 'members'), where('uid', '==', uid)))
+  byField.forEach(s => {
+    if (!refs.some(r => r.path === s.ref.path)) refs.push(s.ref)
+  })
+
+  // C) fallback: users/{uid}.familiesJoined (array of familyIds)
+  if (refs.length === 0) {
+    const u = await getDoc(doc(firestore, 'users', uid))
+    const arr = (u.data()?.familiesJoined as string[] | undefined) || []
+    arr.forEach(fid => refs.push(doc(firestore, 'families', fid, 'members', uid)))
   }
 
-  return snaps // empty
+  return refs
 }
 
 export default function PresenceSettings({ familyId: propFamilyId }: { familyId?: string }) {
@@ -59,7 +57,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   const mountedRef = useRef(true)
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false } }, [])
 
-  // We still resolve a family for showing manual controls, but the toggle is global and doesn't depend on it
+  // We still resolve a family for manual controls, but the toggle is GLOBAL
   const [resolvedFamilyId, setResolvedFamilyId] = useState<string | null>(propFamilyId ?? null)
   const [serverPreferredResolved, setServerPreferredResolved] = useState<boolean>(false)
 
@@ -67,12 +65,12 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   const [loaded, setLoaded] = useState<boolean>(false)
   const [savingAuto, setSavingAuto] = useState<boolean>(false)
 
-  // member doc (current family only; useful for manual buttons + fallback checked state)
+  // current family member (for manual controls + fallback)
   const [myMemberDoc, setMyMemberDoc] = useState<MemberDoc | null>(null)
   const [memberLoading, setMemberLoading] = useState<boolean>(true)
   const [savingStatus, setSavingStatus] = useState<boolean>(false)
 
-  // user-level auto presence (global)
+  // user-level auto presence (GLOBAL flag)
   const [userAutoPresence, setUserAutoPresence] = useState<boolean | null>(null)
   useEffect(() => {
     if (!user?.uid) { setUserAutoPresence(null); return }
@@ -84,7 +82,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     return () => unsub()
   }, [user?.uid])
 
-  // live permission probe
+  // live geolocation permission probe
   const [geoState, setGeoState] = useState<GeoState>('unknown')
   const [geoWorking, setGeoWorking] = useState(false)
 
@@ -154,7 +152,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     }
   }, [])
 
-  // Resolve preferred family (for manual controls only)
+  // Resolve preferred family (manual controls live here)
   useEffect(() => {
     if (!user?.uid || propFamilyId) {
       if (propFamilyId) setResolvedFamilyId(propFamilyId)
@@ -176,10 +174,10 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         if (!mountedRef.current) return
         if (famSnap.exists()) {
           setResolvedFamilyId(preferred)
-          try { localStorage.setItem('abot:selectedFamily', preferred) } catch { }
+          try { localStorage.setItem('abot:selectedFamily', preferred) } catch {}
         } else {
           setResolvedFamilyId(null)
-          try { localStorage.removeItem('abot:selectedFamily') } catch { }
+          try { localStorage.removeItem('abot:selectedFamily') } catch {}
         }
       } catch {
         setResolvedFamilyId(null)
@@ -190,7 +188,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     return () => { cancelled = true; unsub() }
   }, [user?.uid, propFamilyId])
 
-  // Subscribe to current-family member doc (used for manual controls + fallback checked state)
+  // Subscribe to current-family member doc
   useEffect(() => {
     if (!user?.uid || !resolvedFamilyId) {
       setMyMemberDoc(null)
@@ -215,7 +213,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
 
       // Backfill uid once for robust collectionGroup queries
       if (user?.uid && !data?.uid) {
-        setDoc(memberRef, { uid: user.uid }, { merge: true }).catch(() => { })
+        setDoc(memberRef, { uid: user.uid }, { merge: true }).catch(() => {})
       }
 
       setMyMemberDoc({ uid: snap.id, ...(data ?? {}) } as MemberDoc)
@@ -230,41 +228,33 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     return () => unsub()
   }, [resolvedFamilyId, user?.uid])
 
-  // GLOBAL: user-level flag
-  const setUserAutoPresenceFlag = useCallback(async (uid: string, enabled: boolean) => {
-    await setDoc(doc(firestore, 'users', uid), {
-      autoPresence: enabled,
-      autoPresenceUpdatedAt: serverTimestamp(),
-    }, { merge: true })
-  }, [])
+  // Chunked global propagation; sets both autoPresence + statusSource
+  const propagatePresenceToAllFamilies = useCallback(async (uid: string, enabled: boolean) => {
+    const refs = await robustFindMembershipRefs(uid)
+    if (refs.length === 0) return 0
 
-  // GLOBAL: propagate to all memberships (docId==uid OR uid field), adjusting fields to your schema
-  const propagatePresenceToAllFamilies = useCallback(async (
-    uid: string,
-    enabled: boolean,
-    source: 'geo' | 'manual',
-    name?: string | null,
-    photoURL?: string | null
-  ): Promise<number> => {
-    const snaps = await robustFindMembershipDocs(uid)
-    if ((snaps as any).empty) return 0
-
-    const batch = writeBatch(firestore)
-      ; (snaps as any).forEach((s: any) => {
-        batch.set(s.ref, {
-          // reflect toggle globally
+    const CHUNK = 400
+    let written = 0
+    for (let i = 0; i < refs.length; i += CHUNK) {
+      const batch = writeBatch(firestore)
+      const slice = refs.slice(i, i + CHUNK)
+      slice.forEach(ref => {
+        batch.set(ref, {
           autoPresence: enabled,
-          statusSource: source,
-          // keep both updatedAt (ms) and lastUpdated (server ts)
+          statusSource: enabled ? 'geo' : 'manual',
           updatedAt: Date.now(),
           lastUpdated: serverTimestamp(),
-          uid,
-          ...(name ? { name } : {}),
-          ...(photoURL ? { photoURL } : {}),
+          uid, // ensure present for future queries
         }, { merge: true })
       })
-    await batch.commit()
-    return (snaps as any).size as number
+      await batch.commit()
+      written += slice.length
+    }
+
+    if (typeof window !== 'undefined') {
+      console.debug('[PresenceSettings] propagated to member docs:', refs.map(r => r.path))
+    }
+    return written
   }, [])
 
   // Toggle handler (GLOBAL)
@@ -292,15 +282,19 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
       const photoURL = (user as any).photoURL ?? null
 
       // 1) Set user-level flag
-      await setUserAutoPresenceFlag(user.uid, next)
+      await setDoc(doc(firestore, 'users', user.uid), {
+        autoPresence: next,
+        autoPresenceUpdatedAt: serverTimestamp(),
+        name: displayName,
+        photoURL,
+      }, { merge: true })
 
-      // 2) Propagate to ALL memberships
-      const count = await propagatePresenceToAllFamilies(user.uid, next, next ? 'geo' : 'manual', displayName, photoURL)
+      // 2) Propagate to ALL memberships (sets both autoPresence + statusSource)
+      const count = await propagatePresenceToAllFamilies(user.uid, next)
 
-      // 3) Ensure current family reflects immediately (if present)
+      // 3) Ensure current family reflects immediately (if visible)
       if (resolvedFamilyId) {
-        const memberRef = doc(firestore, 'families', resolvedFamilyId, 'members', user.uid)
-        await setDoc(memberRef, {
+        await setDoc(doc(firestore, 'families', resolvedFamilyId, 'members', user.uid), {
           autoPresence: next,
           statusSource: next ? 'geo' : 'manual',
           updatedAt: Date.now(),
@@ -318,13 +312,12 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     } finally {
       setSavingAuto(false)
     }
-  }, [user?.uid, geoState, requestLocationPermission, savingAuto, setUserAutoPresenceFlag, propagatePresenceToAllFamilies, resolvedFamilyId])
+  }, [user?.uid, geoState, requestLocationPermission, savingAuto, propagatePresenceToAllFamilies, resolvedFamilyId])
 
-  // Manual status writer (per-family)
+  // Manual (per-family)
   const setStatusManual = useCallback(async (status: 'home' | 'away') => {
     if (!user?.uid || !resolvedFamilyId) return
     if (savingStatus) return
-    // Block manual when global auto is on (user or member fallback)
     const autoOn = (userAutoPresence ?? myMemberDoc?.autoPresence ?? (myMemberDoc?.statusSource === 'geo')) === true
     if (autoOn) {
       toast('Turn off auto-presence to set manually.')
@@ -352,7 +345,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
     }
   }, [user?.uid, resolvedFamilyId, savingStatus, userAutoPresence, myMemberDoc?.autoPresence, myMemberDoc?.statusSource])
 
-  // Switch enabled state: keep it simple — global toggle doesn’t require a family
+  // Switch enabled state — global toggle doesn’t need a family
   const toggleDisabled = savingAuto || !user?.uid
   const manualButtonsDisabled =
     savingStatus || !user?.uid || !resolvedFamilyId ||
@@ -386,7 +379,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
         )}
       </div>
 
-      {/* Hint when no default family is set */}
+      {/* Hint when no default family is set (deep-links and focuses selector) */}
       {serverPreferredResolved && !resolvedFamilyId && (
         <div className="text-xs text-muted-foreground">
           No default family set.{' '}
@@ -395,16 +388,13 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
             onClick={() => {
               try {
                 if (typeof window === 'undefined') return
-                // If we’re already in /settings, just focus the section.
                 if (window.location.pathname === '/settings') {
-                  // update the hash (deep-linkable), then fire focus event
-                  try { window.history.replaceState(null, '', '#default-family') } catch { }
+                  try { window.history.replaceState(null, '', '#default-family') } catch {}
                   window.dispatchEvent(new CustomEvent('focus-default-family'))
                 } else {
-                  // navigate to settings and use hash to trigger focus there
                   window.location.href = '/settings#default-family'
                 }
-              } catch { }
+              } catch {}
             }}
             className="underline underline-offset-2"
           >
