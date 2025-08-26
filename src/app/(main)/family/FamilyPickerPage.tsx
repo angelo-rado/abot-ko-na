@@ -1,12 +1,16 @@
+// src/app/(main)/family/FamilyPickerPage.tsx
 /* eslint-disable */
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
 import {
   collection,
+  collectionGroup,
+  doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -65,71 +69,120 @@ export default function FamilyPickerPage() {
     }
   }, [joinedFlag, router])
 
-  // Authoritative membership query:
-  // families where array field `members` contains my UID
+  // Primary membership (array-contains) + Fallback via subcollection (collectionGroup)
   useEffect(() => {
     if (authLoading || !user?.uid) return
     setLoading(true)
 
+    let stop1: () => void = () => {}
+    let stop2: () => void = () => {}
+
+    // Store latest IDs from both sources; we’ll merge and fetch docs
+    let primaryIds = new Set<string>()
+    let subcolIds = new Set<string>()
+
+    async function recompute() {
+      try {
+        const allIds = new Set<string>([...primaryIds, ...subcolIds])
+        // Fetch family docs
+        const familyDocs = await Promise.all(
+          Array.from(allIds).map(async (fid) => {
+            try {
+              const s = await getDoc(doc(firestore, 'families', fid))
+              if (!s.exists()) return null
+              const d = s.data() as any
+              return {
+                id: s.id,
+                name: typeof d?.name === 'string' ? d.name : undefined,
+                createdBy: typeof d?.createdBy === 'string' ? d.createdBy : undefined,
+                createdAt: toDate(d?.createdAt ?? d?.created_on ?? d?.created_at),
+              } as Family
+            } catch {
+              return null
+            }
+          })
+        )
+
+        const base = familyDocs.filter(Boolean) as Family[]
+
+        // hydrate member counts (best-effort)
+        const withCounts = await Promise.all(
+          base.map(async (f) => {
+            try {
+              const memSnap = await getDocs(collection(firestore, 'families', f.id, 'members'))
+              return { ...f, memberCount: memSnap.size }
+            } catch {
+              return f
+            }
+          })
+        )
+
+        // sort: owned first then by name (safe if user is null)
+        const myUid = user?.uid ?? ''
+        withCounts.sort((a, b) => {
+          const aOwned = (a.createdBy ?? '') === myUid
+          const bOwned = (b.createdBy ?? '') === myUid
+          if (aOwned !== bOwned) return aOwned ? -1 : 1
+          const an = (a.name ?? '').toString()
+          const bn = (b.name ?? '').toString()
+          return an.localeCompare(bn)
+        })
+
+        setFamilies(withCounts)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    // Listener 1: families where members array-contains me
     const qFamilies = query(
       collection(firestore, 'families'),
       where('members', 'array-contains', user.uid)
     )
-
-    const unsub = onSnapshot(
+    stop1 = onSnapshot(
       qFamilies,
-      async (snap) => {
-        try {
-          const base: Family[] = snap.docs.map((d) => {
-            const data = d.data() as any
-            return {
-              id: d.id,
-              name: typeof data?.name === 'string' ? data.name : undefined,
-              createdBy: typeof data?.createdBy === 'string' ? data.createdBy : undefined,
-              createdAt: toDate(data?.createdAt ?? data?.created_on ?? data?.created_at),
-            }
-          })
-
-          // hydrate member counts (best-effort)
-          const withCounts = await Promise.all(
-            base.map(async (f) => {
-              try {
-                const memSnap = await getDocs(collection(firestore, 'families', f.id, 'members'))
-                return { ...f, memberCount: memSnap.size }
-              } catch {
-                return f
-              }
-            })
-          )
-
-          // sort: owned first by name, then joined by name
-          withCounts.sort((a, b) => {
-            const aOwned = a.createdBy === user.uid
-            const bOwned = b.createdBy === user.uid
-            if (aOwned !== bOwned) return aOwned ? -1 : 1
-            return (a.name || '').localeCompare(b.name || '')
-          })
-
-          setFamilies(withCounts)
-        } finally {
-          setLoading(false)
-        }
+      (snap) => {
+        primaryIds = new Set(snap.docs.map((d) => d.id))
+        void recompute()
       },
       (err) => {
-        console.error('[family] membership onSnapshot error', err)
-        toast.error('Failed to load your families.')
-        setFamilies([])
-        setLoading(false)
+        console.error('[family] membership (array) error', err)
+        primaryIds = new Set()
+        void recompute()
       }
     )
 
-    return () => unsub()
+    // Listener 2: collectionGroup membership: any families/{id}/members/{myUid}
+    const qMembers = query(
+      collectionGroup(firestore, 'members'),
+      where('__name__', '==', user.uid)
+    )
+    stop2 = onSnapshot(
+      qMembers,
+      (snap) => {
+        subcolIds = new Set(
+          snap.docs
+            .map((d) => d.ref.parent?.parent?.id)
+            .filter((x): x is string => typeof x === 'string')
+        )
+        void recompute()
+      },
+      (err) => {
+        console.error('[family] membership (subcol) error', err)
+        subcolIds = new Set()
+        void recompute()
+      }
+    )
+
+    return () => {
+      try { stop1() } catch {}
+      try { stop2() } catch {}
+    }
   }, [authLoading, user?.uid])
 
-  const owned = families.filter((f) => f.createdBy === user?.uid)
-  const joined = families.filter((f) => f.createdBy !== user?.uid)
+  const owned = useMemo(() => families.filter((f) => f.createdBy === user?.uid), [families, user?.uid])
+  const joined = useMemo(() => families.filter((f) => f.createdBy !== user?.uid), [families, user?.uid])
 
-  // ✅ Navigate to family page (do NOT set default here; Settings controls default)
   const goToFamily = useCallback(
     async (fid: string) => {
       router.push(`/family/${fid}`)
@@ -245,4 +298,3 @@ export default function FamilyPickerPage() {
     </div>
   )
 }
-

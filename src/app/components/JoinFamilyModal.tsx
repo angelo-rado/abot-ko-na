@@ -1,276 +1,133 @@
+// src/app/components/JoinFamilyModal.tsx
 'use client'
 
-import { useState, useEffect } from 'react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
-import { useAuth } from '@/lib/useAuth'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  doc,
-  getDoc,
-  setDoc,
-  updateDoc,
-  arrayUnion,
-  serverTimestamp,
-  increment,
-} from 'firebase/firestore'
-import { firestore } from '@/lib/firebase'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
+import { decodeQrFromFile } from '@/lib/qr-decode'
+import { toast } from 'sonner'
+import { Upload, Link as LinkIcon, QrCode } from 'lucide-react'
 
-type Props = {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  initialInvite?: string | null // optional prefilled familyId or full link
+function normalizeInviteOrCode(raw: string): string {
+  if (!raw) return ''
+  const trimmed = raw.trim()
+  try {
+    const url = new URL(trimmed, typeof window !== 'undefined' ? window.location.origin : 'https://example.com')
+    const qInvite = url.searchParams.get('invite')
+    const qFam = url.searchParams.get('familyId')
+    if (qInvite) return qInvite.trim()
+    if (qFam) return qFam.trim()
+    const parts = url.pathname.split('/').filter(Boolean)
+    const famIdx = parts.findIndex((p) => p === 'family')
+    if (famIdx !== -1 && parts[famIdx + 1]) return parts[famIdx + 1]
+  } catch {}
+  return trimmed
 }
 
-const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
-
-export default function JoinFamilyModal({ open, onOpenChange, initialInvite }: Props) {
-  const { user } = useAuth()
+export default function JoinFamilyModal({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const router = useRouter()
-
-  const [value, setValue] = useState(initialInvite ?? '')
-  const [loading, setLoading] = useState(false)
+  const [value, setValue] = useState('')
+  const [busy, setBusy] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    setValue(initialInvite ?? '')
-  }, [initialInvite, open])
-
-  // Accepts: full URL (?invite=...), deep links, or raw code
-  const extractCode = (input: string) => {
-    if (!input) return ''
-    const trimmed = input.trim()
-    try {
-      const maybeUrl = new URL(
-        trimmed,
-        typeof window !== 'undefined' ? window.location.origin : 'https://abot-ko-na.local'
-      )
-      const qp = maybeUrl.searchParams.get('invite')
-      if (qp) return qp.trim()
-    } catch {
-      // not a URL
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 50)
+    } else {
+      setValue('')
+      setBusy(false)
     }
-    return trimmed
-  }
+  }, [open])
 
-  // Resolve to a valid familyId.
-  // Supports either direct familyId OR invite tokens stored under top-level `invites/{code}`.
-  const resolveFamilyId = async (code: string) => {
-    // 1) Try direct family doc id
-    const famRefDirect = doc(firestore, 'families', code)
-    const famSnapDirect = await getDoc(famRefDirect)
-    if (famSnapDirect.exists()) {
-      return { familyId: code, inviteRefPath: null as string | null }
-    }
-
-    // 2) Try invite token lookup
-    const inviteRef = doc(firestore, 'invites', code)
-    const inviteSnap = await getDoc(inviteRef)
-    if (!inviteSnap.exists()) {
-      return null
-    }
-
-    const inv = inviteSnap.data() as any
-    const familyId: string | undefined =
-      inv?.familyId ?? inv?.family ?? inv?.fid // support older field names if any
-
-    if (!familyId) {
-      return null
-    }
-
-    // Optional validations: revoked / expired / usage limits
-    const revoked: boolean = !!inv?.revoked || !!inv?.disabled
-    if (revoked) return { error: 'Invite has been revoked.', familyId: null, inviteRefPath: inviteRef.path }
-
-    const now = Date.now()
-    let expiresAt: number | null = null
-    if (inv?.expiresAt) {
-      if (typeof inv.expiresAt?.toDate === 'function') {
-        expiresAt = inv.expiresAt.toDate().getTime()
-      } else if (typeof inv.expiresAt === 'number') {
-        expiresAt = inv.expiresAt
-      } else if (typeof inv.expiresAt === 'string') {
-        const t = Date.parse(inv.expiresAt)
-        expiresAt = Number.isNaN(t) ? null : t
-      }
-    }
-    if (expiresAt && now > expiresAt) {
-      return { error: 'Invite has expired.', familyId: null, inviteRefPath: inviteRef.path }
-    }
-
-    const maxUses: number | undefined = typeof inv?.maxUses === 'number' ? inv.maxUses : undefined
-    const uses: number = typeof inv?.uses === 'number' ? inv.uses : 0
-    if (typeof maxUses === 'number' && uses >= maxUses) {
-      return { error: 'Invite has reached its maximum number of uses.', familyId: null, inviteRefPath: inviteRef.path }
-    }
-
-    return { familyId, inviteRefPath: inviteRef.path }
-  }
-
-  const bumpInviteUsage = async (inviteRefPath: string | null) => {
-    if (!inviteRefPath) return
-    try {
-      await updateDoc(doc(firestore, inviteRefPath), {
-        uses: increment(1),
-        lastUsedAt: serverTimestamp(),
-      })
-    } catch {
-      // best-effort only
-    }
-  }
-
-  const handleJoin = async () => {
-    if (!user) {
-      toast.error('Sign in to join a family.')
-      return
-    }
-    const code = extractCode(value)
-    if (!code) {
+  const onSubmit = useCallback(() => {
+    const key = normalizeInviteOrCode(value)
+    if (!key) {
       toast.error('Enter an invite link or family code.')
       return
     }
+    setBusy(true)
+    router.push(`/family/join?invite=${encodeURIComponent(key)}`)
+    onOpenChange(false)
+  }, [value, router, onOpenChange])
 
-    setLoading(true)
+  const onUploadQR = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    setBusy(true)
     try {
-      const resolved = await resolveFamilyId(code)
-
-      if (!resolved || (!resolved.familyId && !resolved.error)) {
-        toast.error('Invite is invalid — code not recognized.')
-        setLoading(false)
+      const decoded = await decodeQrFromFile(f)
+      if (!decoded) {
+        toast.error('Could not read QR from image.')
         return
       }
-      if (resolved && resolved.error) {
-        toast.error(resolved.error)
-        setLoading(false)
+      const key = normalizeInviteOrCode(decoded)
+      if (!key) {
+        toast.error('QR is not a valid invite or family code.')
         return
       }
-
-      const familyId = resolved!.familyId as string
-
-      // Verify family exists (in case invite pointed to deleted family)
-      const famRef = doc(firestore, 'families', familyId)
-      const famSnap = await getDoc(famRef)
-      if (!famSnap.exists()) {
-        toast.error('Invite is invalid — family not found.')
-        setLoading(false)
-        return
-      }
-
-      // If already a member, short-circuit
-      const memberRef = doc(firestore, 'families', familyId, 'members', user.uid)
-      const existingMember = await getDoc(memberRef)
-      if (existingMember.exists()) {
-        await bumpInviteUsage(resolved!.inviteRefPath ?? null)
-        toast.success('You are already a member of this family.')
-        onOpenChange(false)
-        try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
-        router.replace(`/family/${familyId}?joined=1`)
-        return
-      }
-
-      // Create/merge member record
-      await setDoc(
-        memberRef,
-        {
-          uid: user.uid,
-          role: 'member',
-          addedAt: serverTimestamp(),
-          status: 'away',
-          statusSource: 'manual',
-          updatedAt: serverTimestamp(),
-          name: (user as any).name ?? (user as any).displayName ?? 'Unknown',
-          photoURL: (user as any).photoURL ?? null,
-        },
-        { merge: true }
-      )
-
-      // Append to families.members (best-effort)
-      try {
-        await updateDoc(famRef, { members: arrayUnion(user.uid) })
-      } catch {
-        try {
-          await setDoc(famRef, { members: [user.uid] }, { merge: true })
-        } catch {}
-      }
-
-      // Update users doc (best-effort)
-      const userRef = doc(firestore, 'users', user.uid)
-      try {
-        await updateDoc(userRef, {
-          familiesJoined: arrayUnion(familyId),
-          preferredFamily: familyId,
-        })
-      } catch {
-        try {
-          await setDoc(userRef, { familiesJoined: [familyId], preferredFamily: familyId }, { merge: true })
-        } catch {}
-      }
-
-      await bumpInviteUsage(resolved!.inviteRefPath ?? null)
-
-      try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
-
-      toast.success('Joined family!')
+      setValue(decoded)
+      router.push(`/family/join?invite=${encodeURIComponent(key)}`)
       onOpenChange(false)
-      router.replace(`/family/${familyId}?joined=1`)
-    } catch (err) {
-      console.error('JoinFamilyModal.handleJoin error', err)
-      toast.error('Failed to join family. Try again.')
     } finally {
-      setLoading(false)
+      setBusy(false)
+      try { e.target.value = '' } catch {}
     }
-  }
+  }, [router, onOpenChange])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent aria-describedby={undefined} className="sm:max-w-md animate-in fade-in zoom-in duration-200">
+      <DialogContent aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle className="text-lg font-semibold">Join a Family</DialogTitle>
+          <DialogTitle>Join a Family</DialogTitle>
+          <DialogDescription>Paste an invite link or enter a family code. You can also upload a QR image.</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 pt-2">
-          <p className="text-sm text-muted-foreground">
-            Paste an invite link or family code to join an existing family.
-          </p>
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="join-code" className="flex items-center gap-2"><LinkIcon className="w-4 h-4" /> Invite link or family code</Label>
+            <Input
+              id="join-code"
+              ref={inputRef}
+              inputMode="text"
+              placeholder="Paste link or code (e.g., INV123…, or familyId)"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
+              disabled={busy}
+            />
+          </div>
 
-          <Input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Invite link or family code"
-            autoFocus
-            className="text-sm"
-          />
-
-          <div className="flex gap-2">
-            <Button 
-              type="button"
-              onClick={handleJoin}
-              disabled={loading || !value.trim()}
-              className="flex-1"
-            >
-              {loading ? 'Joining...' : 'Join Family'}
+          <div className="flex items-center gap-2">
+            <Button onClick={onSubmit} disabled={busy || !value.trim()}>Join</Button>
+            <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} disabled={busy}>
+              <Upload className="w-4 h-4 mr-1" /> Upload QR
             </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onUploadQR}
+            />
+          </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setValue('')
-                onOpenChange(false)
-              }}
-            >
-              Cancel
-            </Button>
+          <Separator />
+
+          <div className="text-xs text-muted-foreground flex items-center gap-2">
+            <QrCode className="w-4 h-4" />
+            If you have a printed/saved QR, tap <strong>Upload QR</strong> and select the image.
           </div>
         </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
-

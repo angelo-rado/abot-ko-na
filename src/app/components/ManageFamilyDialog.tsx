@@ -1,15 +1,15 @@
+// src/app/components/ManageFamilyDialog.tsx
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { useEffect, useState, useRef } from 'react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { enqueue, isOnline as isNetOnline } from '@/lib/offline'
 import {
-  doc, getDoc, updateDoc, collection, getDocs, deleteDoc,
-  writeBatch, serverTimestamp, onSnapshot, arrayRemove
+  doc, getDoc, updateDoc, collection, deleteDoc, onSnapshot,
+  serverTimestamp, arrayRemove, deleteField
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
@@ -27,7 +27,10 @@ type Family = {
   createdBy?: string
   owner?: string
   createdAt?: any
-  homeLocation?: { lat: number; lng: number }
+  homeLocation?: { lat: number; lng: number; address?: string | null }
+  homeLat?: number
+  homeLng?: number
+  homeAddress?: string | null
   [k: string]: any
 }
 
@@ -57,7 +60,6 @@ function initials(name?: string | null, uid?: string) {
 
 export default function ManageFamilyDialog({ family, open, onOpenChange }: Props) {
   const { user } = useAuth()
-  const router = useRouter()
 
   const mountedRef = useRef(true)
   useEffect(() => {
@@ -70,6 +72,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
   const [members, setMembers] = useState<Member[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [clearingLoc, setClearingLoc] = useState(false)
 
   const [myRole, setMyRole] = useState<string | null>(null)
   const isOwner = Boolean(family && (family.owner ?? family.createdBy) === user?.uid)
@@ -79,6 +82,11 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
 
   const membersUnsubRef = useRef<(() => void) | null>(null)
   const myRoleUnsubRef = useRef<(() => void) | null>(null)
+
+  // Prefill editable name when dialog opens or family changes
+  useEffect(() => {
+    if (open) setEditingName((family?.name ?? '').trim())
+  }, [open, family?.name])
 
   // (Un)subscribe based on open/family.id; keep hook order stable
   useEffect(() => {
@@ -113,18 +121,18 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       await Promise.all(toFetch.map(async uid => {
         if (profileCacheRef.current[uid]) return
         try {
-          const snap = await getDoc(doc(firestore, 'users', uid))
-          if (snap.exists()) {
-            const u = snap.data() as any
+          const snap2 = await getDoc(doc(firestore, 'users', uid))
+          if (snap2.exists()) {
+            const u = snap2.data() as any
             profileCacheRef.current[uid] = {
-              name: u?.name ?? u?.displayName,
+              name: u?.name ?? u?.displayName ?? u?.fullName,
               email: u?.email,
               photoURL: u?.photoURL ?? u?.photo
             }
           } else {
             profileCacheRef.current[uid] = {}
           }
-        } catch { profileCacheRef.current[uid] = {} }
+        } catch { profileCacheRef.current = profileCacheRef.current } // no-op keep reference stable
       }))
 
       const enriched = docs.map(m => ({
@@ -157,7 +165,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       const myRef = doc(firestore, 'families', family.id, 'members', user.uid)
       myRoleUnsubRef.current = onSnapshot(myRef, (snap) => {
         if (!mountedRef.current) return
-        if (family && family.createdBy === user.uid) setMyRole('owner')
+        if (family && (family.createdBy === user.uid || family.owner === user.uid)) setMyRole('owner')
         else setMyRole(snap.exists() ? ((snap.data() as any)?.role ?? 'member') : null)
       })
     }
@@ -166,7 +174,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       if (membersUnsubRef.current) { try { membersUnsubRef.current() } catch {} ; membersUnsubRef.current = null }
       if (myRoleUnsubRef.current) { try { myRoleUnsubRef.current() } catch {} ; myRoleUnsubRef.current = null }
     }
-  }, [open, family?.id, family?.createdBy, user?.uid])
+  }, [open, family?.id, family?.createdBy, family?.owner, user?.uid])
 
   const toggleRole = async (memberId: string, currentRole: string | null | undefined) => {
     if (!family?.id || !user?.uid) return
@@ -236,6 +244,27 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     } finally { setIsSaving(false) }
   }
 
+  const clearFamilyLocation = async () => {
+    if (!family?.id) return
+    if (!isOwner && !isAdmin) { toast.error('Only owners or admins can clear the location'); return }
+    setClearingLoc(true)
+    try {
+      await updateDoc(doc(firestore, 'families', family.id), {
+        homeLocation: deleteField(),
+        homeLat: deleteField(),
+        homeLng: deleteField(),
+        homeAddress: deleteField(),
+        home: deleteField(), // legacy
+        updatedAt: serverTimestamp(),
+      })
+      toast.success('Home location cleared')
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to clear home location')
+    } finally {
+      setClearingLoc(false)
+    }
+  }
+
   const renderReadOnlyBanner = () => {
     if (isOwner || isAdmin) return null
     return (
@@ -258,7 +287,6 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       }}
     >
       <DialogContent className="sm:max-w-2xl" aria-describedby={undefined}>
-        {/* Single provider here to keep list stable */}
         <TooltipProvider delayDuration={200}>
           <DialogHeader>
             <DialogTitle>Manage {family?.name ?? 'family'}</DialogTitle>
@@ -267,12 +295,16 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
           <div className="space-y-6">
             {renderReadOnlyBanner()}
 
-            {/* Family name editor */}
+            {/* Family name editor (prefilled) */}
             {isOwner ? (
               <div>
                 <label className="text-sm font-medium block mb-2">Family name</label>
                 <div className="flex gap-2">
-                  <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} />
+                  <Input
+                    value={editingName}
+                    onChange={(e) => setEditingName(e.target.value)}
+                    placeholder="Enter family name"
+                  />
                   <Button type="button" onClick={handleSaveName} disabled={isSaving || editingName.trim() === ''}>
                     {isSaving ? 'Saving…' : 'Save'}
                   </Button>
@@ -285,10 +317,20 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               </div>
             )}
 
-            {/* Set home location */}
+            {/* Home location (set or clear) */}
             {(isOwner || isAdmin) && family?.id && (
-              <div>
+              <div className="space-y-2">
                 <SetFamilyHomeLocation familyId={family.id} />
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={clearFamilyLocation}
+                    disabled={clearingLoc}
+                  >
+                    {clearingLoc ? 'Clearing…' : 'Clear family location'}
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -389,7 +431,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
               </div>
             </div>
 
-            {/* Danger zone — use dedicated button (stable AlertDialog internally) */}
+            {/* Danger zone — uses dedicated button (stable AlertDialog internally) */}
             {isOwner && family && (
               <div>
                 <h4 className="text-sm font-medium mb-2">Danger zone</h4>
@@ -407,4 +449,3 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     </Dialog>
   )
 }
-

@@ -1,3 +1,4 @@
+// src/app/(main)/family/[id]/error.tsx
 'use client'
 
 export default function Error({

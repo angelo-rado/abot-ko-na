@@ -1,7 +1,7 @@
-// src/app/family/[id]/page.tsx
+// src/app/(main)/family/[id]/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import {
@@ -15,7 +15,7 @@ import {
   updateDoc
 } from 'firebase/firestore'
 import { formatDistanceToNow } from 'date-fns'
-import { Users as UsersIcon, CalendarDays, Loader2 } from 'lucide-react'
+import { Users as UsersIcon, CalendarDays } from 'lucide-react'
 
 import { firestore } from '@/lib/firebase'
 import { useAuth } from '@/lib/useAuth'
@@ -26,9 +26,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { toast } from 'sonner'
 import InviteModal from '@/app/components/InviteModal'
 import ManageFamilyDialog from '@/app/components/ManageFamilyDialog'
-import JoinedToastOnce from '../_components/JoinedToastOnce'
+import JoinFamilySuccess from './_components/JoinFamilySuccess'
 
-// shadcn AlertDialog for "Leave" confirmation
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,22 +78,12 @@ export default function FamilyDetailPage() {
   const router = useRouter()
   const { user } = useAuth()
   const search = useSearchParams()
-  const joinedFlag = search.get('joined') === '1'
 
   const [family, setFamily] = useState<Family | null | undefined>()
   const [members, setMembers] = useState<MemberRow[] | undefined>()
   const [busy, setBusy] = useState<string | null>(null)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [manageOpen, setManageOpen] = useState(false)
-
-  // joined toast
-  useEffect(() => {
-    if (!joinedFlag) return
-    toast.success('Welcome to the family!')
-    const url = new URL(window.location.href)
-    url.searchParams.delete('joined')
-    router.replace(url.toString(), { scroll: false })
-  }, [joinedFlag, router])
 
   // family doc
   useEffect(() => {
@@ -116,10 +105,10 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
-  // helper to pick a nice display name / photo
+  // helpers
   function pickNameFrom(obj: any): string | null {
     if (!obj) return null
-    return obj.displayName || obj.fullName || obj.name || obj?.profile?.displayName || obj?.profile?.name || null
+    return obj.displayName || obj.fullName || obj.name || obj?.profile?.displayName || obj?.profile?.name || obj.email || null
   }
   function pickPhotoFrom(obj: any): string | null {
     if (!obj) return null
@@ -154,16 +143,17 @@ export default function FamilyDetailPage() {
     return () => unsub()
   }, [id])
 
+  // set local preferred view
   useEffect(() => {
-  try {
-    if (id && typeof window !== 'undefined') {
-      const key = localStorage.getItem('abot:selectedFamily')
-      if (!key) localStorage.setItem('abot:selectedFamily', String(id))
-    }
-  } catch {}
-}, [id])
+    try {
+      if (id && typeof window !== 'undefined') {
+        const key = localStorage.getItem(LOCAL_FAMILY_KEY)
+        if (!key) localStorage.setItem(LOCAL_FAMILY_KEY, String(id))
+      }
+    } catch {}
+  }, [id])
 
-  // If my member doc is missing name/photo, gently hydrate it (prevents others seeing raw UID)
+  // Self-hydrate my member row with name/photo if missing
   useEffect(() => {
     if (!id || !user || !members?.some(m => m.uid === user.uid)) return
     const me = members.find(m => m.uid === user.uid)!
@@ -180,14 +170,45 @@ export default function FamilyDetailPage() {
     }
   }, [id, user, members])
 
-  const isOwner = !!(user && family?.createdBy === user.uid)
-  const isMember = !!(user && members?.some((m) => m.uid === user.uid))
+  // Owner best-effort hydrate for older rows that lack name/photo
+  useEffect(() => {
+    if (!id || !user || !members?.length) return
+    const owner = family?.createdBy === user.uid
+    if (!owner) return
+
+    const targets = members.filter(m => !m.name || !m.photoURL).slice(0, 6) // soften write burst
+    if (targets.length === 0) return
+
+    ;(async () => {
+      for (const m of targets) {
+        try {
+          const u = await getDoc(doc(firestore, 'users', m.uid))
+          if (!u.exists()) continue
+          const data = u.data() as any
+          const name = pickNameFrom(data)
+          const photoURL = pickPhotoFrom(data)
+          if (name || photoURL) {
+            await setDoc(
+              doc(firestore, 'families', String(id), 'members', m.uid),
+              {
+                uid: m.uid,
+                ...(name ? { name } : {}),
+                ...(photoURL ? { photoURL } : {}),
+              },
+              { merge: true }
+            )
+          }
+        } catch {}
+      }
+    })()
+  }, [id, user, members, family?.createdBy])
+
+  const isOwner = useMemo(() => !!(user && family?.createdBy === user.uid), [user, family?.createdBy])
+  const isMember = useMemo(() => !!(user && members?.some((m) => m.uid === user.uid)), [user, members])
   const memberCount = members?.length ?? 0
 
   async function handleRemoveMember(targetUid: string) {
     if (!user || !id) return
-
-    // Only the owner can remove others; anyone can remove themselves
     const removingSelf = targetUid === user.uid
     if (!removingSelf && !isOwner) {
       toast.error('Only the owner can remove other members.')
@@ -196,24 +217,12 @@ export default function FamilyDetailPage() {
 
     setBusy(targetUid)
     try {
-      // 1) Remove subcollection member doc
       await deleteDoc(doc(firestore, 'families', String(id), 'members', targetUid))
+      await updateDoc(doc(firestore, 'families', String(id)), { members: arrayRemove(targetUid) }).catch(() => {})
 
-      // 2) Update the family doc's members array
-      await updateDoc(doc(firestore, 'families', String(id)), {
-        members: arrayRemove(targetUid),
-      }).catch(() => { /* ignore if field missing */ })
-
-      // 3) Update the user's doc when they remove themselves
       if (removingSelf) {
         const uref = doc(firestore, 'users', targetUid)
-        await setDoc(
-          uref,
-          { joinedFamilies: arrayRemove(String(id)) },
-          { merge: true }
-        ).catch(() => {})
-
-        // If this was their default family, clear preferredFamily
+        await setDoc(uref, { joinedFamilies: arrayRemove(String(id)) }, { merge: true }).catch(() => {})
         try {
           const usnap = await getDoc(uref)
           const preferred = usnap.exists() ? (usnap.data() as any)?.preferredFamily : null
@@ -223,10 +232,7 @@ export default function FamilyDetailPage() {
             )
           }
         } catch {}
-
-        // Clear legacy local key
         try { if (localStorage.getItem(LOCAL_FAMILY_KEY) === String(id)) localStorage.removeItem(LOCAL_FAMILY_KEY) } catch {}
-
         toast.success('You left the family.')
         router.replace('/family')
       } else {
@@ -242,7 +248,7 @@ export default function FamilyDetailPage() {
 
   if (!id) return null
 
-  // ----- Improved loading UX: full-page skeletons -----
+  // loading
   if (family === undefined || members === undefined) {
     return (
       <div className="max-w-2xl mx-auto p-4 space-y-6" aria-busy="true">
@@ -301,7 +307,7 @@ export default function FamilyDetailPage() {
 
   return (
     <>
-      <JoinedToastOnce />
+      <JoinFamilySuccess />
       <div className="max-w-2xl mx-auto p-4 space-y-6">
         <div className="flex items-start justify-between gap-3">
           <Button variant="ghost" size="icon" onClick={() => router.back()} aria-label="Back" className="shrink-0">
@@ -323,7 +329,6 @@ export default function FamilyDetailPage() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {/* Owner actions */}
             {isOwner && (
               <>
                 <Button variant="outline" onClick={() => setInviteOpen(true)}>Invite</Button>
@@ -331,7 +336,6 @@ export default function FamilyDetailPage() {
               </>
             )}
 
-            {/* Member-only action: Leave */}
             {!isOwner && isMember && (
               <AlertDialog>
                 <AlertDialogTrigger asChild>

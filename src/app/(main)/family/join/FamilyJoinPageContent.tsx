@@ -34,19 +34,15 @@ function normalizeInviteParam(raw: string): string {
   if (!raw) return ''
   const trimmed = raw.trim()
   try {
-    // If they pasted a full URL, extract ?invite= or ?familyId=
     const url = new URL(trimmed, typeof window !== 'undefined' ? window.location.origin : 'https://example.com')
     const qInvite = url.searchParams.get('invite')
     const qFam = url.searchParams.get('familyId')
     if (qInvite) return qInvite.trim()
     if (qFam) return qFam.trim()
-    // If the path looks like /family/<id>, pick last segment
     const parts = url.pathname.split('/').filter(Boolean)
     const famIdx = parts.findIndex((p) => p === 'family')
     if (famIdx !== -1 && parts[famIdx + 1]) return parts[famIdx + 1]
-  } catch {
-    // not a URL — fallthrough
-  }
+  } catch {}
   return trimmed
 }
 
@@ -61,19 +57,17 @@ export default function FamilyJoinPageContent() {
 
   const [joining, setJoining] = useState(false)
   const [familyName, setFamilyName] = useState<string | null>(null)
-  const [inviteExists, setInviteExists] = useState<boolean | null>(null) // null = unknown; true/false = confident
+  const [inviteExists, setInviteExists] = useState<boolean | null>(null)
   const [expired, setExpired] = useState(false)
-
   const triedAutoJoinRef = useRef(false)
 
-  // Peek: try invites/{key}, then fallback to families/{key}
+  // Peek details for UX
   useEffect(() => {
     let alive = true
     if (!key) return
 
     ;(async () => {
       try {
-        // 1) Look up invite doc by code
         const invRef = doc(firestore, 'invites', key)
         const invSnap = await getDoc(invRef)
 
@@ -81,15 +75,12 @@ export default function FamilyJoinPageContent() {
           const inv = invSnap.data() as InviteDoc
           if (!alive) return
           setInviteExists(true)
-
-          // expiry hint
           if (inv?.expiresAt?.toDate) {
             const when = inv.expiresAt.toDate()
             setExpired(when.getTime() < Date.now())
           }
           if (inv.familyName) setFamilyName(inv.familyName)
 
-          // Try to enrich name from families if not present (best-effort; may 403 if rules disallow)
           if (!inv.familyName && inv.familyId) {
             try {
               const famSnap = await getDoc(doc(firestore, 'families', inv.familyId))
@@ -102,26 +93,22 @@ export default function FamilyJoinPageContent() {
           return
         }
 
-        // 2) Not an invite code; treat as possible familyId
+        // Fallback: family ID
         try {
           const famRef = doc(firestore, 'families', key)
           const famSnap = await getDoc(famRef)
           if (!alive) return
           if (famSnap.exists()) {
-            setInviteExists(true) // exists (via family fallback)
+            setInviteExists(true)
             const name = (famSnap.data() as any)?.name
             setFamilyName(typeof name === 'string' ? name : null)
             return
           }
-          // definitively not found in either collection
           setInviteExists(false)
         } catch {
-          // If we can't read family due to rules, we don't know—leave as null (no red error)
           if (alive) setInviteExists((prev) => (prev === null ? null : prev))
         }
-      } catch {
-        // could not read invite due to rules; leave inviteExists as null (don't show red error)
-      }
+      } catch {}
     })()
 
     return () => { alive = false }
@@ -133,7 +120,7 @@ export default function FamilyJoinPageContent() {
     if (loading) return
     if (user && key) {
       triedAutoJoinRef.current = true
-      void handleJoin() // do not await
+      void handleJoin()
     }
   }, [autoJoin, loading, user, key])
 
@@ -147,14 +134,12 @@ export default function FamilyJoinPageContent() {
       return
     }
     if (!user) {
-      // Preserve original raw string so login can send us back correctly
       router.push(`/login?invite=${encodeURIComponent(rawInvite)}&autoJoin=1`)
       return
     }
 
     setJoining(true)
     try {
-      // Resolve familyId from invite (best-effort) OR treat key as familyId
       let familyId: string | null = null
       let viaInvite = false
 
@@ -170,16 +155,13 @@ export default function FamilyJoinPageContent() {
           viaInvite = true
         }
       } catch (err: any) {
-        // If rules block reading invites, we’ll try family fallback below
         console.warn('[join] invite lookup error', err?.code || err?.message || err)
       }
 
-      if (!familyId) {
-        familyId = key
-      }
+      if (!familyId) familyId = key
       if (!familyId) throw new Error('Invite is invalid.')
 
-      // 1) Create/merge membership document
+      // 1) Create/merge my member doc
       await setDoc(
         doc(firestore, 'families', familyId, 'members', user.uid),
         {
@@ -190,17 +172,16 @@ export default function FamilyJoinPageContent() {
         { merge: true }
       )
 
-      // 2) Ensure the **family doc** members array is updated (many lists rely on this)
+      // 2) Now that I have a member doc, the rule’s isFamilyMember passes; push me into members array
       try {
         await updateDoc(doc(firestore, 'families', familyId), {
           members: arrayUnion(user.uid),
         })
       } catch (e) {
-        // If rules restrict this for non-owners, it’s best-effort
         console.warn('[join] unable to update families.members array', e)
       }
 
-      // 3) Hydrate your visible profile in the member doc so others see your name/photo immediately
+      // 3) Hydrate member doc with my name/photo so others don’t see UID
       await setDoc(
         doc(firestore, 'families', familyId, 'members', user.uid),
         {
@@ -211,20 +192,16 @@ export default function FamilyJoinPageContent() {
         { merge: true }
       )
 
-      // 4) Update user doc: mark joined + set preferredFamily (provider will pick this up instantly)
+      // 4) User doc: mark joined & default
       await setDoc(
         doc(firestore, 'users', user.uid),
         { joinedFamilies: arrayUnion(familyId), preferredFamily: familyId },
         { merge: true }
       )
 
-      // 5) Local/session hints to smooth the very first render after deep-link joins
+      // 5) Local hints
       try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
       try { sessionStorage.setItem(JUST_JOINED_KEY, familyId) } catch {}
-
-      if (viaInvite) {
-        // Optionally log usage/increment counters via callable or rule-safe write
-      }
 
       toast.success('Joined family!')
       router.replace(`/family/${familyId}?joined=1`)
@@ -259,7 +236,7 @@ export default function FamilyJoinPageContent() {
               <p className="text-sm text-muted-foreground">
                 {familyName
                   ? `You’re about to join “${familyName}”.`
-                  : 'Join the family with this invite link.'}
+                  : 'Join the family with this invite.'}
                 {expired && (
                   <span className="block text-xs mt-1 text-amber-600 dark:text-amber-400">
                     Heads up: this invite looks past its expiry.
@@ -292,4 +269,3 @@ export default function FamilyJoinPageContent() {
     </div>
   )
 }
-

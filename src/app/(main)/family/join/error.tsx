@@ -1,3 +1,4 @@
+// src/app/family/join/error.tsx
 'use client'
 
 export default function Error({
@@ -25,4 +26,3 @@ export default function Error({
     </div>
   )
 }
-

@@ -1,3 +1,4 @@
+// src/app/family/join/page.tsx
 'use client'
 
 import { Suspense } from 'react'
@@ -12,4 +13,3 @@ export default function FamilyJoinPage() {
     </Suspense>
   )
 }
-
