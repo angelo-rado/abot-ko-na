@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import {
@@ -22,7 +22,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Check, Trash2 } from 'lucide-react'
+import { Check, Trash2, ChevronDown } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+
+type MetaChipProps = {
+  tone?: 'muted' | 'info' | 'warn'
+  children: ReactNode
+}
 
 type Props = {
   familyId: string
@@ -36,7 +42,6 @@ type Status = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
 /* ---------- name lookup cache ---------- */
 const userNameCache: Record<string, string> = {}
-
 function useUserName(userId?: string) {
   const [name, setName] = useState<string>('')
   useEffect(() => {
@@ -66,14 +71,13 @@ function useUserName(userId?: string) {
   }, [userId])
   return name
 }
-
 function UserName({ userId }: { userId?: string }) {
   const name = useUserName(userId)
   if (!userId) return null
   return <>{name || userId}</>
 }
 
-/* ---------- date helpers (unchanged) ---------- */
+/* ---------- date helpers ---------- */
 function toDate(input: any): Date | null {
   if (!input) return null
   if (typeof input?.toDate === 'function') return input.toDate()
@@ -113,22 +117,36 @@ function friendlyExpectedLabel(raw: any) {
   if (Math.abs(md) >= 1) {
     return md > 0 ? `In ${md} month${md !== 1 ? 's' : ''}` : `${Math.abs(md)} month${Math.abs(md) !== 1 ? 's' : ''} ago`
   }
-  return `${shortDate(d)} at ${formatTimeShort(d)}`
+  return `${shortDate(d)} · ${formatTimeShort(d)}`
 }
 function friendlyDeliveredLabel(raw: any) {
   const d = toDate(raw)
   if (!d) return ''
   const dd = daysDiff(d)
-  if (dd === 0) return `Today at ${formatTimeShort(d)}`
-  if (dd === 1) return `Tomorrow at ${formatTimeShort(d)}`
-  if (dd === -1) return `Yesterday at ${formatTimeShort(d)}`
-  if (Math.abs(dd) <= 7) {
-    return `${d.toLocaleDateString(undefined, { weekday: 'long' })} at ${formatTimeShort(d)}`
-  }
-  return `${shortDate(d)} at ${formatTimeShort(d)}`
+  if (dd === 0) return `Today · ${formatTimeShort(d)}`
+  if (dd === -1) return `Yesterday · ${formatTimeShort(d)}`
+  if (Math.abs(dd) <= 7) return `${d.toLocaleDateString(undefined, { weekday: 'long' })} · ${formatTimeShort(d)}`
+  return `${shortDate(d)} · ${formatTimeShort(d)}`
 }
 
-/* ---------- small helper exported elsewhere ---------- */
+/* ---------- tiny UI helpers ---------- */
+const MetaChip = ({ children, tone = 'muted' }: MetaChipProps) => {
+  const toneCls =
+    tone === 'info'
+      ? 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50'
+      : tone === 'warn'
+      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50'
+      : 'bg-muted text-muted-foreground border border-muted-foreground/10'
+
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded ${toneCls}`}>
+      {children}
+    </span>
+  )
+}
+const Dot = () => <span className="mx-1.5 text-muted-foreground/60">•</span>
+
+/* ---------- lock helper (kept for parity) ---------- */
 export function deliveryIsLocked(parent: any, childItems?: any[]): boolean {
   const delivered = parent?.status === 'delivered'
   const cancelled = parent?.status === 'cancelled'
@@ -153,18 +171,28 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   const [items, setItems] = useState<any[]>([])
   const [loadingItems, setLoadingItems] = useState(false)
   const [processing, setProcessing] = useState(false)
-
-  // confirmation dialog state for mark-delivered
   const [confirmOpen, setConfirmOpen] = useState(false)
 
-  // subscribe to items (unchanged)
+  const MetaChip = ({ children, tone = 'muted' }: MetaChipProps) => {
+  const toneCls =
+    tone === 'info'
+      ? 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50'
+      : tone === 'warn'
+      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50'
+      : 'bg-muted text-muted-foreground border border-muted-foreground/10'
+
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded ${toneCls}`}>
+      {children}
+    </span>
+  )
+}
+
   useEffect(() => {
     if (!parent?.id) return
     const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
     if (isSingle) {
-      setItems([])
-      setLoadingItems(false)
-      return
+      setItems([]); setLoadingItems(false); return
     }
     setLoadingItems(true)
     const unsub = subscribeToItems(
@@ -189,7 +217,10 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   const isPastETA = !!eta && eta.getTime() < Date.now()
   const delivered = parent?.status === 'delivered'
   const cancelled = parent?.status === 'cancelled'
+  const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
+  const itemsCount = items.length || parent?.itemCount || 0
 
+  /* ---------- actions ---------- */
   const onMarkItem = async (itemId: string) => {
     setProcessing(true)
     try {
@@ -199,7 +230,6 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
       setProcessing(false)
     }
   }
-
   const onMarkParent = async () => {
     if (delivered || cancelled) return
     setProcessing(true)
@@ -215,9 +245,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
           archivedReason: 'delivered',
         })
       } else {
-        const isSingle = parent.type === 'single' || !parent.type
         const ref = doc(firestore, 'families', familyId, 'deliveries', parent.id)
-
         if (isSingle) {
           await updateDoc(ref, {
             status: 'delivered',
@@ -228,12 +256,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
           })
         } else {
           const res = await markDeliveryAsReceived(familyId, parent.id, '')
-          if (!res || res.success === false) {
-            alert(res?.message ?? 'Failed')
-            setProcessing(false)
-            setConfirmOpen(false)
-            return
-          }
+          if (!res || res.success === false) { alert(res?.message ?? 'Failed'); setProcessing(false); setConfirmOpen(false); return }
           await updateDoc(ref, {
             archived: true,
             archivedAt: new Date(),
@@ -241,7 +264,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
           })
         }
       }
-    } catch (err) {
+    } catch {
       alert('Failed to mark as delivered')
     } finally {
       setProcessing(false)
@@ -252,80 +275,71 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   if (!parent) {
     return (
       <Card>
-        <CardHeader>
-          <CardTitle>No delivery/order provided</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle>No delivery/order provided</CardTitle></CardHeader>
         <CardContent />
       </Card>
     )
   }
 
-  const title =
-    parent.title ?? parent.platform ?? parent.name ?? (parentType === 'order' ? 'Order' : 'Delivery')
-  const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
-  const pendingCount = items.filter((it) => it.status === 'pending' || it.status === 'in_transit').length
+  const title = parent.title ?? parent.platform ?? parent.name ?? (parentType === 'order' ? 'Order' : 'Delivery')
+  const status: Status | undefined = parent.status
 
-  function StatusBadge({ status }: { status: Status }) {
-    const map: Record<Status, { label: string; className: string }> = {
-      pending: { label: 'Pending', className: 'bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs' },
-      in_transit: { label: 'In Transit', className: 'bg-sky-100 text-sky-800 px-2 py-0.5 rounded text-xs' },
-      delivered: { label: 'Delivered', className: 'bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-xs' },
-      cancelled: { label: 'Cancelled', className: 'bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs' },
+  /* ---------- status badge (subtle, not shouty) ---------- */
+  const StatusBadge = ({ status }: { status: Status }) => {
+    const map: Record<Status, string> = {
+      pending: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/40',
+      in_transit: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/40',
+      delivered: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800/40',
+      cancelled: 'bg-gray-50 text-gray-700 border-gray-200 dark:bg-gray-900/40 dark:text-gray-300 dark:border-gray-800',
     }
-    const info = map[status] ?? map.pending
-    return <span className={info.className}>{info.label}</span>
+    return <span className={`text-[11px] px-2 py-0.5 rounded border ${map[status]}`}>{status.replace('_', ' ')}</span>
   }
 
+  const showItemsToggle = !isSingle && !cancelled // always available for multiples; still allow after ETA
+  const receivedVariant: 'default' | 'secondary' = isPastETA ? 'default' : 'secondary'
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 sm:gap-0">
-          <div className="w-full">
-            <div className="font-medium flex flex-wrap items-center gap-2">
-              <span className="truncate">{title}</span>
-              {parent.status && <StatusBadge status={parent.status as Status} />}
+    <Card className="border-muted">
+      <CardHeader className="pb-2">
+        {/* TOP ROW — Title + primary actions */}
+        <CardTitle className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-semibold truncate">{title}</span>
+              {status && <StatusBadge status={status} />}
             </div>
-            <div className="text-xs text-muted-foreground flex flex-wrap gap-x-2">
-              {parent.platform && <span>{parent.platform}</span>}
-              {typeof parent.totalAmount === 'number' && <span>₱{Number(parent.totalAmount).toFixed(2)}</span>}
-              {!isSingle && <span>{items.length} item{items.length !== 1 ? 's' : ''}</span>}
-              {eta && (
-                <span>
-                  ETA: {friendlyExpectedLabel(eta)}
-                  {isPastETA ? ' (past due)' : ''}
-                </span>
-              )}
+
+            {/* META ROW — compact, single line */}
+            <div className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-y-1">
+              {eta && <MetaChip tone={isPastETA ? 'warn' : 'info'}>ETA {friendlyExpectedLabel(eta)}{isPastETA ? ' (past due)' : ''}</MetaChip>}
+              {typeof parent.totalAmount === 'number' && <MetaChip>₱{Number(parent.totalAmount).toFixed(2)}</MetaChip>}
+              {!isSingle && <MetaChip>{itemsCount} item{itemsCount !== 1 ? 's' : ''}</MetaChip>}
+              {parent.platform && (<><Dot />{parent.platform}</>)}
             </div>
+
+            {/* DELIVERED INFO — only when done */}
+            {status === 'delivered' && (
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Received{parent.receivedBy ? <> by <UserName userId={parent.receivedBy} /></> : ''}{parent.receivedAt ? ` · ${friendlyDeliveredLabel(parent.receivedAt)}` : ''}
+              </div>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2 justify-end w-full sm:w-auto">
-            {/* optional trash icon (parent handles confirm) */}
+          {/* ACTIONS */}
+          <div className="flex items-center gap-1 shrink-0">
             {onDelete ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={onDelete}
-                title="Delete"
-              >
+              <Button type="button" variant="ghost" size="icon" onClick={onDelete} title="Delete">
                 <Trash2 className="h-4 w-4" />
                 <span className="sr-only">Delete</span>
               </Button>
             ) : null}
 
-            {/* minimal icon for marking delivered (kept same logic via dialog) */}
-            {isPastETA && !delivered && !cancelled && (
+            {!delivered && !cancelled && (
               <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
                 <AlertDialogTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={processing}
-                    title="Mark as delivered (archives)"
-                  >
-                    <Check className="h-4 w-4" />
-                    <span className="sr-only">Mark as delivered</span>
+                  <Button type="button" size="sm" variant={receivedVariant} disabled={processing} className="whitespace-nowrap">
+                    <Check className="h-4 w-4 mr-1" />
+                    {processing ? 'Please wait…' : 'Received'}
                   </Button>
                 </AlertDialogTrigger>
                 <AlertDialogContent aria-describedby={undefined}>
@@ -333,7 +347,6 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
                     <AlertDialogTitle>Mark as delivered?</AlertDialogTitle>
                     <AlertDialogDescription>
                       This will set the status to <strong>Delivered</strong> and archive this {parentType}.
-                      This action cannot be undone.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
@@ -346,94 +359,86 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
               </AlertDialog>
             )}
 
-            {/* expand/collapse – unchanged */}
-            {!isPastETA && !delivered && !cancelled && !isSingle && (
-              <Button type="button" variant="ghost" onClick={() => setExpanded((s) => !s)}>
-                {expanded ? 'Collapse' : `Items (${pendingCount})`}
+            {showItemsToggle && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setExpanded((s) => !s)}
+                className="gap-1"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                Items {itemsCount ? `(${itemsCount})` : ''}
               </Button>
             )}
           </div>
         </CardTitle>
       </CardHeader>
 
-      {isSingle ? (
-        <CardContent className="space-y-2 text-sm">
-          {parent.expectedDate && (
-            <div className="flex flex-wrap items-center gap-2">
-              <strong>Expected:</strong>
-              <span className="text-muted-foreground">
-                {friendlyExpectedLabel(parent.expectedDate)}
-                {isPastETA ? ' (past due)' : ''}
-              </span>
-            </div>
-          )}
-          {parent.recipient && <div><strong>Recipient:</strong> {parent.recipient}</div>}
-          {parent.address && <div><strong>Address:</strong> {parent.address}</div>}
-          {parent.location && <div><strong>Location:</strong> {parent.location}</div>}
-          {typeof parent.codAmount === 'number' && <div><strong>COD:</strong> ₱{parent.codAmount.toFixed(2)}</div>}
-          {typeof parent.totalAmount === 'number' && <div><strong>Total:</strong> ₱{parent.totalAmount.toFixed(2)}</div>}
-          {parent.notes && <div><strong>Notes:</strong> <span className="italic">{parent.notes}</span></div>}
-          {parent.trackingNumber && <div><strong>Tracking #:</strong> {parent.trackingNumber}</div>}
-
-          {parent.status === 'delivered' && parent.receivedBy && (
-            <div className="text-sm flex flex-wrap items-center gap-2">
-              <StatusBadge status="delivered" />
-              <span className="text-muted-foreground">
-                <UserName userId={parent.receivedBy} />
-                {parent.receivedAt ? ` · ${friendlyDeliveredLabel(parent.receivedAt)}` : ''}
-              </span>
-            </div>
-          )}
-        </CardContent>
-      ) : (
-        expanded && (
-          <CardContent className="space-y-3">
-            {loadingItems ? (
-              <div>Loading items…</div>
-            ) : (
-              <>
-                {items.length === 0 && (
+      {/* CONTENT — minimal by default; tidy items list when expanded */}
+      {!isSingle && (
+        <AnimatePresence initial={false}>
+          {expanded && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+            >
+              <CardContent className="pt-2">
+                {loadingItems ? (
+                  <div className="text-sm text-muted-foreground">Loading items…</div>
+                ) : items.length === 0 ? (
                   <div className="text-sm text-muted-foreground">No items for this {parentType}.</div>
-                )}
-                {items.map((it) => {
-                  const expectedLabel = it.expectedDate ? friendlyExpectedLabel(it.expectedDate) : ''
-                  return (
-                    <div key={it.id} className="flex flex-col sm:flex-row justify-between gap-3 border-b pb-2">
-                      <div className="flex-1">
-                        <div className="font-medium">{it.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {expectedLabel}
-                          {typeof it.price === 'number' ? ` · ₱${it.price.toFixed(2)}` : ''}
-                        </div>
-                        {it.status === 'delivered' && it.receivedBy && it.receivedAt && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            <UserName userId={it.receivedBy} /> · {friendlyDeliveredLabel(it.receivedAt)}
+                ) : (
+                  <ul className="divide-y divide-border/60">
+                    {items.map((it) => {
+                      const expectedLabel = it.expectedDate ? friendlyExpectedLabel(it.expectedDate) : ''
+                      const deliveredItem = it.status === 'delivered'
+                      return (
+                        <li key={it.id} className="py-2 flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium truncate">{it.name}</div>
+                            <div className="text-[11px] text-muted-foreground truncate">
+                              {expectedLabel || 'No ETA'}
+                              {typeof it.price === 'number' ? ` · ₱${it.price.toFixed(2)}` : ''}
+                              {deliveredItem && it.receivedBy && it.receivedAt ? (
+                                <> · <UserName userId={it.receivedBy} /> · {friendlyDeliveredLabel(it.receivedAt)}</>
+                              ) : null}
+                            </div>
                           </div>
-                        )}
-                      </div>
+                          {!deliveredItem && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onMarkItem(it.id)}
+                              disabled={processing}
+                              className="shrink-0"
+                            >
+                              {processing ? 'Saving…' : 'Received'}
+                            </Button>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </CardContent>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      )}
 
-                      {it.status !== 'delivered' && (
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onMarkItem(it.id)}
-                            disabled={processing}
-                          >
-                            {processing ? 'Please wait…' : 'Mark item received'}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </>
-            )}
-          </CardContent>
-        )
+      {/* Single deliveries: keep ultra-minimal — details already in header chips */}
+      {isSingle && parent.notes && (
+        <CardContent className="pt-2">
+          <div className="text-sm">
+            <span className="text-muted-foreground">Notes: </span>
+            <span className="italic">{parent.notes}</span>
+          </div>
+        </CardContent>
       )}
     </Card>
   )
 }
-

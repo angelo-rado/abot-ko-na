@@ -136,6 +136,31 @@ export default function HomePage() {
     return () => unsub()
   }, [familyId])
 
+  // Helpers to normalize presence/status across data shapes
+  const normalizeStatus = (m: any): 'home' | 'away' | null => {
+    const s =
+      m?.status ??
+      m?.statusText ??
+      m?.state ??
+      (typeof m?.presence === 'string' ? m.presence : m?.presence?.status) ??
+      null
+
+    if (s === 'home' || s === 'away') return s
+
+    // boolean fallbacks
+    const b = m?.isHome ?? m?.atHome ?? m?.home
+    if (b === true) return 'home'
+    if (b === false) return 'away'
+    return null
+  }
+
+  const normalizeSource = (m: any, isMe: boolean): 'geo' | 'manual' | null => {
+    const raw = (m?.statusSource ?? m?.source ?? m?.status_source) || null
+    // if either member-level autoPresence or global user autoPresence is on, consider 'geo'
+    if (m?.autoPresence === true || (isMe && userAutoPresence === true)) return 'geo'
+    return raw === 'geo' || raw === 'manual' ? raw : (raw ? String(raw) as any : null)
+  }
+
   // Subscribe to members
   useEffect(() => {
     if (!user?.uid || !familyId) {
@@ -156,10 +181,9 @@ export default function HomePage() {
         const me = docs.find((m) => m.uid === user.uid)
         if (me) {
           const isRecentChange = justChangedStatusAt && Date.now() - justChangedStatusAt < 1500
-          if (!isRecentChange) setIsHome(me.status === 'home')
+          if (!isRecentChange) setIsHome(normalizeStatus(me) === 'home')
 
-          const rawSource = (me.statusSource ?? me.source ?? me.status_source) || null
-          const effective = (me.autoPresence === true || userAutoPresence === true) ? 'geo' : rawSource
+          const effective = normalizeSource(me, true)
           setMyStatusSource(effective)
         }
       },
@@ -270,14 +294,9 @@ export default function HomePage() {
                 // normalize presence fields
                 const presenceMap = new Map(
                   members.map((m) => {
-                    const status = m.status ?? null
-                    const memberAuto = m.autoPresence === true
-                    const rawSource = (m.statusSource ?? m.source ?? m.status_source) || null
-                    const statusSource =
-                      memberAuto || (user?.uid && m.uid === user.uid && userAutoPresence === true)
-                        ? 'geo'
-                        : rawSource
-
+                    const status = normalizeStatus(m)
+                    const isMe = Boolean(user?.uid && m.uid === user.uid)
+                    const statusSource = normalizeSource(m, isMe)
                     const updatedAt = (m.updatedAt ?? m.updated_at ?? m.lastUpdated ?? null) as any
                     const photoURL = (m.photoURL ?? m.photo ?? null) as string | null
                     const name = (m.name ?? m.displayName ?? 'Unknown') as string
@@ -311,7 +330,7 @@ export default function HomePage() {
                 const activity = members
                   .map((m) => {
                     const millis = toMillisSafe(m.updatedAt as unknown)
-                    return { uid: m.uid, name: m.name, status: m.status, ts: millis }
+                    return { uid: m.uid, name: m.name, status: normalizeStatus(m) ?? 'unknown', ts: millis }
                   })
                   .filter((x) => x.ts)
                   .sort((a, b) => (b.ts! - a.ts!))
@@ -376,7 +395,9 @@ export default function HomePage() {
                                         </AnimatePresence>
                                       </div>
                                     </div>
-                                    <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
+
+                                    {/* ALWAYS show the text label; it was hidden on small screens before */}
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                       <span className="capitalize">{presence.status ?? 'unknown'}</span>
                                       {presence.statusSource && (<span>• {presence.statusSource === 'geo' ? 'Auto' : 'Manual'}</span>)}
                                       {updatedDate && <span>• {formatDistanceToNow(updatedDate, { addSuffix: true })}</span>}

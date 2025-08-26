@@ -4,7 +4,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import {
   collection, query as fsQuery, orderBy, onSnapshot, doc,
-  deleteDoc, where, // ⬅️ added where
+  deleteDoc, where, updateDoc, serverTimestamp, // ⬅️ added updateDoc + serverTimestamp
 } from 'firebase/firestore'
 
 import { firestore } from '@/lib/firebase'
@@ -60,6 +60,46 @@ function etaLabel(raw: any) {
     if (!isNaN(d.getTime())) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   } catch { }
   return ''
+}
+
+/* ---------- NEW helpers for auto-archive by date ---------- */
+function toMillis(v: any): number | null {
+  try {
+    if (!v) return null
+    if (typeof v?.toDate === 'function') return v.toDate().getTime()
+    if (typeof v?.seconds === 'number') return v.seconds * 1000
+    if (v instanceof Date) return v.getTime()
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null
+    if (typeof v === 'string') {
+      const t = Date.parse(v)
+      return Number.isNaN(t) ? null : t
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function startOfTodayMs(): number {
+  const now = new Date()
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+  return start.getTime()
+}
+
+/** Use delivery.expectedDate, or if items exist, the max of items[*].expectedDate */
+function getEffectiveExpectedMs(d: any): number | null {
+  const top = toMillis(d?.expectedDate)
+
+  let itemsMax: number | null = null
+  if (Array.isArray(d?.items) && d.items.length > 0) {
+    for (const it of d.items) {
+      const t = toMillis(it?.expectedDate)
+      if (t != null) itemsMax = itemsMax == null ? t : Math.max(itemsMax, t)
+    }
+  }
+
+  if (top != null && itemsMax != null) return Math.max(top, itemsMax)
+  return top ?? itemsMax ?? null
 }
 
 /**
@@ -167,7 +207,62 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
     setConfirmOpen(true)
   }), [])
 
-  // Live deliveries listener — now limited to *my* deliveries at the query level
+  /* ---------- AUTO-ARCHIVE logic ---------- */
+  const isArchived = useCallback((d: any) => {
+    if (!d) return false
+
+    // explicit archive/done states
+    if (d.archived === true) return true
+    const st = (d.status ? String(d.status) : '').toLowerCase()
+    if (st.includes('delivered') || st === 'cancelled' || st.includes('cancel')) return true
+    if (d.delivered === true) return true
+    if (d.deliveredAt || d.receivedAt) return true
+
+    // date-based auto-archive (anything scheduled before today)
+    const expMs = getEffectiveExpectedMs(d)
+    if (expMs != null && expMs < startOfTodayMs()) return true
+
+    // item-level “all done” fallback
+    if (Array.isArray(d.items) && d.items.length > 0) {
+      const allDone = d.items.every((it: any) => {
+        const s = (it?.status ? String(it.status) : '').toLowerCase()
+        return s.includes('delivered') || s.includes('cancel')
+      })
+      if (allDone) return true
+    }
+
+    return false
+  }, [])
+
+  // Persist auto-archived flag to Firestore (only for my deliveries; matches query)
+  const persistInFlightRef = useRef(false)
+  const persistAutoArchived = useCallback(async (list: any[]) => {
+    if (persistInFlightRef.current) return
+    const toFlag = list.filter((d) => isArchived(d) && d.archived !== true)
+    if (!toFlag.length) return
+
+    persistInFlightRef.current = true
+    try {
+      // cap to avoid huge fan-out (adjust as needed)
+      const chunk = toFlag.slice(0, 25)
+      await Promise.allSettled(
+        chunk.map((d) =>
+          updateDoc(doc(firestore, 'families', familyId, 'deliveries', d.id), {
+            archived: true,
+            archivedAt: serverTimestamp(),
+            archivedReason: d.receivedAt || d.deliveredAt ? 'delivered' : 'auto_expectedDate_past',
+          })
+        )
+      )
+    } catch (e) {
+      // non-fatal — UI still treats them as archived
+      console.warn('[DeliveriesPage] auto-archive persist failed', e)
+    } finally {
+      persistInFlightRef.current = false
+    }
+  }, [familyId, isArchived])
+
+  // Live deliveries listener — limited to *my* deliveries at the query level
   useEffect(() => {
     setLoadingDeliveries(true)
     const qy = fsQuery(
@@ -179,31 +274,16 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
       const list = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as any) }))
       setDeliveries(list)
       setLoadingDeliveries(false)
+      // ⬇️ write back archived flag for any past-date deliveries
+      void persistAutoArchived(list)
     }, (err) => {
       console.error('[DeliveriesPage] snapshot error', err)
       setLoadingDeliveries(false)
     })
     return () => { try { unsub() } catch { } }
-  }, [familyId, myUid]) // ⬅️ include myUid
+  }, [familyId, myUid, persistAutoArchived])
 
   /* ---------------- Partition & filtering ---------------- */
-  const isArchived = useCallback((d: any) => {
-    if (!d) return false
-    if (d.archived === true) return true
-    const st = (d.status ? String(d.status) : '').toLowerCase()
-    if (st.includes('delivered') || st === 'cancelled' || st.includes('cancel')) return true
-    if (d.delivered === true) return true
-    if (d.deliveredAt) return true
-    if (Array.isArray(d.items) && d.items.length > 0) {
-      const allDone = d.items.every((it: any) => {
-        const s = (it?.status ? String(it.status) : '').toLowerCase()
-        return s.includes('delivered') || s.includes('cancel')
-      })
-      if (allDone) return true
-    }
-    return false
-  }, [])
-
   const upcoming = deliveries.filter((d) => !isArchived(d))
   const archived = deliveries.filter((d) => isArchived(d))
 
