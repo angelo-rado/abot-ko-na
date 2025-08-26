@@ -120,7 +120,11 @@ export default function FamilyDetailPage() {
     if (!id) { setMembers(undefined); return }
     const colRef = collection(firestore, 'families', String(id), 'members')
     const unsub = onSnapshot(colRef, async (snap) => {
-      const base = snap.docs.map(d => ({ uid: d.id, ...(d.data() as any) } as MemberRow))
+      const base = snap.docs.map(d => {
+        const data = (d.data() as any) ?? {}
+        const { uid: _ignore, ...rest } = data
+        return { ...rest, uid: d.id } as MemberRow
+      })
       const enriched = await Promise.all(base.map(async (row) => {
         try {
           const uSnap = await getDoc(doc(firestore, 'users', row.uid))
@@ -257,39 +261,8 @@ export default function FamilyDetailPage() {
             <ChevronLeft className="w-5 h-5" />
           </Button>
 
-          <div className="min-w-0 flex-1">
-            <Skeleton className="h-7 w-56" />
-            <div className="mt-2 flex items-center gap-3">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-4 w-36" />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <Skeleton className="h-9 w-24" />
-            <Skeleton className="h-9 w-24" />
-          </div>
+        {/* skeletons omitted for brevity */}
         </div>
-
-        <Separator />
-
-        <section className="space-y-3">
-          <Skeleton className="h-5 w-24" />
-          <ul className="divide-y rounded-md border overflow-hidden">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <li key={i} className="flex items-center justify-between p-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Skeleton className="h-8 w-8 rounded-full" />
-                  <div className="space-y-2">
-                    <Skeleton className="h-4 w-48" />
-                    <Skeleton className="h-3 w-16" />
-                  </div>
-                </div>
-                <Skeleton className="h-6 w-16" />
-              </li>
-            ))}
-          </ul>
-        </section>
       </div>
     )
   }

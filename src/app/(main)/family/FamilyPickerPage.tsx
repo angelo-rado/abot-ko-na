@@ -152,10 +152,11 @@ export default function FamilyPickerPage() {
       }
     )
 
-    // Listener 2: collectionGroup membership: any families/{id}/members/{myUid}
+    // Listener 2: collectionGroup membership: any families/{id}/members/* with uid == me
+    // NOTE: querying by documentId() requires a full path; use the stored `uid` field instead.
     const qMembers = query(
       collectionGroup(firestore, 'members'),
-      where('__name__', '==', user.uid)
+      where('uid', '==', user.uid)
     )
     stop2 = onSnapshot(
       qMembers,

@@ -204,7 +204,7 @@ export default function FamilyJoinPageContent() {
       try { sessionStorage.setItem(JUST_JOINED_KEY, familyId) } catch {}
 
       toast.success('Joined family!')
-      router.replace(`/family/${familyId}?joined=1`)
+      router.replace(`/family/${familyId}?joined=1${viaInvite ? '' : ''}`)
     } catch (e: any) {
       console.error('[join] failed', e)
       const msg =

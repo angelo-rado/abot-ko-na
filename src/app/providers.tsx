@@ -1,24 +1,53 @@
+// app/providers.tsx
 'use client'
 
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useRef, useState, createContext, useContext } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/useAuth'
 import { doc, getDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
 import { Loader2 } from 'lucide-react'
+import { subscribeUserFamilies, type FamilyLite } from '@/lib/memberships'
+
+type FamiliesContextValue = {
+  families: FamilyLite[]
+  familiesLoading: boolean
+  familiesError?: any
+}
+const FamiliesContext = createContext<FamiliesContextValue>({
+  families: [],
+  familiesLoading: true,
+})
+
+export function useFamiliesContext() {
+  return useContext(FamiliesContext)
+}
 
 export default function Providers({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+
   const [checking, setChecking] = useState(true)
 
+  // Families subscription state
+  const [families, setFamilies] = useState<FamilyLite[]>([])
+  const [familiesLoading, setFamiliesLoading] = useState(true)
+  const [familiesError, setFamiliesError] = useState<any>(undefined)
+  const unsubRef = useRef<(() => void) | null>(null)
+
+  // Onboarding gate
   useEffect(() => {
     if (loading) return
 
     if (!user) {
+      // not signed in; stop onboarding check and stop families subscription
       setChecking(false)
+      setFamilies([])
+      setFamiliesLoading(false)
+      setFamiliesError(undefined)
+      if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
       return
     }
 
@@ -42,6 +71,56 @@ export default function Providers({ children }: { children: ReactNode }) {
     checkOnboarding()
   }, [user, loading, pathname, router, searchParams])
 
+  // Families subscription (no documentId() misuse)
+  useEffect(() => {
+    if (loading) return
+
+    // cleanup previous
+    if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
+
+    if (!user?.uid) {
+      setFamilies([])
+      setFamiliesLoading(false)
+      setFamiliesError(undefined)
+      return
+    }
+
+    setFamiliesLoading(true)
+    setFamiliesError(undefined)
+    unsubRef.current = subscribeUserFamilies(
+      firestore,
+      user.uid,
+      (rows) => {
+        // stable sort: owned first, then by name
+        const ownedFirst = rows.slice().sort((a, b) => {
+          const me = user.uid
+          const aOwned = (a.createdBy ?? a.owner) === me
+          const bOwned = (b.createdBy ?? b.owner) === me
+          if (aOwned !== bOwned) return aOwned ? -1 : 1
+          return (a.name ?? '').localeCompare(b.name ?? '')
+        })
+        setFamilies(ownedFirst)
+        setFamiliesLoading(false)
+      },
+      (err) => {
+        console.error('[providers] families subscribe error', err)
+        setFamilies([])
+        setFamiliesLoading(false)
+        setFamiliesError(err)
+      }
+    )
+
+    return () => {
+      if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
+    }
+  }, [loading, user?.uid])
+
+  const ctx = useMemo<FamiliesContextValue>(() => ({
+    families,
+    familiesLoading,
+    familiesError,
+  }), [families, familiesLoading, familiesError])
+
   if (loading || checking) {
     return (
       <main className="flex justify-center items-center min-h-screen">
@@ -50,6 +129,9 @@ export default function Providers({ children }: { children: ReactNode }) {
     )
   }
 
-  return <>{children}</>
+  return (
+    <FamiliesContext.Provider value={ctx}>
+      {children}
+    </FamiliesContext.Provider>
+  )
 }
-

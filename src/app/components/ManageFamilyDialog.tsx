@@ -101,16 +101,29 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     setMembersLoading(true)
     membersUnsubRef.current = onSnapshot(membersRef, async (snap) => {
       if (!mountedRef.current) return
+
+      // Avoid "id is specified more than once" by stripping any `id` in doc.data()
       const docs: Member[] = snap.docs.map(d => {
-        const data = d.data() as any
+        const data = (d.data() as any) ?? {}
+        const {
+          id: _ignore,
+          role,
+          name,
+          email,
+          photoURL,
+          addedAt,
+          createdAt,
+          ...rest
+        } = data
+
         return {
+          ...rest,
           id: d.id,
-          role: data?.role ?? null,
-          name: data?.name ?? undefined,
-          email: data?.email ?? undefined,
-          photoURL: data?.photoURL ?? undefined,
-          addedAt: data?.addedAt ?? data?.createdAt ?? null,
-          ...data,
+          role: role ?? null,
+          name: name ?? undefined,
+          email: email ?? undefined,
+          photoURL: photoURL ?? undefined,
+          addedAt: addedAt ?? createdAt ?? null,
         } as Member
       })
 
