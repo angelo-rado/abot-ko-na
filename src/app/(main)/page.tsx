@@ -25,7 +25,6 @@ import {
 } from '@/components/ui/tooltip'
 import { formatDistanceToNow } from 'date-fns'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useRouter } from 'next/navigation'
 import CreateFamilyModal from '../components/CreateFamilyModal'
 import JoinFamilyModal from '../components/JoinFamilyModal'
 import HomeDeliveriesToday from '../components/HomeDeliveriesToday'
@@ -35,7 +34,6 @@ import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import { useSelectedFamily } from '@/lib/selected-family'
 
 export default function HomePage() {
-  const router = useRouter()
   const { user, loading: authLoading } = useAuth()
 
   // ✅ Source of truth for default family comes from provider (Settings writes users/{uid}.preferredFamily)
@@ -98,10 +96,23 @@ export default function HomePage() {
     setDoc(ref, {
       name: (user as any).name ?? 'Unknown',
       photoURL: (user as any).photoURL ?? null,
+      uid: user.uid,
     }, { merge: true }).catch(err => {
       console.warn('Failed to ensure member profile fields', err)
     })
   }, [user?.uid, familyId])
+
+  // Subscribe to the user's GLOBAL autoPresence
+  const [userAutoPresence, setUserAutoPresence] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!user?.uid) { setUserAutoPresence(null); return }
+    const unsub = onSnapshot(
+      doc(firestore, 'users', user.uid),
+      (snap) => setUserAutoPresence((snap.data() as any)?.autoPresence === true),
+      () => setUserAutoPresence(null)
+    )
+    return () => unsub()
+  }, [user?.uid])
 
   // Subscribe to the members collection for the selected family (live updates)
   useEffect(() => {
@@ -129,7 +140,10 @@ export default function HomePage() {
           if (!isRecentChange) {
             setIsHome(me.status === 'home')
           }
-          setMyStatusSource(me.statusSource ?? me.source ?? me.status_source ?? null)
+          // Effective source: honor member.autoPresence and global users/{uid}.autoPresence
+          const rawSource = (me.statusSource ?? me.source ?? me.status_source) || null
+          const effective = (me.autoPresence === true || userAutoPresence === true) ? 'geo' : rawSource
+          setMyStatusSource(effective)
         }
       },
       (err) => {
@@ -143,7 +157,7 @@ export default function HomePage() {
     )
 
     return () => unsub()
-  }, [user?.uid, familyId, justChangedStatusAt])
+  }, [user?.uid, familyId, justChangedStatusAt, userAutoPresence])
 
   const handlePresenceChange = async (newStatus: 'home' | 'away') => {
     if (!user || !familyId) return
@@ -156,6 +170,7 @@ export default function HomePage() {
       updatedAt: serverTimestamp(),
       name: (user as any).name ?? 'Unknown',
       photoURL: (user as any).photoURL ?? null,
+      uid: user.uid,
     }, { merge: true })
 
     // optimistic update + debounce sync
@@ -193,7 +208,7 @@ export default function HomePage() {
             <span className="font-medium">Default family:</span>{' '}
             <span>{families.find((f) => f.id === familyId)?.name ?? familyId ?? 'None set'}</span>
           </div>
-          <Link href="/settings" className="text-sm underline">Change</Link>
+          <Link href="/settings#default-family" className="text-sm underline">Change</Link>
         </div>
 
         {/* Who's Home Card */}
@@ -224,28 +239,28 @@ export default function HomePage() {
             ) : !familyId ? (
               <p className="text-muted-foreground text-sm">Set a default family in Settings to see who's home.</p>
             ) : (
-              // Render using the live members list
               (() => {
                 const members = membersLive
                 const loading = membersLoading
 
-                // normalize presence fields and provide fallbacks
+                // normalize presence fields and provide fallbacks (apply effective source)
                 const presenceMap = new Map(
                   members.map((m) => {
-                    const statusSource = (m.statusSource ?? m.source ?? m.status_source) || null
+                    const status = m.status ?? null
+                    const memberAuto = m.autoPresence === true
+                    const rawSource = (m.statusSource ?? m.source ?? m.status_source) || null
+                    const statusSource =
+                      memberAuto || (user?.uid && m.uid === user.uid && userAutoPresence === true)
+                        ? 'geo'
+                        : rawSource
+
                     const updatedAt = (m.updatedAt ?? m.updated_at ?? m.lastUpdated ?? null) as any
                     const photoURL = (m.photoURL ?? m.photo ?? null) as string | null
                     const name = (m.name ?? m.displayName ?? 'Unknown') as string
 
                     return [
                       m.uid,
-                      {
-                        status: m.status ?? null,
-                        statusSource,
-                        updatedAt,
-                        photoURL,
-                        name,
-                      },
+                      { status, statusSource, updatedAt, photoURL, name },
                     ]
                   })
                 )
@@ -299,8 +314,7 @@ export default function HomePage() {
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 8 }}
                                 transition={{ duration: 0.2 }}
-                                className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 px-2 py-1 rounded-md ${isCurrentUser ? 'bg-muted/10' : ''
-                                  }`}
+                                className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 px-2 py-1 rounded-md ${isCurrentUser ? 'bg-muted/10' : ''}`}
                               >
                                 <div className="flex items-center gap-3 min-h-[48px]">
                                   {presence.photoURL ? (
@@ -423,7 +437,6 @@ export default function HomePage() {
                                 </div>
 
                               </motion.div>
-
                             )
                           })}
                         </AnimatePresence>
@@ -466,7 +479,7 @@ export default function HomePage() {
           <CardHeader>
             <CardTitle>Deliveries Today</CardTitle>
           </CardHeader>
-          <CardContent>
+        <CardContent>
             {presenceLoading || loadingFamilies ? (
               <>
                 <Skeleton className="h-4 w-full mb-2" />
@@ -539,7 +552,7 @@ export default function HomePage() {
                       <p>Your presence is updated automatically using your location.</p>
                       <p>
                         To change this, visit{' '}
-                        <Link href="/settings" className="text-blue-600 hover:underline">
+                        <Link href="/settings#default-family" className="text-blue-600 hover:underline">
                           Settings →
                         </Link>
                       </p>
@@ -564,4 +577,3 @@ export default function HomePage() {
     </>
   )
 }
-
