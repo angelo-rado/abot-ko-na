@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/lib/useAuth';
 import { useSelectedFamily } from '@/lib/selected-family';
 import { useRouter } from 'next/navigation';
@@ -18,7 +18,6 @@ import { getToken, deleteToken } from 'firebase/messaging';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import DefaultFamilySelector from '@/app/components/DefaultFamilySelector';
-import DisplayNameEditor from '@/app/components/DisplayNameEditor';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 const VAPID_KEY =
@@ -33,6 +32,45 @@ export default function SettingsPage() {
   const { user, loading } = useAuth();
   const { familyId } = useSelectedFamily();
   const isOnline = useOnlineStatus();
+
+  // 🔹 Focus + pulse highlight for Default Family section
+  const defaultFamilyWrapRef = useRef<HTMLDivElement | null>(null);
+  const [pulseDF, setPulseDF] = useState(false);
+
+  useEffect(() => {
+    function focusDefaultFamily() {
+      const wrap = defaultFamilyWrapRef.current;
+      if (!wrap) return;
+
+      // Scroll into view smoothly
+      try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+
+      // Try to focus the select trigger inside the section
+      try {
+        const trigger = wrap.querySelector<HTMLElement>('[data-default-family-trigger]');
+        trigger?.focus({ preventScroll: true });
+      } catch {}
+
+      // Pulse ring highlight briefly
+      setPulseDF(true);
+      const t = window.setTimeout(() => setPulseDF(false), 1400);
+      return () => window.clearTimeout(t);
+    }
+
+    // Listen for custom event fired by PresenceSettings
+    window.addEventListener('focus-default-family', focusDefaultFamily);
+
+    // Also support deep link via #default-family on initial load
+    if (window.location.hash === '#default-family') {
+      // Defer a tick to ensure layout ready
+      setTimeout(focusDefaultFamily, 50);
+    }
+
+    return () => {
+      window.removeEventListener('focus-default-family', focusDefaultFamily);
+    };
+  }, []);
+
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [working, setWorking] = useState(false);
   const [notificationsSupported, setNotificationsSupported] = useState(false);
@@ -135,27 +173,34 @@ export default function SettingsPage() {
               </p>
               <p className="text-xs text-muted-foreground">{user?.email ?? ''}</p>
             </div>
-            <DisplayNameEditor />
+            {/* If you want inline editing, keep this */}
+            {/* <DisplayNameEditor /> */}
           </CardContent>
         </Card>
 
-        {/* Default Family */}
-        <Card>
-          <CardHeader className="flex flex-row items-center gap-3">
-            <div className="rounded-md border p-2">
-              <HomeIcon className="h-4 w-4" />
-            </div>
-            <div className="space-y-1">
-              <CardTitle>Default family</CardTitle>
-              <CardDescription>
-                Used across Home and Deliveries. You can browse other families from their pages without changing this.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <DefaultFamilySelector />
-          </CardContent>
-        </Card>
+        {/* Default Family (wrapped with focus/highlight container) */}
+        <div
+          id="default-family"
+          ref={defaultFamilyWrapRef}
+          className={pulseDF ? 'rounded-lg ring-2 ring-primary/60 animate-pulse' : ''}
+        >
+          <Card>
+            <CardHeader className="flex flex-row items-center gap-3">
+              <div className="rounded-md border p-2">
+                <HomeIcon className="h-4 w-4" />
+              </div>
+              <div className="space-y-1">
+                <CardTitle>Default family</CardTitle>
+                <CardDescription>
+                  Used across Home and Deliveries. You can browse other families from their pages without changing this.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <DefaultFamilySelector />
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Notifications */}
         <Card>
@@ -263,4 +308,3 @@ export default function SettingsPage() {
     </>
   );
 }
-
