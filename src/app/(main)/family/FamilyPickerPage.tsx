@@ -1,25 +1,35 @@
 /* eslint-disable */
 'use client'
 
-import { useMemo, useRef, useEffect } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  where,
+} from 'firebase/firestore'
 import { formatDistanceToNow } from 'date-fns'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { toast } from 'sonner'
 
 import { useAuth } from '@/lib/useAuth'
-import { useFamiliesContext } from '@/app/providers'
+import { firestore } from '@/lib/firebase'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { toast } from 'sonner'
+import JoinFamilyModal from '@/app/components/JoinFamilyModal'
+import CreateFamilyModal from '@/app/components/CreateFamilyModal'
 
-type FamilyCard = {
+type Family = {
   id: string
   name?: string
   createdBy?: string
-  owner?: string
   createdAt?: Date | null
   memberCount?: number
 }
@@ -34,12 +44,18 @@ function toDate(v: any): Date | null {
 
 export default function FamilyPickerPage() {
   const { user, loading: authLoading } = useAuth()
-  const { families, familiesLoading } = useFamiliesContext()
   const router = useRouter()
   const search = useSearchParams()
   const joinedFlag = search.get('joined') === '1'
 
-  const cleanedJoinedToast = useRef(false)
+  const cleanedJoinedToast = useRef<boolean>(false)
+
+  const [families, setFamilies] = useState<Family[]>([])
+  const [loading, setLoading] = useState(true)
+  const [joinOpen, setJoinOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+
+  // one-time “joined!” toast + URL cleanup
   useEffect(() => {
     if (cleanedJoinedToast.current) return
     if (joinedFlag && typeof window !== 'undefined') {
@@ -51,22 +67,76 @@ export default function FamilyPickerPage() {
     }
   }, [joinedFlag, router])
 
-  const owned = useMemo(
-    () => families.filter(f => (f.createdBy ?? f.owner) === user?.uid) as FamilyCard[],
-    [families, user?.uid]
+  // Membership via families.members (array-contains) ONLY — no collectionGroup here.
+  useEffect(() => {
+    if (authLoading || !user?.uid) return
+    setLoading(true)
+
+    // Listener: families where members array-contains me
+    const qFamilies = query(
+      collection(firestore, 'families'),
+      where('members', 'array-contains', user.uid)
+    )
+    const stop = onSnapshot(
+      qFamilies,
+      async (snap) => {
+        try {
+          // Fetch family docs (already have) & hydrate counts best-effort
+          const base: Family[] = await Promise.all(
+            snap.docs.map(async (s) => {
+              const d = s.data() as any
+              let memberCount: number | undefined = undefined
+              try {
+                const memSnap = await getDocs(collection(firestore, 'families', s.id, 'members'))
+                memberCount = memSnap.size
+              } catch {}
+              return {
+                id: s.id,
+                name: typeof d?.name === 'string' ? d.name : undefined,
+                createdBy: typeof d?.createdBy === 'string' ? d.createdBy : undefined,
+                createdAt: toDate(d?.createdAt ?? d?.created_on ?? d?.created_at),
+                memberCount,
+              }
+            })
+          )
+
+          // Sort: owned first then by name
+          const myUid = user?.uid ?? ''
+          base.sort((a, b) => {
+            const aOwned = (a.createdBy ?? '') === myUid
+            const bOwned = (b.createdBy ?? '') === myUid
+            if (aOwned !== bOwned) return aOwned ? -1 : 1
+            const an = (a.name ?? '').toString()
+            const bn = (b.name ?? '').toString()
+            return an.localeCompare(bn)
+          })
+
+          setFamilies(base)
+        } finally {
+          setLoading(false)
+        }
+      },
+      (err) => {
+        console.error('[family] membership (array) error', err)
+        setFamilies([])
+        setLoading(false)
+      }
+    )
+
+    return () => { try { stop() } catch {} }
+  }, [authLoading, user?.uid])
+
+  const owned = useMemo(() => families.filter((f) => f.createdBy === user?.uid), [families, user?.uid])
+  const joined = useMemo(() => families.filter((f) => f.createdBy !== user?.uid), [families, user?.uid])
+
+  const goToFamily = useCallback(
+    (fid: string) => { router.push(`/family/${fid}`) },
+    [router]
   )
-  const joined = useMemo(
-    () => families.filter(f => (f.createdBy ?? f.owner) !== user?.uid) as FamilyCard[],
-    [families, user?.uid]
-  )
 
-  const goToFamily = (fid: string) => router.push(`/family/${fid}`)
-
-  const renderFamilyCard = (f: FamilyCard) => {
-    const createdDate = toDate(f.createdAt)
-    const created = createdDate ? formatDistanceToNow(createdDate, { addSuffix: true }) : null
-    const isOwner = (f.createdBy ?? f.owner) === user?.uid
-
+  const renderFamilyCard = (f: Family) => {
+    const created = f.createdAt instanceof Date ? formatDistanceToNow(f.createdAt, { addSuffix: true }) : null
+    const isOwner = f.createdBy === user?.uid
     return (
       <motion.div
         key={f.id}
@@ -123,28 +193,20 @@ export default function FamilyPickerPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Your Families</h1>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => router.push('/family/join')}>Join</Button>
-          <Button onClick={() => router.push('/family/create')}>
-            <Plus className="w-4 h-4 mr-1" /> Create
-          </Button>
+          <Button variant="outline" onClick={() => setJoinOpen(true)}>Join</Button>
+          <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-1" /> Create</Button>
         </div>
       </div>
 
       <Tabs defaultValue="owned" className="w-full">
         <TabsList className="grid grid-cols-2">
-          <TabsTrigger value="owned" className="flex items-center gap-2">
-            <HomeIcon className="w-4 h-4" /> Owned
-          </TabsTrigger>
-          <TabsTrigger value="joined" className="flex items-center gap-2">
-            <UsersIcon className="w-4 h-4" /> Joined
-          </TabsTrigger>
+          <TabsTrigger value="owned" className="flex items-center gap-2"><HomeIcon className="w-4 h-4" /> Owned</TabsTrigger>
+          <TabsTrigger value="joined" className="flex items-center gap-2"><UsersIcon className="w-4 h-4" /> Joined</TabsTrigger>
         </TabsList>
 
         <TabsContent value="owned" className="mt-4">
-          {authLoading || familiesLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
+          {authLoading || loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
           ) : owned.length > 0 ? (
             <AnimatePresence initial={false}>
               {owned.map(renderFamilyCard)}
@@ -159,10 +221,8 @@ export default function FamilyPickerPage() {
         </TabsContent>
 
         <TabsContent value="joined" className="mt-4">
-          {authLoading || familiesLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
+          {authLoading || loading ? (
+            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
           ) : joined.length > 0 ? (
             <AnimatePresence initial={false}>
               {joined.map(renderFamilyCard)}
@@ -176,6 +236,9 @@ export default function FamilyPickerPage() {
           )}
         </TabsContent>
       </Tabs>
+
+      <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
+      <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   )
 }

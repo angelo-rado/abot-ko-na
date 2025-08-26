@@ -1,9 +1,6 @@
 'use client'
 
-import {
-  ReactNode, useEffect, useMemo, useRef, useState,
-  createContext, useContext,
-} from 'react'
+import { ReactNode, useEffect, useMemo, useRef, useState, createContext, useContext } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/useAuth'
 import { doc, getDoc } from 'firebase/firestore'
@@ -31,12 +28,6 @@ export default function Providers({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => { mounted.current = false }
-  }, [])
-
   const [checking, setChecking] = useState(true)
 
   // Families subscription state
@@ -50,6 +41,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     if (loading) return
 
     if (!user) {
+      // signed out — stop onboarding check and families subscription
       setChecking(false)
       setFamilies([])
       setFamiliesLoading(false)
@@ -58,10 +50,11 @@ export default function Providers({ children }: { children: ReactNode }) {
       return
     }
 
-    ;(async () => {
+    const checkOnboarding = async () => {
       try {
         const snap = await getDoc(doc(firestore, 'users', user.uid))
         const data = snap.data()
+
         if (!data?.onboardingComplete && !pathname.startsWith('/onboarding')) {
           const query = searchParams.toString()
           router.replace(`/onboarding${query ? `?${query}` : ''}`)
@@ -70,15 +63,18 @@ export default function Providers({ children }: { children: ReactNode }) {
       } catch (err) {
         console.warn('Error checking onboarding', err)
       } finally {
-        if (mounted.current) setChecking(false)
+        setChecking(false)
       }
-    })()
+    }
+
+    checkOnboarding()
   }, [user, loading, pathname, router, searchParams])
 
-  // Families subscription (no collectionGroup anywhere)
+  // Families subscription (array-contains only; no collectionGroup)
   useEffect(() => {
-    if (loading || checking) return
+    if (loading) return
 
+    // cleanup previous
     if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
 
     if (!user?.uid) {
@@ -90,26 +86,23 @@ export default function Providers({ children }: { children: ReactNode }) {
 
     setFamiliesLoading(true)
     setFamiliesError(undefined)
-
     unsubRef.current = subscribeUserFamilies(
       firestore,
       user.uid,
       (rows) => {
-        if (!mounted.current) return
-        // Sort: owned first, then by name
         const me = user.uid
-        const ordered = rows.slice().sort((a, b) => {
+        // stable sort: owned first (createdBy/owner), then by name
+        const sorted = rows.slice().sort((a, b) => {
           const aOwned = (a.createdBy ?? a.owner) === me
           const bOwned = (b.createdBy ?? b.owner) === me
           if (aOwned !== bOwned) return aOwned ? -1 : 1
           return (a.name ?? '').localeCompare(b.name ?? '')
         })
-        setFamilies(ordered)
+        setFamilies(sorted)
         setFamiliesLoading(false)
       },
       (err) => {
         console.error('[providers] families subscribe error', err)
-        if (!mounted.current) return
         setFamilies([])
         setFamiliesLoading(false)
         setFamiliesError(err)
@@ -119,7 +112,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     return () => {
       if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
     }
-  }, [loading, checking, user?.uid])
+  }, [loading, user?.uid])
 
   const ctx = useMemo<FamiliesContextValue>(() => ({
     families,
