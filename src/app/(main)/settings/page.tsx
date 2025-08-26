@@ -1,13 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/useAuth';
 import { useSelectedFamily } from '@/lib/selected-family';
 import { useRouter } from 'next/navigation';
 import { Separator } from '@/components/ui/separator';
 import PresenceSettings from '@/app/components/PresenceSettings';
 import LogoutButton from '@/app/components/LogoutButton';
-import { Loader2, Monitor, Sun, Moon, Bell, User as UserIcon, Home as HomeIcon, Palette } from 'lucide-react';
+import {
+  Loader2,
+  Monitor,
+  Sun,
+  Moon,
+  Bell,
+  User as UserIcon,
+  Home as HomeIcon,
+  Palette,
+} from 'lucide-react';
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
@@ -17,68 +27,41 @@ import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { getToken, deleteToken } from 'firebase/messaging';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
-import DefaultFamilySelector from '@/app/components/DefaultFamilySelector';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import DefaultFamilySelector from '@/app/components/DefaultFamilySelector';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const VAPID_KEY =
-  (
-    process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
-    process.env.NEXT_PUBLIC_VAPID_KEY ||
-    ''
-  ).trim();
+// ⬇️ Dynamic client-only import fixes "editor not showing" issues in some builds.
+const DisplayNameEditor = dynamic(() => import('@/app/components/DisplayNameEditor'), {
+  ssr: false,
+  loading: () => <Skeleton className="h-10 w-full rounded-md" />,
+});
+
+const VAPID_KEY = (
+  process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
+  process.env.NEXT_PUBLIC_VAPID_KEY ||
+  ''
+).trim();
 
 export default function SettingsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { familyId } = useSelectedFamily();
   const isOnline = useOnlineStatus();
-
-  // 🔹 Focus + pulse highlight for Default Family section
-  const defaultFamilyWrapRef = useRef<HTMLDivElement | null>(null);
-  const [pulseDF, setPulseDF] = useState(false);
-
-  useEffect(() => {
-    function focusDefaultFamily() {
-      const wrap = defaultFamilyWrapRef.current;
-      if (!wrap) return;
-
-      // Scroll into view smoothly
-      try { wrap.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
-
-      // Try to focus the select trigger inside the section
-      try {
-        const trigger = wrap.querySelector<HTMLElement>('[data-default-family-trigger]');
-        trigger?.focus({ preventScroll: true });
-      } catch {}
-
-      // Pulse ring highlight briefly
-      setPulseDF(true);
-      const t = window.setTimeout(() => setPulseDF(false), 1400);
-      return () => window.clearTimeout(t);
-    }
-
-    // Listen for custom event fired by PresenceSettings
-    window.addEventListener('focus-default-family', focusDefaultFamily);
-
-    // Also support deep link via #default-family on initial load
-    if (window.location.hash === '#default-family') {
-      // Defer a tick to ensure layout ready
-      setTimeout(focusDefaultFamily, 50);
-    }
-
-    return () => {
-      window.removeEventListener('focus-default-family', focusDefaultFamily);
-    };
-  }, []);
-
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [working, setWorking] = useState(false);
   const [notificationsSupported, setNotificationsSupported] = useState(false);
   const { theme, setTheme } = useTheme();
 
+  // 🔗 focus/flash support for #default-family
+  const defaultFamilyCardRef = useRef<HTMLDivElement | null>(null);
+  const flashTimeoutRef = useRef<number | null>(null);
+
   useEffect(() => {
     setNotificationsSupported(typeof window !== 'undefined' && 'Notification' in window);
-    setPermission(typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default');
+    setPermission(
+      typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default',
+    );
   }, []);
 
   useEffect(() => {
@@ -87,21 +70,48 @@ export default function SettingsPage() {
     }
   }, [loading, user?.uid, router]);
 
+  // Scroll & flash when landing with #default-family
+  useEffect(() => {
+    function focusDefaultFamily() {
+      const el = defaultFamilyCardRef.current;
+      if (!el) return;
+      try {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch {}
+      el.classList.add('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+      if (flashTimeoutRef.current) window.clearTimeout(flashTimeoutRef.current);
+      flashTimeoutRef.current = window.setTimeout(() => {
+        el.classList.remove('ring-2', 'ring-primary', 'ring-offset-2', 'ring-offset-background');
+      }, 1600);
+    }
+
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    if (hash === '#default-family') {
+      setTimeout(focusDefaultFamily, 0);
+    }
+
+    const handler = () => focusDefaultFamily();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus-default-family', handler as any);
+    }
+    return () => {
+      if (flashTimeoutRef.current) window.clearTimeout(flashTimeoutRef.current);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus-default-family', handler as any);
+      }
+    };
+  }, [loading]);
+
   const subscribe = async () => {
     try {
       setWorking(true);
       const messaging = getFirebaseMessaging();
       if (!messaging) throw new Error('Messaging is not available');
 
-      const token = await getToken(messaging, {
-        vapidKey: VAPID_KEY || undefined,
-      });
-
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY || undefined });
       if (!token) throw new Error('Failed to get FCM token');
 
-      await updateDoc(doc(firestore, 'users', user!.uid), {
-        fcmTokens: arrayUnion(token),
-      });
+      await updateDoc(doc(firestore, 'users', user!.uid), { fcmTokens: arrayUnion(token) });
 
       toast.success('Notifications enabled');
       setPermission('granted');
@@ -118,15 +128,10 @@ export default function SettingsPage() {
       const messaging = getFirebaseMessaging();
       if (!messaging) throw new Error('Messaging is not available');
 
-      const token = await getToken(messaging, {
-        vapidKey: VAPID_KEY || undefined,
-      });
-
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY || undefined });
       if (token) {
         await deleteToken(messaging);
-        await updateDoc(doc(firestore, 'users', user!.uid), {
-          fcmTokens: arrayRemove(token),
-        });
+        await updateDoc(doc(firestore, 'users', user!.uid), { fcmTokens: arrayRemove(token) });
       }
 
       toast.success('Notifications disabled');
@@ -173,34 +178,28 @@ export default function SettingsPage() {
               </p>
               <p className="text-xs text-muted-foreground">{user?.email ?? ''}</p>
             </div>
-            {/* If you want inline editing, keep this */}
-            {/* <DisplayNameEditor /> */}
+            {/* Client-only editor with skeleton fallback */}
+            <DisplayNameEditor />
           </CardContent>
         </Card>
 
-        {/* Default Family (wrapped with focus/highlight container) */}
-        <div
-          id="default-family"
-          ref={defaultFamilyWrapRef}
-          className={pulseDF ? 'rounded-lg ring-2 ring-primary/60 animate-pulse' : ''}
-        >
-          <Card>
-            <CardHeader className="flex flex-row items-center gap-3">
-              <div className="rounded-md border p-2">
-                <HomeIcon className="h-4 w-4" />
-              </div>
-              <div className="space-y-1">
-                <CardTitle>Default family</CardTitle>
-                <CardDescription>
-                  Used across Home and Deliveries. You can browse other families from their pages without changing this.
-                </CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <DefaultFamilySelector />
-            </CardContent>
-          </Card>
-        </div>
+        {/* Default Family */}
+        <Card id="default-family" ref={defaultFamilyCardRef} className="scroll-mt-24">
+          <CardHeader className="flex flex-row items-center gap-3">
+            <div className="rounded-md border p-2">
+              <HomeIcon className="h-4 w-4" />
+            </div>
+            <div className="space-y-1">
+              <CardTitle>Default family</CardTitle>
+              <CardDescription>
+                Used across Home and Deliveries. You can browse other families from their pages without changing this.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <DefaultFamilySelector />
+          </CardContent>
+        </Card>
 
         {/* Notifications */}
         <Card>
@@ -227,9 +226,7 @@ export default function SettingsPage() {
               </div>
             </div>
             {!notificationsSupported && (
-              <p className="text-xs text-muted-foreground">
-                This browser doesn’t support notifications.
-              </p>
+              <p className="text-xs text-muted-foreground">This browser doesn’t support notifications.</p>
             )}
             {permission === 'denied' && (
               <p className="text-xs text-muted-foreground">

@@ -28,7 +28,7 @@ import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
 import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
-import { MapPin } from 'lucide-react'
+import { MapPin, ChevronDown, ChevronRight } from 'lucide-react'
 
 type Props = {
   familyId: string | null
@@ -158,7 +158,6 @@ function useRelativeTime(rawDate: any) {
       setLabel('just now')
       return
     }
-    // Narrow to non-null Date to appease TS
     const dd: Date = dMaybe
 
     function update() {
@@ -364,10 +363,18 @@ export default function HomeDeliveriesToday({
     return () => unsub()
   }, [familyId])
 
-  // Notes toggle state
+  // Toggles (declutter: items collapsed by default, notes opt-in)
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())
+  const [openItemsIds, setOpenItemsIds] = useState<Set<string>>(() => new Set())
   const toggleNotes = (id: string) => {
     setOpenNotesIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+  const toggleItems = (id: string) => {
+    setOpenItemsIds((prev) => {
       const next = new Set(prev)
       next.has(id) ? next.delete(id) : next.add(id)
       return next
@@ -602,7 +609,6 @@ export default function HomeDeliveriesToday({
     if (!familyId) return
     setProcessingId(deliveryId)
     try {
-      // Save delivery as received; receiver note becomes a note doc (or default)
       await markDeliveryAsReceived(familyId, deliveryId, undefined as any)
 
       const user = auth.currentUser
@@ -645,7 +651,6 @@ export default function HomeDeliveriesToday({
 
   // Derived metrics
   const totalDeliveries = deliveries.length
-  const totalItems = Array.from(deliveryItemsMap.values()).reduce((s, arr) => s + arr.length, 0)
   const itemsTotalPrice = Array.from(deliveryItemsMap.values()).flat().reduce((s, it) => s + (typeof it.price === 'number' ? it.price : 0), 0)
 
   const pendingDeliveries = deliveries.filter(d => d.status === 'pending')
@@ -670,6 +675,16 @@ export default function HomeDeliveriesToday({
   const showHeaderCod =
     totalDeliveries === 1 &&
     (deliveries[0].type === 'single' || (typeof deliveries[0].itemCount === 'number' && deliveries[0].itemCount <= 1))
+
+  const EtaChip = ({ label }: { label?: string }) =>
+    label ? <span className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10">ETA {label}</span> : null
+
+  const CodChip = ({ amount }: { amount?: number | null }) =>
+    amount && amount > 0 ? (
+      <span className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10">
+        COD ₱{Number(amount).toFixed(2)}
+      </span>
+    ) : null
 
   return (
     <div className="space-y-4">
@@ -708,13 +723,11 @@ export default function HomeDeliveriesToday({
         </div>
       </div>
 
-      {/* Pending section */}
-      <section>
-        <h4 className="font-semibold">Pending</h4>
-        {pendingDeliveries.length === 0 ? (
-          <div className="text-muted-foreground text-sm">No pending deliveries</div>
-        ) : (
-          <div className="space-y-3">
+      {/* Pending */}
+      {pendingDeliveries.length > 0 && (
+        <section>
+          <h4 className="font-semibold mb-2">Pending</h4>
+          <div className="space-y-2">
             {pendingDeliveries.map((d) => {
               const isSingleByDoc = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
               const items = deliveryItemsMap.get(d.id) ?? []
@@ -724,7 +737,8 @@ export default function HomeDeliveriesToday({
                   ? new Date(d.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   : ''
 
-              const typeLabel = (isSingleByDoc ? 'Single' : 'Multiple')
+              const itemsCount = isSingleByDoc ? 1 : (items?.length || d.itemCount || 0)
+
               const codTotal = (() => {
                 if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
                 if (items && items.length > 0) {
@@ -735,68 +749,79 @@ export default function HomeDeliveriesToday({
                 return null
               })()
 
-              // Grouped deliveries (show items)
-              if (!isSingleByDoc && items.length > 0) {
-                const notesOpen = openNotesIds.has(d.id)
-                return (
-                  <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <div className="font-semibold text-sm">{d.title ?? d.platform ?? 'Delivery'}</div>
-                        </div>
+              const notesOpen = openNotesIds.has(d.id)
+              const itemsOpen = openItemsIds.has(d.id)
 
-                        <div className="text-xs text-muted-foreground mt-1">
-                          Ordered by: <UserName userId={d.createdBy} />
-                        </div>
-
-                        <div className="flex gap-2 mt-2">
-                          <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                          {codTotal != null && codTotal > 0 ? (
-                            <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                          )}
-                        </div>
-                      </div>
+              return (
+                <div key={d.id} className="rounded border bg-card text-card-foreground p-3">
+                  {/* Primary row */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <NotesToggle
-                          open={notesOpen}
-                          count={0}
-                          onClick={() => toggleNotes(d.id)}
-                        />
-                        <MarkDeliveryButton
-                          id={d.id}
-                          isProcessing={processingId === d.id}
-                          onClick={() => setDialogOpenId(d.id)}
-                        />
+                        <div className="font-medium text-sm truncate">
+                          {d.title ?? d.name ?? d.platform ?? 'Delivery'}
+                        </div>
+                        {!isSingleByDoc && (
+                          <Badge variant="secondary" className="h-5 px-2 text-[11px]">
+                            Multiple • {itemsCount}
+                          </Badge>
+                        )}
                       </div>
-                      <ReceiverNoteDialog
-                        open={dialogOpenId === d.id}
-                        onClose={() => setDialogOpenId(null)}
-                        onSubmit={handleReceiverNoteSubmit}
-                        loading={saving}
-                      />
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <EtaChip label={etaStr || undefined} />
+                        <CodChip amount={codTotal ?? undefined} />
+                        <span className="text-[11px] text-muted-foreground">by <UserName userId={d.createdBy} /></span>
+                      </div>
                     </div>
 
-                    <div className="mt-3 space-y-2">
-                      {items.map((it) => {
-                        const itemEta = it.expectedDate?.toDate
-                          ? it.expectedDate.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                          : it.expectedDate?.seconds
-                            ? new Date(it.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                            : etaStr
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isSingleByDoc && itemsCount > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => toggleItems(d.id)}
+                        >
+                          {itemsOpen ? <ChevronDown className="w-4 h-4 mr-1" /> : <ChevronRight className="w-4 h-4 mr-1" />}
+                          {itemsOpen ? 'Hide items' : `View items (${itemsCount})`}
+                        </Button>
+                      )}
+                      <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />
+                      <MarkDeliveryButton
+                        id={d.id}
+                        isProcessing={processingId === d.id}
+                        onClick={() => setDialogOpenId(d.id)}
+                      />
+                    </div>
+                  </div>
 
-                        return (
-                          <div key={it.id} className="flex items-center justify-between">
-                            <div>
-                              <div className="font-medium text-sm">{it.name}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {it.price != null ? `₱${Number(it.price).toFixed(2)}` : '—'}
-                                {itemEta ? ` · ETA ${itemEta}` : ''}
+                  {/* Items (collapsed by default for cleanliness) */}
+                  <AnimatePresence initial={false}>
+                    {!isSingleByDoc && itemsOpen && items.length > 0 && (
+                      <motion.div
+                        key={`items-${d.id}`}
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="mt-2 space-y-2"
+                      >
+                        {items.map((it) => {
+                          const itemEta = it.expectedDate?.toDate
+                            ? it.expectedDate.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            : it.expectedDate?.seconds
+                              ? new Date(it.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : etaStr
+                          return (
+                            <div key={it.id} className="flex items-center justify-between">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{it.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {typeof it.price === 'number' ? `₱${Number(it.price).toFixed(2)}` : '—'}
+                                  {itemEta ? ` · ETA ${itemEta}` : ''}
+                                </div>
                               </div>
-                            </div>
-                            <div>
                               {it.status !== 'delivered' ? (
                                 <MarkDeliveryItemButton
                                   deliveryId={d.id}
@@ -808,59 +833,11 @@ export default function HomeDeliveriesToday({
                                 <div className="text-sm text-muted-foreground" />
                               )}
                             </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-
-                    {/* Notes thread */}
-                    <AnimatePresence initial={false}>
-                      {notesOpen && familyId ? (
-                        <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
-                      ) : null}
-                    </AnimatePresence>
-                  </div>
-                )
-              }
-
-              // flat delivery rendering
-              const notesOpen = openNotesIds.has(d.id)
-              return (
-                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
-                      </div>
-
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Ordered by: <UserName userId={d.createdBy} />
-                      </div>
-
-                      <div className="flex gap-2 mt-2">
-                        <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                        {codTotal != null && codTotal > 0 ? (
-                          <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                        )}
-                        {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <NotesToggle
-                        open={notesOpen}
-                        count={0}
-                        onClick={() => toggleNotes(d.id)}
-                      />
-                      <MarkDeliveryButton
-                        id={d.id}
-                        isProcessing={processingId === d.id}
-                        onClick={() => setDialogOpenId(d.id)}
-                      />
-                    </div>
-                  </div>
+                          )
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
                   {/* Notes thread */}
                   <AnimatePresence initial={false}>
@@ -879,16 +856,14 @@ export default function HomeDeliveriesToday({
               )
             })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* In Transit section */}
-      <section>
-        <h4 className="font-semibold">In Transit</h4>
-        {inTransitDeliveries.length === 0 ? (
-          <div className="text-muted-foreground text-sm">No in-transit deliveries</div>
-        ) : (
-          <div className="space-y-3">
+      {/* In Transit */}
+      {inTransitDeliveries.length > 0 && (
+        <section>
+          <h4 className="font-semibold mb-2">In Transit</h4>
+          <div className="space-y-2">
             {inTransitDeliveries.map((d) => {
               const isSingleByDoc = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
               const items = deliveryItemsMap.get(d.id) ?? []
@@ -898,7 +873,7 @@ export default function HomeDeliveriesToday({
                   ? new Date(d.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                   : ''
 
-              const typeLabel = (isSingleByDoc ? 'Single' : 'Multiple')
+              const itemsCount = isSingleByDoc ? 1 : (items?.length || d.itemCount || 0)
               const codTotal = (() => {
                 if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
                 if (items && items.length > 0) {
@@ -909,120 +884,44 @@ export default function HomeDeliveriesToday({
                 return null
               })()
 
-              if (!isSingleByDoc && items.length > 0) {
-                const notesOpen = openNotesIds.has(d.id)
-                return (
-                  <div key={d.id} className="border rounded p-3 bg-card text-card-foreground">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <div className="font-semibold text-sm">{d.title ?? d.platform ?? 'Delivery'}</div>
-                        </div>
-
-                        <div className="text-xs text-muted-foreground mt-1">
-                          Ordered by: <UserName userId={d.createdBy} />
-                        </div>
-
-                        <div className="flex gap-2 mt-2">
-                          <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                          {codTotal != null && codTotal > 0 ? (
-                            <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <NotesToggle
-                          open={notesOpen}
-                          count={0}
-                          onClick={() => toggleNotes(d.id)}
-                        />
-                        <MarkDeliveryButton
-                          id={d.id}
-                          isProcessing={processingId === d.id}
-                          onClick={() => setDialogOpenId(d.id)}
-                        />
-                      </div>
-                      <ReceiverNoteDialog
-                        open={dialogOpenId === d.id}
-                        onClose={() => setDialogOpenId(null)}
-                        onSubmit={handleReceiverNoteSubmit}
-                        loading={saving}
-                      />
-                    </div>
-
-                    <div className="mt-3 space-y-2">
-                      {items.map((it) => {
-                        const itemEta = it.expectedDate?.toDate
-                          ? it.expectedDate.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                          : it.expectedDate?.seconds
-                            ? new Date(it.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                            : etaStr
-
-                        return (
-                          <div key={it.id} className="flex items-center justify-between">
-                            <div>
-                              <div className="font-medium text-sm">{it.name}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {it.price != null ? `₱${Number(it.price).toFixed(2)}` : '—'}
-                                {itemEta ? ` · ETA ${itemEta}` : ''}
-                              </div>
-                            </div>
-                            <div>
-                              {it.status !== 'delivered' ? (
-                                <Button type="button" size="sm" onClick={() => handleMarkDeliveryItem(d.id, it.id)} disabled={processingId === it.id}>
-                                  {processingId === it.id ? 'Saving…' : 'Mark as Received'}
-                                </Button>
-                              ) : (
-                                <div className="text-sm text-muted-foreground" />
-                              )}
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-
-                    {/* Notes thread */}
-                    <AnimatePresence initial={false}>
-                      {notesOpen && familyId ? (
-                        <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
-                      ) : null}
-                    </AnimatePresence>
-                  </div>
-                )
-              }
-
               const notesOpen = openNotesIds.has(d.id)
+              const itemsOpen = openItemsIds.has(d.id)
+
               return (
-                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
+                <div key={d.id} className="rounded border bg-card text-card-foreground p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
-                      </div>
-
-                      <div className="text-xs text-muted-foreground mt-1">
-                        Ordered by: <UserName userId={d.createdBy} />
-                      </div>
-
-                      <div className="flex gap-2 mt-2">
-                        <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                        {codTotal != null && codTotal > 0 ? (
-                          <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
+                        <div className="font-medium text-sm truncate">
+                          {d.title ?? d.name ?? d.platform ?? 'Delivery'}
+                        </div>
+                        {!isSingleByDoc && (
+                          <Badge variant="secondary" className="h-5 px-2 text-[11px]">
+                            Multiple • {itemsCount}
+                          </Badge>
                         )}
-                        {etaStr ? <span className="text-xs text-muted-foreground self-center">· ETA {etaStr}</span> : null}
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <EtaChip label={etaStr || undefined} />
+                        <CodChip amount={codTotal ?? undefined} />
+                        <span className="text-[11px] text-muted-foreground">by <UserName userId={d.createdBy} /></span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <NotesToggle
-                        open={notesOpen}
-                        count={0}
-                        onClick={() => toggleNotes(d.id)}
-                      />
+                    <div className="flex items-center gap-1 shrink-0">
+                      {!isSingleByDoc && itemsCount > 0 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs"
+                          onClick={() => toggleItems(d.id)}
+                        >
+                          {itemsOpen ? <ChevronDown className="w-4 h-4 mr-1" /> : <ChevronRight className="w-4 h-4 mr-1" />}
+                          {itemsOpen ? 'Hide items' : `View items (${itemsCount})`}
+                        </Button>
+                      )}
+                      <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />
                       <MarkDeliveryButton
                         id={d.id}
                         isProcessing={processingId === d.id}
@@ -1031,7 +930,50 @@ export default function HomeDeliveriesToday({
                     </div>
                   </div>
 
-                  {/* Notes thread */}
+                  <AnimatePresence initial={false}>
+                    {!isSingleByDoc && itemsOpen && items.length > 0 && (
+                      <motion.div
+                        key={`items-${d.id}`}
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="mt-2 space-y-2"
+                      >
+                        {items.map((it) => {
+                          const itemEta = it.expectedDate?.toDate
+                            ? it.expectedDate.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                            : it.expectedDate?.seconds
+                              ? new Date(it.expectedDate.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                              : etaStr
+                          return (
+                            <div key={it.id} className="flex items-center justify-between">
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium truncate">{it.name}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {typeof it.price === 'number' ? `₱${Number(it.price).toFixed(2)}` : '—'}
+                                  {itemEta ? ` · ETA ${itemEta}` : ''}
+                                </div>
+                              </div>
+                              {it.status !== 'delivered' ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleMarkDeliveryItem(d.id, it.id)}
+                                  disabled={processingId === it.id}
+                                >
+                                  {processingId === it.id ? 'Saving…' : 'Mark as Received'}
+                                </Button>
+                              ) : (
+                                <div className="text-sm text-muted-foreground" />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   <AnimatePresence initial={false}>
                     {notesOpen && familyId ? (
                       <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
@@ -1048,20 +990,17 @@ export default function HomeDeliveriesToday({
               )
             })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
-      {/* Delivered Today section */}
-      <section>
-        <h4 className="font-semibold">Delivered Today</h4>
-        {deliveredToday.length === 0 ? (
-          <div className="text-muted-foreground text-sm">No deliveries marked delivered today</div>
-        ) : (
+      {/* Delivered Today */}
+      {deliveredToday.length > 0 && (
+        <section>
+          <h4 className="font-semibold mb-2">Delivered Today</h4>
           <div className="space-y-2">
             {deliveredToday.map((d) => {
               const receivedAtStr = d.receivedAt ? friendlyDeliveredLabel(d.receivedAt) : ''
               const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
-              const typeLabel = isSingle ? 'Single' : 'Multiple'
               const codTotal = (() => {
                 if (isSingle) return typeof d.codAmount === 'number' ? d.codAmount : null
                 if (d.items && d.items.length > 0) {
@@ -1075,40 +1014,26 @@ export default function HomeDeliveriesToday({
               const notesOpen = openNotesIds.has(d.id)
 
               return (
-                <div key={d.id} className="flex flex-col gap-3 bg-card text-card-foreground border rounded p-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="font-medium text-sm">{d.title ?? d.name ?? 'Delivery'}</div>
+                <div key={d.id} className="rounded border bg-card text-card-foreground p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{d.title ?? d.name ?? 'Delivery'}</div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {codTotal != null && codTotal > 0 && (
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10">
+                            COD ₱{Number(codTotal).toFixed(2)}
+                          </span>
+                        )}
+                        <span className="text-[11px] text-muted-foreground">
+                          {d.receivedBy ? <>Received by <UserName userId={d.receivedBy} /></> : 'Received'}
+                          {receivedAtStr ? ` • ${receivedAtStr}` : ''}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Ordered by: <UserName userId={d.createdBy} />
-                    </div>
-
-                    <div className="flex gap-2 mt-2">
-                      <Badge variant="secondary" className="text-xs">{typeLabel}</Badge>
-                      {codTotal != null && codTotal > 0 ? (
-                        <Badge variant="outline" className="text-xs">{`COD ₱${Number(codTotal).toFixed(2)}`}</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-muted-foreground">COD —</Badge>
-                      )}
-                    </div>
-
-                    <div className="text-xs text-muted-foreground mt-2">
-                      {d.receivedBy
-                        ? <>Received by <UserName userId={d.receivedBy} />{receivedAtStr ? ` · ${receivedAtStr}` : ''}</>
-                        : (receivedAtStr ? receivedAtStr : 'Received')}
-                    </div>
+                    <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />
                   </div>
 
-                  {/* Notes thread (read/write stays enabled after delivery) */}
-                  <div className="flex items-center justify-between">
-                    <NotesToggle
-                      open={notesOpen}
-                      count={0}
-                      onClick={() => toggleNotes(d.id)}
-                    />
-                  </div>
                   <AnimatePresence initial={false}>
                     {notesOpen && familyId ? (
                       <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
@@ -1118,8 +1043,8 @@ export default function HomeDeliveriesToday({
               )
             })}
           </div>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   )
 }
