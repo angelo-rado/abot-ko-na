@@ -1,3 +1,4 @@
+// src/app/components/HomeDeliveriesToday.tsx
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
@@ -27,8 +28,7 @@ import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, ChevronRight } from 'lucide-react' // ⬅️ MapPin removed
-// ⬅️ Link import removed
+import { ChevronDown, ChevronRight } from 'lucide-react'
 
 type Props = {
   familyId: string | null
@@ -295,7 +295,7 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // ⬇️ removed: hasHomeLocation logic & banner
+  // (Removed: home-location banner; handled in Who's Home)
 
   // UI toggles
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())

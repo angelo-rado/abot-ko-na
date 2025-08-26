@@ -1,3 +1,4 @@
+// src/app/(main)/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -13,7 +14,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { Loader2, Home as HomeIcon, DoorOpen, MapPin } from 'lucide-react' // ⬅️ MapPin added
+import { Loader2, Home as HomeIcon, DoorOpen, MapPin } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
@@ -57,6 +58,7 @@ export default function HomePage() {
   // family-aware auto presence hook
   useAutoPresence(familyId)
 
+  // tick to update "x minutes ago"
   useEffect(() => {
     const id = setInterval(() => setNow((n) => n + 1), 60_000)
     return () => clearInterval(id)
@@ -105,7 +107,7 @@ export default function HomePage() {
     return () => unsub()
   }, [user?.uid])
 
-  // 🔎 Family Home Location detector (robust: GeoPoint | {lat,lng} | legacy fields)
+  // Family Home Location detector (robust: GeoPoint | {lat,lng} | {lat,lon} | legacy fields)
   const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
   useEffect(() => {
     if (!familyId) { setHasHomeLocation(null); return }
@@ -114,20 +116,22 @@ export default function HomePage() {
       doc(firestore, 'families', familyId),
       (snap) => {
         const d = snap.data() as any
+        const isNum = (v: any) => typeof v === 'number' && Number.isFinite(v)
         const hasGeo = (obj: any) =>
           !!obj && (
-            (typeof obj.latitude === 'number' && typeof obj.longitude === 'number') || // Firestore GeoPoint
-            (typeof obj.lat === 'number' && typeof obj.lng === 'number')              // Plain object
+            (isNum(obj.latitude) && isNum(obj.longitude)) ||     // Firestore GeoPoint
+            (isNum(obj.lat) && (isNum(obj.lng) || isNum(obj.lon))) || // {lat,lng} OR {lat,lon}
+            (Array.isArray(obj.coordinates) && isNum(obj.coordinates?.[1]) && isNum(obj.coordinates?.[0])) // [lon,lat]
           )
 
         const has =
           hasGeo(d?.homeLocation) ||
           hasGeo(d?.home) ||
-          (typeof d?.homeLat === 'number' && typeof d?.homeLng === 'number') ||
-          hasGeo(d?.location) // fallback if stored as `location`
+          hasGeo(d?.location) ||
+          (isNum(d?.homeLat) && (isNum(d?.homeLng) || isNum(d?.homeLon))) // accept lng or lon
         setHasHomeLocation(!!has)
       },
-      () => setHasHomeLocation(null)
+      () => setHasHomeLocation(false)
     )
     return () => unsub()
   }, [familyId])
@@ -245,8 +249,7 @@ export default function HomePage() {
                 const members = membersLive
                 const loading = membersLoading
 
-                // 🔔 Home location banner lives here now
-                { /* show only when determined false */ }
+                // Banner: show only when we positively know it's missing
                 const homeBanner = hasHomeLocation === false ? (
                   <div className="flex items-start gap-3 p-3 border rounded bg-muted/30 mb-2">
                     <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
