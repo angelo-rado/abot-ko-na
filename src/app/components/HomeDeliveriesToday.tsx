@@ -27,34 +27,25 @@ import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
 import { AnimatePresence, motion } from 'framer-motion'
-import Link from 'next/link'
-import { MapPin, ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight } from 'lucide-react' // ⬅️ MapPin removed
+// ⬅️ Link import removed
 
 type Props = {
   familyId: string | null
   presenceLoading: boolean
   familiesLoading: boolean
-  /** If true, show deliveries for ALL users in the family. If false, show only current user's deliveries. */
   showAllUsers?: boolean
 }
 
-/* ----------------------------
-   User name lookup (cached)
-   ---------------------------- */
+/* ---------- user name lookup (cached) ---------- */
 const userNameCache: Record<string, string> = {}
 
 function useUserName(userId?: string) {
   const [name, setName] = useState<string>('')
 
   useEffect(() => {
-    if (!userId) {
-      setName('')
-      return
-    }
-    if (userNameCache[userId]) {
-      setName(userNameCache[userId])
-      return
-    }
+    if (!userId) { setName(''); return }
+    if (userNameCache[userId]) { setName(userNameCache[userId]); return }
 
     let mounted = true
     const ref = doc(firestore, 'users', userId)
@@ -78,9 +69,7 @@ function useUserName(userId?: string) {
         setName(userId)
       })
 
-    return () => {
-      mounted = false
-    }
+    return () => { mounted = false }
   }, [userId])
 
   return name
@@ -92,9 +81,7 @@ function UserName({ userId }: { userId?: string }) {
   return <>{name || userId}</>
 }
 
-/* ----------------------------
-   Friendly date + relative time
-   ---------------------------- */
+/* ---------- friendly dates ---------- */
 function toDate(input: any): Date | null {
   if (!input) return null
   if (input.toDate) return input.toDate()
@@ -154,16 +141,10 @@ function useRelativeTime(rawDate: any) {
 
   useEffect(() => {
     const dMaybe = toDate(rawDate)
-    if (!dMaybe) {
-      setLabel('just now')
-      return
-    }
+    if (!dMaybe) { setLabel('just now'); return }
     const dd: Date = dMaybe
 
-    function update() {
-      setLabel(formatRelative(new Date(), dd))
-    }
-
+    function update() { setLabel(formatRelative(new Date(), dd)) }
     update()
 
     const diffSec = Math.abs((Date.now() - dd.getTime()) / 1000)
@@ -179,9 +160,7 @@ function useRelativeTime(rawDate: any) {
   return label
 }
 
-/* ----------------------------
-   Inline Delivery Notes Thread
-   ---------------------------- */
+/* ---------- inline notes ---------- */
 function NoteRow({ note, meId }: { note: any; meId?: string }) {
   const createdLabel = useRelativeTime(note?.createdAt)
   const isMe = meId && note?.createdBy === meId
@@ -208,25 +187,13 @@ function NoteRow({ note, meId }: { note: any; meId?: string }) {
 
 function NotesToggle({ open, count, onClick }: { open: boolean; count: number; onClick: () => void }) {
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      className="h-7 px-2 text-xs"
-      onClick={onClick}
-    >
+    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClick}>
       {open ? 'Hide notes' : `Show notes${count ? ` (${count})` : ''}`}
     </Button>
   )
 }
 
-function DeliveryNotesThreadInline({
-  familyId,
-  deliveryId,
-}: {
-  familyId: string
-  deliveryId: string
-}) {
+function DeliveryNotesThreadInline({ familyId, deliveryId }: { familyId: string; deliveryId: string }) {
   const [notes, setNotes] = useState<any[]>([])
   const [text, setText] = useState('')
   const [adding, setAdding] = useState(false)
@@ -291,31 +258,18 @@ function DeliveryNotesThreadInline({
         <>
           <AnimatePresence initial={false}>
             {notes.length === 0 ? (
-              <motion.div
-                key="empty"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="text-xs text-muted-foreground"
-              >
+              <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-xs text-muted-foreground">
                 No notes yet
               </motion.div>
             ) : (
               <div className="space-y-2">
-                {notes.map((n) => (
-                  <NoteRow key={n.id} note={n} meId={me?.uid} />
-                ))}
+                {notes.map((n) => <NoteRow key={n.id} note={n} meId={me?.uid} />)}
               </div>
             )}
           </AnimatePresence>
 
           <div className="mt-2 flex items-start gap-2">
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Add a note…"
-              className="min-h-[60px]"
-            />
+            <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Add a note…" className="min-h-[60px]" />
             <Button size="sm" onClick={handleAdd} disabled={adding || !text.trim()}>
               {adding ? 'Posting…' : 'Post'}
             </Button>
@@ -326,9 +280,7 @@ function DeliveryNotesThreadInline({
   )
 }
 
-/* ----------------------------
-   Component
-   ---------------------------- */
+/* ---------- component ---------- */
 export default function HomeDeliveriesToday({
   familyId,
   presenceLoading,
@@ -343,43 +295,17 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // Minimal "home location not set" indicator
-  const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
-  useEffect(() => {
-    if (!familyId) { setHasHomeLocation(null); return }
-    const ref = doc(firestore, 'families', familyId)
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        const d = snap.data() as any
-        const has =
-          !!(d?.homeLocation && typeof d.homeLocation.lat === 'number' && typeof d.homeLocation.lng === 'number') ||
-          (typeof d?.homeLat === 'number' && typeof d?.homeLng === 'number') ||
-          (d?.home && typeof d.home.lat === 'number' && typeof d.home.lng === 'number')
-        setHasHomeLocation(!!has)
-      },
-      () => setHasHomeLocation(false)
-    )
-    return () => unsub()
-  }, [familyId])
+  // ⬇️ removed: hasHomeLocation logic & banner
 
-  // Toggles (declutter: items collapsed by default, notes opt-in)
+  // UI toggles
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())
   const [openItemsIds, setOpenItemsIds] = useState<Set<string>>(() => new Set())
-  const toggleNotes = (id: string) => {
-    setOpenNotesIds((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-  const toggleItems = (id: string) => {
-    setOpenItemsIds((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
+  const toggleNotes = (id: string) => setOpenNotesIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+  const toggleItems = (id: string) => setOpenItemsIds(prev => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
 
   const me = auth.currentUser
   const myName = useUserName(me?.uid)
@@ -399,13 +325,12 @@ export default function HomeDeliveriesToday({
   const todayRange = useCallback(() => {
     const now = new Date()
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
-    const end = new Date(start)
-    end.setDate(start.getDate() + 1)
+    const end = new Date(start); end.setDate(start.getDate() + 1)
     return { start, end }
   }, [])
 
   useEffect(() => {
-    // cleanup previous listeners
+    // cleanup
     unsubsRef.current.forEach((u) => u && u())
     unsubsRef.current = []
     Object.values(itemUnsubsRef.current).forEach((u) => u && u())
@@ -415,17 +340,11 @@ export default function HomeDeliveriesToday({
     setDeliveredToday([])
     setLoading(true)
 
-    if (!familyId) {
-      setLoading(false)
-      return
-    }
+    if (!familyId) { setLoading(false); return }
 
     const uid = auth.currentUser?.uid ?? null
     if (!showAllUsers && !uid) {
-      setDeliveries([])
-      setDeliveryItemsMap(new Map())
-      setDeliveredToday([])
-      setLoading(false)
+      setDeliveries([]); setDeliveryItemsMap(new Map()); setDeliveredToday([]); setLoading(false)
       return
     }
 
@@ -441,9 +360,7 @@ export default function HomeDeliveriesToday({
       where('status', 'in', ['pending', 'in_transit']),
     ]
 
-    if (!showAllUsers && uid) {
-      baseConstraints.push(where('createdBy', '==', uid))
-    }
+    if (!showAllUsers && uid) baseConstraints.push(where('createdBy', '==', uid))
 
     const deliveriesQ = query(deliveriesCol, ...baseConstraints, orderBy('expectedDate', 'asc'))
 
@@ -455,29 +372,17 @@ export default function HomeDeliveriesToday({
         setLoading(false)
 
         const keepIds = new Set(docs.map(d => d.id))
-
         Object.keys(itemUnsubsRef.current).forEach((delId) => {
-          if (!keepIds.has(delId)) {
-            try { itemUnsubsRef.current[delId]() } catch {}
-            delete itemUnsubsRef.current[delId]
-          }
+          if (!keepIds.has(delId)) { try { itemUnsubsRef.current[delId]() } catch {}; delete itemUnsubsRef.current[delId] }
         })
 
         docs.forEach((d) => {
           const isSingleByDoc = d.type === 'single'
           if (isSingleByDoc) {
-            if (itemUnsubsRef.current[d.id]) {
-              try { itemUnsubsRef.current[d.id]() } catch {}
-              delete itemUnsubsRef.current[d.id]
-            }
-            setDeliveryItemsMap((prev) => {
-              const copy = new Map(prev)
-              copy.set(d.id, [])
-              return copy
-            })
+            if (itemUnsubsRef.current[d.id]) { try { itemUnsubsRef.current[d.id]() } catch {}; delete itemUnsubsRef.current[d.id] }
+            setDeliveryItemsMap((prev) => { const copy = new Map(prev); copy.set(d.id, []); return copy })
             return
           }
-
           if (itemUnsubsRef.current[d.id]) return
 
           const itemsCol = collection(firestore, 'families', familyId, 'deliveries', d.id, 'items')
@@ -487,25 +392,20 @@ export default function HomeDeliveriesToday({
             allItemsQ,
             (itemsSnap) => {
               const rawRows = itemsSnap.docs.map((it) => ({ id: it.id, ...(it.data() as any) }))
+              const { start, end } = todayRange()
+              const startMs = start.getTime(), endMs = end.getTime()
 
               const filtered = rawRows.filter((it) => {
                 if (!['pending', 'in_transit'].includes(it.status)) return false
-
                 if (it.expectedDate) {
                   let millis = 0
                   if (it.expectedDate?.toDate) millis = it.expectedDate.toDate().getTime()
                   else if (typeof it.expectedDate?.seconds === 'number') millis = it.expectedDate.seconds * 1000
                   else if (typeof it.expectedDate === 'number') millis = it.expectedDate
                   else if (typeof it.expectedDate === 'string') {
-                    const parsed = Date.parse(it.expectedDate)
-                    if (!Number.isNaN(parsed)) millis = parsed
+                    const parsed = Date.parse(it.expectedDate); if (!Number.isNaN(parsed)) millis = parsed
                   }
-
-                  if (millis) {
-                    if (millis < startTs.toMillis() || millis >= endTs.toMillis()) return false
-                  } else {
-                    return true
-                  }
+                  if (millis) return millis >= startMs && millis < endMs
                 }
                 return true
               })
@@ -521,26 +421,16 @@ export default function HomeDeliveriesToday({
                 return toMillis(a) - toMillis(b)
               })
 
-              setDeliveryItemsMap((prev) => {
-                const copy = new Map(prev)
-                copy.set(d.id, filtered)
-                return copy
-              })
+              setDeliveryItemsMap((prev) => { const copy = new Map(prev); copy.set(d.id, filtered); return copy })
             },
-            (err) => {
-              console.error('[HomeDeliveriesToday] (items) snapshot error', d.id, err)
-            }
+            (err) => console.error('[HomeDeliveriesToday] (items) snapshot error', d.id, err)
           )
 
           itemUnsubsRef.current[d.id] = itemsUnsub
         })
       },
-      (err) => {
-        console.error('[HomeDeliveriesToday] (deliveries) snapshot error', err)
-        setLoading(false)
-      }
+      (err) => { console.error('[HomeDeliveriesToday] (deliveries) snapshot error', err); setLoading(false) }
     )
-
     unsubsRef.current.push(deliveriesUnsub)
 
     // delivered today
@@ -563,26 +453,15 @@ export default function HomeDeliveriesToday({
                 const itemsSnap = await getDocs(
                   collection(firestore, 'families', familyId, 'deliveries', docSnap.id, 'items')
                 )
-                const items = itemsSnap.docs.map((itemDoc) => ({
-                  id: itemDoc.id,
-                  ...(itemDoc.data() as any),
-                }))
-                return {
-                  id: docSnap.id,
-                  ...(data as any),
-                  items,
-                }
+                const items = itemsSnap.docs.map((itemDoc) => ({ id: itemDoc.id, ...(itemDoc.data() as any) }))
+                return { id: docSnap.id, ...(data as any), items }
               })
             )
             setDeliveredToday(enriched)
           }
-          loadItems().catch((err) => {
-            console.error('[HomeDeliveriesToday] failed to load items', err)
-          })
+          loadItems().catch((err) => console.error('[HomeDeliveriesToday] failed to load items', err))
         },
-        (err) => {
-          console.error('[HomeDeliveriesToday] deliveredToday snapshot error', err)
-        }
+        (err) => console.error('[HomeDeliveriesToday] deliveredToday snapshot error', err)
       )
 
       deliveredUnsubRef.current = dUnsub
@@ -591,15 +470,9 @@ export default function HomeDeliveriesToday({
     }
 
     return () => {
-      unsubsRef.current.forEach((u) => u && u())
-      unsubsRef.current = []
-      if (deliveredUnsubRef.current) {
-        try { deliveredUnsubRef.current() } catch {}
-        deliveredUnsubRef.current = null
-      }
-      Object.keys(itemUnsubsRef.current).forEach((k) => {
-        try { itemUnsubsRef.current[k]() } catch {}
-      })
+      unsubsRef.current.forEach((u) => u && u()); unsubsRef.current = []
+      if (deliveredUnsubRef.current) { try { deliveredUnsubRef.current() } catch {}; deliveredUnsubRef.current = null }
+      Object.keys(itemUnsubsRef.current).forEach((k) => { try { itemUnsubsRef.current[k]() } catch {} })
       itemUnsubsRef.current = {}
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -610,26 +483,20 @@ export default function HomeDeliveriesToday({
     setProcessingId(deliveryId)
     try {
       await markDeliveryAsReceived(familyId, deliveryId, undefined as any)
-
       const user = auth.currentUser
       if (user) {
         const text = receiverNote?.trim()
           ? receiverNote.trim()
           : `Received by ${myName || user.displayName || 'Member'}`
         await addDoc(collection(firestore, 'families', familyId, 'deliveries', deliveryId, 'notes'), {
-          text,
-          createdAt: serverTimestamp(),
-          createdBy: user.uid,
-          createdByName: myName || user.displayName || null,
-          createdByPhotoURL: user.photoURL || null,
+          text, createdAt: serverTimestamp(), createdBy: user.uid,
+          createdByName: myName || user.displayName || null, createdByPhotoURL: user.photoURL || null,
         })
       }
     } catch (err) {
-      console.error('handleMarkDelivery', err)
-      alert('Failed to mark delivery')
+      console.error('handleMarkDelivery', err); alert('Failed to mark delivery')
     } finally {
-      setProcessingId(null)
-      setDialogOpenId(null)
+      setProcessingId(null); setDialogOpenId(null)
     }
   }
 
@@ -638,25 +505,20 @@ export default function HomeDeliveriesToday({
     setProcessingId(itemId)
     try {
       const res = await markChildItemAsReceived(familyId, 'deliveries', deliveryId, itemId)
-      if (!res || res.success === false) {
-        alert(res?.message ?? 'Failed to mark item')
-      }
+      if (!res || res.success === false) alert(res?.message ?? 'Failed to mark item')
     } catch (err) {
-      console.error('handleMarkDeliveryItem', err)
-      alert('Failed to mark item')
+      console.error('handleMarkDeliveryItem', err); alert('Failed to mark item')
     } finally {
       setProcessingId(null)
     }
   }
 
-  // Derived metrics
+  // derived
   const totalDeliveries = deliveries.length
   const itemsTotalPrice = Array.from(deliveryItemsMap.values()).flat().reduce((s, it) => s + (typeof it.price === 'number' ? it.price : 0), 0)
-
   const pendingDeliveries = deliveries.filter(d => d.status === 'pending')
   const inTransitDeliveries = deliveries.filter(d => d.status === 'in_transit')
 
-  // skeleton / early returns
   if (presenceLoading || familiesLoading) return null
 
   if (loading) {
@@ -688,24 +550,6 @@ export default function HomeDeliveriesToday({
 
   return (
     <div className="space-y-4">
-      {/* Minimal hint if Home Location not set */}
-      {hasHomeLocation === false && (
-        <div className="flex items-start gap-3 p-3 border rounded bg-muted/30">
-          <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
-          <div className="text-xs">
-            <div className="font-medium">Family Home Location not set</div>
-            <div className="text-muted-foreground">
-              Set a home location to improve Who&apos;s Home accuracy and auto-presence.
-            </div>
-            <div className="mt-2">
-              <Link href="/family">
-                <Button size="sm" variant="outline">Set Home Location</Button>
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Summary header */}
       <div className="flex items-center justify-between p-3 bg-card text-card-foreground border rounded">
         <div>
@@ -738,13 +582,9 @@ export default function HomeDeliveriesToday({
                   : ''
 
               const itemsCount = isSingleByDoc ? 1 : (items?.length || d.itemCount || 0)
-
               const codTotal = (() => {
                 if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
-                if (items && items.length > 0) {
-                  const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
-                  return sum
-                }
+                if (items && items.length > 0) return items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
                 if (typeof d.codAmount === 'number') return d.codAmount
                 return null
               })()
@@ -754,7 +594,6 @@ export default function HomeDeliveriesToday({
 
               return (
                 <div key={d.id} className="rounded border bg-card text-card-foreground p-3">
-                  {/* Primary row */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -788,15 +627,10 @@ export default function HomeDeliveriesToday({
                         </Button>
                       )}
                       <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />
-                      <MarkDeliveryButton
-                        id={d.id}
-                        isProcessing={processingId === d.id}
-                        onClick={() => setDialogOpenId(d.id)}
-                      />
+                      <MarkDeliveryButton id={d.id} isProcessing={processingId === d.id} onClick={() => setDialogOpenId(d.id)} />
                     </div>
                   </div>
 
-                  {/* Items (collapsed by default for cleanliness) */}
                   <AnimatePresence initial={false}>
                     {!isSingleByDoc && itemsOpen && items.length > 0 && (
                       <motion.div
@@ -839,7 +673,6 @@ export default function HomeDeliveriesToday({
                     )}
                   </AnimatePresence>
 
-                  {/* Notes thread */}
                   <AnimatePresence initial={false}>
                     {notesOpen && familyId ? (
                       <DeliveryNotesThreadInline key={`notes-${d.id}`} familyId={familyId} deliveryId={d.id} />
@@ -876,10 +709,7 @@ export default function HomeDeliveriesToday({
               const itemsCount = isSingleByDoc ? 1 : (items?.length || d.itemCount || 0)
               const codTotal = (() => {
                 if (isSingleByDoc) return typeof d.codAmount === 'number' ? d.codAmount : null
-                if (items && items.length > 0) {
-                  const sum = items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
-                  return sum
-                }
+                if (items && items.length > 0) return items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
                 if (typeof d.codAmount === 'number') return d.codAmount
                 return null
               })()
@@ -922,11 +752,7 @@ export default function HomeDeliveriesToday({
                         </Button>
                       )}
                       <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />
-                      <MarkDeliveryButton
-                        id={d.id}
-                        isProcessing={processingId === d.id}
-                        onClick={() => setDialogOpenId(d.id)}
-                      />
+                      <MarkDeliveryButton id={d.id} isProcessing={processingId === d.id} onClick={() => setDialogOpenId(d.id)} />
                     </div>
                   </div>
 
@@ -956,12 +782,7 @@ export default function HomeDeliveriesToday({
                                 </div>
                               </div>
                               {it.status !== 'delivered' ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={() => handleMarkDeliveryItem(d.id, it.id)}
-                                  disabled={processingId === it.id}
-                                >
+                                <Button type="button" size="sm" onClick={() => handleMarkDeliveryItem(d.id, it.id)} disabled={processingId === it.id}>
                                   {processingId === it.id ? 'Saving…' : 'Mark as Received'}
                                 </Button>
                               ) : (
@@ -1003,10 +824,7 @@ export default function HomeDeliveriesToday({
               const isSingle = d.type === 'single' || (typeof d.itemCount === 'number' && d.itemCount <= 1)
               const codTotal = (() => {
                 if (isSingle) return typeof d.codAmount === 'number' ? d.codAmount : null
-                if (d.items && d.items.length > 0) {
-                  const sum = d.items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
-                  return sum
-                }
+                if (d.items && d.items.length > 0) return d.items.reduce((s: number, it: any) => s + (typeof it.price === 'number' ? it.price : 0), 0)
                 if (typeof d.codAmount === 'number') return d.codAmount
                 return null
               })()

@@ -1,4 +1,3 @@
-// src/app/(main)/page.tsx
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -14,7 +13,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { Loader2, Home as HomeIcon, DoorOpen } from 'lucide-react'
+import { Loader2, Home as HomeIcon, DoorOpen, MapPin } from 'lucide-react' // ⬅️ MapPin added
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
@@ -35,8 +34,6 @@ import { useSelectedFamily } from '@/lib/selected-family'
 
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth()
-
-  // ✅ Source of truth for default family comes from provider (Settings writes users/{uid}.preferredFamily)
   const { familyId, families, loadingFamilies } = useSelectedFamily()
 
   const [isHome, setIsHome] = useState<boolean | null>(null)
@@ -44,15 +41,12 @@ export default function HomePage() {
   const [myStatusSource, setMyStatusSource] = useState<string | null>(null)
   const [presenceLoading, setPresenceLoading] = useState(true)
 
-  // live members subscription state
   const [membersLive, setMembersLive] = useState<any[]>([])
   const [membersLoading, setMembersLoading] = useState(true)
 
-  // Create / Join modals state
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
 
-  // used to re-render every minute so "x minutes ago" ticks
   const [now, setNow] = useState(0)
 
   const isOnline = useOnlineStatus()
@@ -63,7 +57,6 @@ export default function HomePage() {
   // family-aware auto presence hook
   useAutoPresence(familyId)
 
-  // minute tick to update relative timestamps
   useEffect(() => {
     const id = setInterval(() => setNow((n) => n + 1), 60_000)
     return () => clearInterval(id)
@@ -82,17 +75,15 @@ export default function HomePage() {
     if (value instanceof Date) return value.getTime()
     return null
   }
-
   const toDateSafe = (ts?: Timestamp | number | Date | null | undefined) => {
     const millis = toMillisSafe(ts)
     return millis ? new Date(millis) : null
   }
 
-  // Ensure current user's profile is present in their members doc (run when user or family changes)
+  // Ensure current user's profile exists in members doc
   useEffect(() => {
     if (!user?.uid || !familyId) return
     const ref = doc(firestore, 'families', familyId, 'members', user.uid)
-    // best-effort; don't await
     setDoc(ref, {
       name: (user as any).name ?? 'Unknown',
       photoURL: (user as any).photoURL ?? null,
@@ -102,7 +93,7 @@ export default function HomePage() {
     })
   }, [user?.uid, familyId])
 
-  // Subscribe to the user's GLOBAL autoPresence
+  // GLOBAL autoPresence
   const [userAutoPresence, setUserAutoPresence] = useState<boolean | null>(null)
   useEffect(() => {
     if (!user?.uid) { setUserAutoPresence(null); return }
@@ -114,21 +105,45 @@ export default function HomePage() {
     return () => unsub()
   }, [user?.uid])
 
-  // Subscribe to the members collection for the selected family (live updates)
+  // 🔎 Family Home Location detector (robust: GeoPoint | {lat,lng} | legacy fields)
+  const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!familyId) { setHasHomeLocation(null); return }
+
+    const unsub = onSnapshot(
+      doc(firestore, 'families', familyId),
+      (snap) => {
+        const d = snap.data() as any
+        const hasGeo = (obj: any) =>
+          !!obj && (
+            (typeof obj.latitude === 'number' && typeof obj.longitude === 'number') || // Firestore GeoPoint
+            (typeof obj.lat === 'number' && typeof obj.lng === 'number')              // Plain object
+          )
+
+        const has =
+          hasGeo(d?.homeLocation) ||
+          hasGeo(d?.home) ||
+          (typeof d?.homeLat === 'number' && typeof d?.homeLng === 'number') ||
+          hasGeo(d?.location) // fallback if stored as `location`
+        setHasHomeLocation(!!has)
+      },
+      () => setHasHomeLocation(null)
+    )
+    return () => unsub()
+  }, [familyId])
+
+  // Subscribe to members
   useEffect(() => {
     if (!user?.uid || !familyId) {
-      setMembersLive([])
-      setMembersLoading(false)
-      setPresenceLoading(false)
+      setMembersLive([]); setMembersLoading(false); setPresenceLoading(false)
       return
     }
 
     const membersRef = collection(firestore, 'families', familyId, 'members')
-
     const unsub = onSnapshot(
       membersRef,
       (snapshot) => {
-        if (!user?.uid) return // guard against logout race
+        if (!user?.uid) return
         const docs = snapshot.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }))
         setMembersLive(docs)
         setMembersLoading(false)
@@ -137,22 +152,16 @@ export default function HomePage() {
         const me = docs.find((m) => m.uid === user.uid)
         if (me) {
           const isRecentChange = justChangedStatusAt && Date.now() - justChangedStatusAt < 1500
-          if (!isRecentChange) {
-            setIsHome(me.status === 'home')
-          }
-          // Effective source: honor member.autoPresence and global users/{uid}.autoPresence
+          if (!isRecentChange) setIsHome(me.status === 'home')
+
           const rawSource = (me.statusSource ?? me.source ?? me.status_source) || null
           const effective = (me.autoPresence === true || userAutoPresence === true) ? 'geo' : rawSource
           setMyStatusSource(effective)
         }
       },
       (err) => {
-        if (user?.uid) { // prevent error spam after logout
-          console.warn('members collection snapshot error', err)
-        }
-        setMembersLive([])
-        setMembersLoading(false)
-        setPresenceLoading(false)
+        if (user?.uid) console.warn('members collection snapshot error', err)
+        setMembersLive([]); setMembersLoading(false); setPresenceLoading(false)
       }
     )
 
@@ -161,9 +170,7 @@ export default function HomePage() {
 
   const handlePresenceChange = async (newStatus: 'home' | 'away') => {
     if (!user || !familyId) return
-
     const ref = doc(firestore, 'families', familyId, 'members', user.uid)
-
     await setDoc(ref, {
       status: newStatus,
       statusSource: 'manual',
@@ -172,18 +179,13 @@ export default function HomePage() {
       photoURL: (user as any).photoURL ?? null,
       uid: user.uid,
     }, { merge: true })
-
-    // optimistic update + debounce sync
     setIsHome(newStatus === 'home')
     setJustChangedStatusAt(Date.now())
   }
 
   function formatUpdatedAt(ts: Timestamp | Date | number | undefined) {
     if (!ts) return 'Unknown time'
-    const date =
-      ts instanceof Timestamp ? ts.toDate() :
-        typeof ts === 'number' ? new Date(ts) :
-          ts
+    const date = ts instanceof Timestamp ? ts.toDate() : (typeof ts === 'number' ? new Date(ts) : ts)
     return formatDistanceToNow(date, { addSuffix: true })
   }
 
@@ -202,7 +204,7 @@ export default function HomePage() {
         <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
 
-        {/* ✅ Settings-driven default family (no inline picker here) */}
+        {/* Default family summary */}
         <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between">
           <div className="text-sm">
             <span className="font-medium">Default family:</span>{' '}
@@ -211,7 +213,7 @@ export default function HomePage() {
           <Link href="/settings#default-family" className="text-sm underline">Change</Link>
         </div>
 
-        {/* Who's Home Card */}
+        {/* Who's Home */}
         <Card>
           <CardHeader>
             <CardTitle>Who's Home</CardTitle>
@@ -243,7 +245,26 @@ export default function HomePage() {
                 const members = membersLive
                 const loading = membersLoading
 
-                // normalize presence fields and provide fallbacks (apply effective source)
+                // 🔔 Home location banner lives here now
+                { /* show only when determined false */ }
+                const homeBanner = hasHomeLocation === false ? (
+                  <div className="flex items-start gap-3 p-3 border rounded bg-muted/30 mb-2">
+                    <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
+                    <div className="text-xs">
+                      <div className="font-medium">Family Home Location not set</div>
+                      <div className="text-muted-foreground">
+                        Set a home location to improve Who&apos;s Home accuracy and auto-presence.
+                      </div>
+                      <div className="mt-2">
+                        <Link href="/family">
+                          <Button size="sm" variant="outline">Set Home Location</Button>
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                ) : null
+
+                // normalize presence fields
                 const presenceMap = new Map(
                   members.map((m) => {
                     const status = m.status ?? null
@@ -258,16 +279,14 @@ export default function HomePage() {
                     const photoURL = (m.photoURL ?? m.photo ?? null) as string | null
                     const name = (m.name ?? m.displayName ?? 'Unknown') as string
 
-                    return [
-                      m.uid,
-                      { status, statusSource, updatedAt, photoURL, name },
-                    ]
+                    return [m.uid, { status, statusSource, updatedAt, photoURL, name }]
                   })
                 )
 
                 if (loading) {
                   return (
                     <>
+                      {homeBanner}
                       {Array.from({ length: 3 }).map((_, idx) => (
                         <div key={idx} className="flex items-center justify-between">
                           <Skeleton className="h-4 w-24" />
@@ -278,8 +297,14 @@ export default function HomePage() {
                   )
                 }
                 if (members.length === 0) {
-                  return <p className="text-muted-foreground text-sm">No members yet.</p>
+                  return (
+                    <>
+                      {homeBanner}
+                      <p className="text-muted-foreground text-sm">No members yet.</p>
+                    </>
+                  )
                 }
+
                 const activity = members
                   .map((m) => {
                     const millis = toMillisSafe(m.updatedAt as unknown)
@@ -292,6 +317,8 @@ export default function HomePage() {
                 return (
                   <TooltipProvider>
                     <div className="space-y-2">
+                      {homeBanner}
+
                       <div className="space-y-2">
                         <AnimatePresence>
                           {members.map((m) => {
@@ -318,11 +345,7 @@ export default function HomePage() {
                               >
                                 <div className="flex items-center gap-3 min-h-[48px]">
                                   {presence.photoURL ? (
-                                    <img
-                                      src={presence.photoURL}
-                                      alt={presence.name}
-                                      className="h-8 w-8 rounded-full object-cover"
-                                    />
+                                    <img src={presence.photoURL} alt={presence.name} className="h-8 w-8 rounded-full object-cover" />
                                   ) : (
                                     <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium">
                                       {initials || '?'}
@@ -335,65 +358,34 @@ export default function HomePage() {
                                       <div className="flex items-center">
                                         <AnimatePresence mode="wait" initial={false}>
                                           {presence.status === 'home' && (
-                                            <motion.span
-                                              key="home"
-                                              initial={{ opacity: 0, scale: 0.85 }}
-                                              animate={{ opacity: 1, scale: 1 }}
-                                              exit={{ opacity: 0, scale: 0.85 }}
-                                              transition={{ duration: 0.18 }}
-                                              className="flex items-center text-green-600"
-                                              title="home"
-                                            >
+                                            <motion.span key="home" initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.85 }} transition={{ duration: 0.18 }} className="flex items-center text-green-600" title="home">
                                               <HomeIcon className="w-4 h-4" />
                                             </motion.span>
                                           )}
                                           {presence.status === 'away' && (
-                                            <motion.span
-                                              key="away"
-                                              initial={{ opacity: 0, scale: 0.85 }}
-                                              animate={{ opacity: 1, scale: 1 }}
-                                              exit={{ opacity: 0, scale: 0.85 }}
-                                              transition={{ duration: 0.18 }}
-                                              className="flex items-center text-gray-500"
-                                              title="away"
-                                            >
+                                            <motion.span key="away" initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.85 }} transition={{ duration: 0.18 }} className="flex items-center text-gray-500" title="away">
                                               <DoorOpen className="w-4 h-4" />
                                             </motion.span>
                                           )}
                                           {!presence.status && (
-                                            <motion.span
-                                              key="unknown"
-                                              initial={{ opacity: 0, scale: 0.85 }}
-                                              animate={{ opacity: 1, scale: 1 }}
-                                              exit={{ opacity: 0, scale: 0.85 }}
-                                              transition={{ duration: 0.18 }}
-                                              className="inline-block h-2 w-2 rounded-full bg-gray-300"
-                                              title="unknown"
-                                            />
+                                            <motion.span key="unknown" initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.85 }} transition={{ duration: 0.18 }} className="inline-block h-2 w-2 rounded-full bg-gray-300" title="unknown" />
                                           )}
                                         </AnimatePresence>
                                       </div>
                                     </div>
                                     <div className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground">
                                       <span className="capitalize">{presence.status ?? 'unknown'}</span>
-                                      {presence.statusSource && (
-                                        <span>• {presence.statusSource === 'geo' ? 'Auto' : 'Manual'}</span>
-                                      )}
+                                      {presence.statusSource && (<span>• {presence.statusSource === 'geo' ? 'Auto' : 'Manual'}</span>)}
                                       {updatedDate && <span>• {formatDistanceToNow(updatedDate, { addSuffix: true })}</span>}
                                     </div>
                                   </div>
                                 </div>
 
                                 <div className="flex items-center gap-2">
-                                  {/* Pill display */}
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10 cursor-default">
-                                        {presence.statusSource === 'geo'
-                                          ? 'Auto'
-                                          : presence.statusSource === 'manual'
-                                            ? 'Manual'
-                                            : '—'}
+                                        {presence.statusSource === 'geo' ? 'Auto' : presence.statusSource === 'manual' ? 'Manual' : '—'}
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" align="end">
@@ -411,36 +403,15 @@ export default function HomePage() {
                                       )}
                                     </TooltipContent>
                                   </Tooltip>
-                                  <HelpCircleHint
-                                    title={presence.statusSource === 'geo'
-                                      ? 'Auto'
-                                      : presence.statusSource === 'manual'
-                                        ? 'Manual'
-                                        : '—'}>
-                                    <p>
-                                      {presence.statusSource === 'geo'
-                                        ? 'Set automatically based on location'
-                                        : presence.statusSource === 'manual'
-                                          ? 'Manually set by user'
-                                          : 'No source available'}
-                                    </p>
-                                    {updatedDate && (
-                                      <p className="text-xs text-muted-foreground">
-                                        Updated {formatDistanceToNow(updatedDate, { addSuffix: true })}
-                                      </p>
-                                    )}
-                                  </HelpCircleHint>
 
                                   <div className="text-xs text-muted-foreground sm:hidden">
                                     {updatedDate ? formatDistanceToNow(updatedDate, { addSuffix: true }) : 'unknown time'}
                                   </div>
                                 </div>
-
                               </motion.div>
                             )
                           })}
                         </AnimatePresence>
-
                       </div>
 
                       {activity.length > 0 && (
@@ -448,12 +419,7 @@ export default function HomePage() {
                           <div className="text-xs text-muted-foreground mb-1">Recent activity</div>
                           <ul className="space-y-1">
                             {activity.map((a) => (
-                              <motion.li
-                                key={a.uid}
-                                layout
-                                transition={{ duration: 0.25 }}
-                                className="flex items-center justify-between"
-                              >
+                              <motion.li key={a.uid} layout transition={{ duration: 0.25 }} className="flex items-center justify-between">
                                 <div className="truncate">
                                   <span className="font-medium">{a.name}</span>
                                   <span className="text-muted-foreground"> — {a.status}</span>
@@ -474,12 +440,12 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        {/* Deliveries Today Card */}
+        {/* Deliveries Today */}
         <Card>
           <CardHeader>
             <CardTitle>Deliveries Today</CardTitle>
           </CardHeader>
-        <CardContent>
+          <CardContent>
             {presenceLoading || loadingFamilies ? (
               <>
                 <Skeleton className="h-4 w-full mb-2" />
@@ -496,7 +462,7 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        {/* Presence Buttons */}
+        {/* Presence buttons */}
         <div className="flex gap-4">
           {(presenceLoading || loadingFamilies) ? (
             <>
@@ -505,44 +471,24 @@ export default function HomePage() {
             </>
           ) : (
             <div className="flex gap-4 w-full">
-              {/* HOME button */}
               {myStatusSource === 'geo' ? (
                 <span className="flex-1">
-                  <Button
-                    type="button"
-                    variant={isHome ? 'default' : 'outline'}
-                    onClick={() => handlePresenceChange('home')}
-                    className="w-full"
-                    disabled={true}
-                  >
+                  <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="w-full" disabled>
                     <HomeIcon className="w-4 h-4 mr-2" />
                     I’m Home
                   </Button>
                 </span>
               ) : (
-                <Button
-                  type="button"
-                  variant={isHome ? 'default' : 'outline'}
-                  onClick={() => handlePresenceChange('home')}
-                  className="flex-1"
-                  disabled={presenceLoading || loadingFamilies}
-                >
+                <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="flex-1" disabled={presenceLoading || loadingFamilies}>
                   <HomeIcon className="w-4 h-4 mr-2" />
                   I’m Home
                 </Button>
               )}
 
-              {/* AWAY button */}
               {myStatusSource === 'geo' ? (
                 <>
                   <span className="flex-1">
-                    <Button
-                      type="button"
-                      variant={isHome === false ? 'default' : 'outline'}
-                      onClick={() => handlePresenceChange('away')}
-                      className="w-full"
-                      disabled={true}
-                    >
+                    <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="w-full" disabled>
                       <DoorOpen className="w-4 h-4 mr-2" />
                       I’m Out
                     </Button>
@@ -560,12 +506,7 @@ export default function HomePage() {
                   </HelpCircleHint>
                 </>
               ) : (
-                <Button
-                  type="button"
-                  variant={isHome === false ? 'default' : 'outline'}
-                  onClick={() => handlePresenceChange('away')}
-                  className="flex-1"
-                >
+                <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="flex-1">
                   <DoorOpen className="w-4 h-4 mr-2" />
                   I’m Out
                 </Button>
