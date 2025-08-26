@@ -41,7 +41,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     if (loading) return
 
     if (!user) {
-      // signed out — stop onboarding check and families subscription
+      // not signed in; stop onboarding check and stop families subscription
       setChecking(false)
       setFamilies([])
       setFamiliesLoading(false)
@@ -70,7 +70,7 @@ export default function Providers({ children }: { children: ReactNode }) {
     checkOnboarding()
   }, [user, loading, pathname, router, searchParams])
 
-  // Families subscription (array-contains only; no collectionGroup)
+  // Families subscription
   useEffect(() => {
     if (loading) return
 
@@ -90,15 +90,15 @@ export default function Providers({ children }: { children: ReactNode }) {
       firestore,
       user.uid,
       (rows) => {
-        const me = user.uid
-        // stable sort: owned first (createdBy/owner), then by name
-        const sorted = rows.slice().sort((a, b) => {
+        // stable sort: owned first, then by name
+        const ownedFirst = rows.slice().sort((a, b) => {
+          const me = user.uid
           const aOwned = (a.createdBy ?? a.owner) === me
           const bOwned = (b.createdBy ?? b.owner) === me
           if (aOwned !== bOwned) return aOwned ? -1 : 1
           return (a.name ?? '').localeCompare(b.name ?? '')
         })
-        setFamilies(sorted)
+        setFamilies(ownedFirst)
         setFamiliesLoading(false)
       },
       (err) => {

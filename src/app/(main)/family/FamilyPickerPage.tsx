@@ -7,6 +7,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
 import {
   collection,
+  collectionGroup,
   doc,
   getDoc,
   getDocs,
@@ -67,75 +68,126 @@ export default function FamilyPickerPage() {
     }
   }, [joinedFlag, router])
 
-  // Membership via families.members (array-contains) ONLY — no collectionGroup here.
+  // Primary membership (array-contains) + Fallback via subcollection (collectionGroup)
   useEffect(() => {
     if (authLoading || !user?.uid) return
     setLoading(true)
 
-    // Listener: families where members array-contains me
-    const qFamilies = query(
-      collection(firestore, 'families'),
-      where('members', 'array-contains', user.uid)
-    )
-    const stop = onSnapshot(
-      qFamilies,
-      async (snap) => {
-        try {
-          // Fetch family docs (already have) & hydrate counts best-effort
-          const base: Family[] = await Promise.all(
-            snap.docs.map(async (s) => {
+    let stop1: () => void = () => {}
+    let stop2: () => void = () => {}
+
+    // Store latest IDs from both sources; we’ll merge and fetch docs
+    let primaryIds = new Set<string>()
+    let subcolIds = new Set<string>()
+
+    async function recompute() {
+      try {
+        const allIds = new Set<string>([...primaryIds, ...subcolIds])
+        // Fetch family docs
+        const familyDocs = await Promise.all(
+          Array.from(allIds).map(async (fid) => {
+            try {
+              const s = await getDoc(doc(firestore, 'families', fid))
+              if (!s.exists()) return null
               const d = s.data() as any
-              let memberCount: number | undefined = undefined
-              try {
-                const memSnap = await getDocs(collection(firestore, 'families', s.id, 'members'))
-                memberCount = memSnap.size
-              } catch {}
               return {
                 id: s.id,
                 name: typeof d?.name === 'string' ? d.name : undefined,
                 createdBy: typeof d?.createdBy === 'string' ? d.createdBy : undefined,
                 createdAt: toDate(d?.createdAt ?? d?.created_on ?? d?.created_at),
-                memberCount,
-              }
-            })
-          )
-
-          // Sort: owned first then by name
-          const myUid = user?.uid ?? ''
-          base.sort((a, b) => {
-            const aOwned = (a.createdBy ?? '') === myUid
-            const bOwned = (b.createdBy ?? '') === myUid
-            if (aOwned !== bOwned) return aOwned ? -1 : 1
-            const an = (a.name ?? '').toString()
-            const bn = (b.name ?? '').toString()
-            return an.localeCompare(bn)
+              } as Family
+            } catch {
+              return null
+            }
           })
+        )
 
-          setFamilies(base)
-        } finally {
-          setLoading(false)
-        }
+        const base = familyDocs.filter(Boolean) as Family[]
+
+        // hydrate member counts (best-effort)
+        const withCounts = await Promise.all(
+          base.map(async (f) => {
+            try {
+              const memSnap = await getDocs(collection(firestore, 'families', f.id, 'members'))
+              return { ...f, memberCount: memSnap.size }
+            } catch {
+              return f
+            }
+          })
+        )
+
+        // sort: owned first then by name
+        const myUid = user?.uid ?? ''
+        withCounts.sort((a, b) => {
+          const aOwned = (a.createdBy ?? '') === myUid
+          const bOwned = (b.createdBy ?? '') === myUid
+          if (aOwned !== bOwned) return aOwned ? -1 : 1
+          const an = (a.name ?? '').toString()
+          const bn = (b.name ?? '').toString()
+          return an.localeCompare(bn)
+        })
+
+        setFamilies(withCounts)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    // Listener 1: families where members array-contains me
+    const qFamilies = query(
+      collection(firestore, 'families'),
+      where('members', 'array-contains', user.uid)
+    )
+    stop1 = onSnapshot(
+      qFamilies,
+      (snap) => {
+        primaryIds = new Set(snap.docs.map((d) => d.id))
+        void recompute()
       },
       (err) => {
         console.error('[family] membership (array) error', err)
-        setFamilies([])
-        setLoading(false)
+        primaryIds = new Set()
+        void recompute()
       }
     )
 
-    return () => { try { stop() } catch {} }
+    // Listener 2: collectionGroup membership: any families/{id}/members/* with uid == me
+    const qMembers = query(collectionGroup(firestore, 'members'), where('uid', '==', user.uid))
+    stop2 = onSnapshot(
+      qMembers,
+      (snap) => {
+        subcolIds = new Set(
+          snap.docs
+            .map((d) => d.ref.parent?.parent?.id)
+            .filter((x): x is string => typeof x === 'string')
+        )
+        void recompute()
+      },
+      (err) => {
+        console.error('[family] membership (subcol) error', err)
+        subcolIds = new Set()
+        void recompute()
+      }
+    )
+
+    return () => {
+      try { stop1() } catch {}
+      try { stop2() } catch {}
+    }
   }, [authLoading, user?.uid])
 
   const owned = useMemo(() => families.filter((f) => f.createdBy === user?.uid), [families, user?.uid])
   const joined = useMemo(() => families.filter((f) => f.createdBy !== user?.uid), [families, user?.uid])
 
   const goToFamily = useCallback(
-    (fid: string) => { router.push(`/family/${fid}`) },
+    async (fid: string) => {
+      router.push(`/family/${fid}`)
+    },
     [router]
   )
 
   const renderFamilyCard = (f: Family) => {
-    const created = f.createdAt instanceof Date ? formatDistanceToNow(f.createdAt, { addSuffix: true }) : null
+    const created = f.createdAt ? formatDistanceToNow(f.createdAt, { addSuffix: true }) : null
     const isOwner = f.createdBy === user?.uid
     return (
       <motion.div
@@ -180,7 +232,6 @@ export default function FamilyPickerPage() {
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline">{isOwner ? 'Owner' : 'Member'}</Badge>
-              <ChevronRight className="w-5 h-5 opacity-60 group-hover:opacity-100 transition-opacity" />
             </div>
           </CardHeader>
         </Card>

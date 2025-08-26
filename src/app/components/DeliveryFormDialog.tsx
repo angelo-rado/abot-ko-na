@@ -88,6 +88,7 @@ function parseExpectedDate(d: any) {
 }
 
 export default function DeliveryFormDialog({ open, onOpenChange, familyId, delivery }: Props) {
+  const lastAddedItemIdRef = useRef<string | null>(null)
   const isEdit = !!delivery
 
   const draftItemsRef = useRef<ItemRow[] | null>(null)
@@ -117,6 +118,21 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   const [confirmContext, setConfirmContext] = useState<'switch' | 'close' | null>(null)
 
   const addItemDisabled = itemMode === 'single' && (!isEdit || items.length >= 1)
+
+  useEffect(() => {
+    const id = lastAddedItemIdRef.current
+    if (!id) return
+    let raf = 0
+    raf = requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>(`[data-price-for="${id}"]`)
+      if (el) {
+        el.focus()
+        el.select?.()
+        lastAddedItemIdRef.current = null
+      }
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [items])
 
   useEffect(() => {
     if (formErrors.items && items.length > 0) {
@@ -212,6 +228,10 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   function addItemRow() {
     if (itemMode === 'single' && items.length >= 1) return
 
+    const newId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    // Only auto-focus in multiple mode
+    if (itemMode === 'multiple') lastAddedItemIdRef.current = newId
+
     setItems((prev) => {
       // For multiple mode: compute the next numeric name (as a string)
       const nextName =
@@ -229,7 +249,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       return [
         ...prev,
         {
-          id: `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          id: newId,
           name: nextName, // e.g. "1", "2", "3", ...
           price: null,
           expectedDate: delivery?.expectedDate
@@ -630,6 +650,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                               <Input
                                 placeholder="Price"
                                 type="number"
+                                data-price-for={it.id}
                                 value={it.price ?? ''}
                                 min={0}
                                 onChange={(e) =>

@@ -40,7 +40,7 @@ export function MarkDeliveryButton({
             )}
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="top">Mark as received</TooltipContent>
+        <TooltipContent side="top">Received</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   )

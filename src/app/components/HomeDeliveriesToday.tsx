@@ -37,46 +37,71 @@ type Props = {
   showAllUsers?: boolean
 }
 
-/* ---------- user name lookup (cached) ---------- */
-const userNameCache: Record<string, string> = {}
+/* ---------- name lookup (prefer family member doc) ---------- */
+const memberNameCache: Record<string, string> = {} // key: `${familyId}:${uid}`
+const userNameCache: Record<string, string> = {}   // key: uid
 
-function useUserName(userId?: string) {
+function useMemberName(familyId?: string | null, userId?: string) {
   const [name, setName] = useState<string>('')
 
   useEffect(() => {
     if (!userId) { setName(''); return }
-    if (userNameCache[userId]) { setName(userNameCache[userId]); return }
+
+    const memberKey = familyId ? `${familyId}:${userId}` : ''
+    if (memberKey && memberNameCache[memberKey]) {
+      setName(memberNameCache[memberKey])
+      return
+    }
+    if (!familyId && userNameCache[userId]) {
+      setName(userNameCache[userId])
+      return
+    }
 
     let mounted = true
-    const ref = doc(firestore, 'users', userId)
-    getDoc(ref)
-      .then((snap) => {
+    const run = async () => {
+      try {
+        if (familyId) {
+          const mRef = doc(firestore, 'families', familyId, 'members', userId)
+          const mSnap = await getDoc(mRef)
+          if (mounted && mSnap.exists()) {
+            const m = mSnap.data() as any
+            const display = (m?.name as string) || (m?.displayName as string) || userId
+            memberNameCache[memberKey] = display
+            setName(display)
+            return
+          }
+        }
+        // fallback to users/{uid}
+        if (userNameCache[userId]) { setName(userNameCache[userId]); return }
+        const uRef = doc(firestore, 'users', userId)
+        const uSnap = await getDoc(uRef)
         if (!mounted) return
-        if (!snap.exists()) {
+        if (uSnap.exists()) {
+          const u = uSnap.data() as any
+          const display = (u?.displayName as string) || (u?.name as string) || (u?.fullName as string) || userId
+          userNameCache[userId] = display
+          setName(display)
+        } else {
           userNameCache[userId] = userId
           setName(userId)
-          return
         }
-        const data = snap.data()
-        const displayName = (data?.displayName as string) || (data?.name as string) || userId
-        userNameCache[userId] = displayName
-        setName(displayName)
-      })
-      .catch((err) => {
-        console.error('useUserName getDoc error', err)
+      } catch {
         if (!mounted) return
-        userNameCache[userId] = userId
-        setName(userId)
-      })
+        if (familyId && memberKey && memberNameCache[memberKey]) setName(memberNameCache[memberKey])
+        else if (userNameCache[userId]) setName(userNameCache[userId])
+        else setName(userId)
+      }
+    }
+    run()
 
     return () => { mounted = false }
-  }, [userId])
+  }, [familyId, userId])
 
   return name
 }
 
-function UserName({ userId }: { userId?: string }) {
-  const name = useUserName(userId)
+function UserName({ familyId, userId }: { familyId?: string | null; userId?: string }) {
+  const name = useMemberName(familyId, userId)
   if (!userId) return null
   return <>{name || userId}</>
 }
@@ -161,7 +186,7 @@ function useRelativeTime(rawDate: any) {
 }
 
 /* ---------- inline notes ---------- */
-function NoteRow({ note, meId }: { note: any; meId?: string }) {
+function NoteRow({ note, meId, familyId }: { note: any; meId?: string; familyId?: string | null }) {
   const createdLabel = useRelativeTime(note?.createdAt)
   const isMe = meId && note?.createdBy === meId
   const displayName = isMe ? 'You' : (note?.createdByName as string | undefined)
@@ -176,7 +201,7 @@ function NoteRow({ note, meId }: { note: any; meId?: string }) {
     >
       <div className="text-xs">
         <span className="font-medium">
-          {displayName ?? <UserName userId={note?.createdBy} />}
+          {displayName ?? <UserName familyId={familyId} userId={note?.createdBy} />}
         </span>
         <span className="text-muted-foreground">{` · ${createdLabel}`}</span>
       </div>
@@ -200,7 +225,7 @@ function DeliveryNotesThreadInline({ familyId, deliveryId }: { familyId: string;
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const me = auth.currentUser
-  const meName = useUserName(me?.uid)
+  const meName = useMemberName(familyId, me?.uid)
 
   useEffect(() => {
     if (!familyId || !deliveryId) return
@@ -263,7 +288,7 @@ function DeliveryNotesThreadInline({ familyId, deliveryId }: { familyId: string;
               </motion.div>
             ) : (
               <div className="space-y-2">
-                {notes.map((n) => <NoteRow key={n.id} note={n} meId={me?.uid} />)}
+                {notes.map((n) => <NoteRow key={n.id} note={n} meId={me?.uid} familyId={familyId} />)}
               </div>
             )}
           </AnimatePresence>
@@ -295,8 +320,6 @@ export default function HomeDeliveriesToday({
   const [dialogOpenId, setDialogOpenId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
-  // (Removed: home-location banner; handled in Who's Home)
-
   // UI toggles
   const [openNotesIds, setOpenNotesIds] = useState<Set<string>>(() => new Set())
   const [openItemsIds, setOpenItemsIds] = useState<Set<string>>(() => new Set())
@@ -308,7 +331,7 @@ export default function HomeDeliveriesToday({
   })
 
   const me = auth.currentUser
-  const myName = useUserName(me?.uid)
+  const myName = useMemberName(familyId, me?.uid)
 
   const handleReceiverNoteSubmit = async (note: string) => {
     if (!dialogOpenId || !familyId) return
@@ -392,6 +415,7 @@ export default function HomeDeliveriesToday({
             allItemsQ,
             (itemsSnap) => {
               const rawRows = itemsSnap.docs.map((it) => ({ id: it.id, ...(it.data() as any) }))
+
               const { start, end } = todayRange()
               const startMs = start.getTime(), endMs = end.getTime()
 
@@ -609,7 +633,7 @@ export default function HomeDeliveriesToday({
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <EtaChip label={etaStr || undefined} />
                         <CodChip amount={codTotal ?? undefined} />
-                        <span className="text-[11px] text-muted-foreground">by <UserName userId={d.createdBy} /></span>
+                        <span className="text-[11px] text-muted-foreground">by <UserName familyId={familyId} userId={d.createdBy} /></span>
                       </div>
                     </div>
 
@@ -734,7 +758,7 @@ export default function HomeDeliveriesToday({
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <EtaChip label={etaStr || undefined} />
                         <CodChip amount={codTotal ?? undefined} />
-                        <span className="text-[11px] text-muted-foreground">by <UserName userId={d.createdBy} /></span>
+                        <span className="text-[11px] text-muted-foreground">by <UserName familyId={familyId} userId={d.createdBy} /></span>
                       </div>
                     </div>
 
@@ -782,9 +806,12 @@ export default function HomeDeliveriesToday({
                                 </div>
                               </div>
                               {it.status !== 'delivered' ? (
-                                <Button type="button" size="sm" onClick={() => handleMarkDeliveryItem(d.id, it.id)} disabled={processingId === it.id}>
-                                  {processingId === it.id ? 'Saving…' : 'Mark as Received'}
-                                </Button>
+                                <MarkDeliveryItemButton
+                                  deliveryId={d.id}
+                                  itemId={it.id}
+                                  isProcessing={processingId === it.id}
+                                  onClick={() => handleMarkDeliveryItem(d.id, it.id)}
+                                />
                               ) : (
                                 <div className="text-sm text-muted-foreground" />
                               )}
@@ -843,7 +870,7 @@ export default function HomeDeliveriesToday({
                           </span>
                         )}
                         <span className="text-[11px] text-muted-foreground">
-                          {d.receivedBy ? <>Received by <UserName userId={d.receivedBy} /></> : 'Received'}
+                          {d.receivedBy ? <>Received by <UserName familyId={familyId} userId={d.receivedBy} /></> : 'Received'}
                           {receivedAtStr ? ` • ${receivedAtStr}` : ''}
                         </span>
                       </div>
