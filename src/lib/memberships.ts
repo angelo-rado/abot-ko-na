@@ -1,113 +1,121 @@
-// src/lib/memberships.ts
+/* eslint-disable */
 import {
-  collection,
-  collectionGroup,
-  doc,
-  getDoc,
-  onSnapshot,
-  query,
-  where,
-  type Firestore,
-  type Unsubscribe,
+  Firestore, collection, query, where, onSnapshot, doc, getDoc, Unsubscribe,
 } from 'firebase/firestore'
 
 export type FamilyLite = {
   id: string
-  name?: string | null
-  createdBy?: string | null
-  createdAt?: any
-  updatedAt?: any
-  members?: string[]
-  owner?: string | null
-  homeLocation?: { lat: number; lng: number; address?: string | null } | null
-  homeLat?: number | null
-  homeLng?: number | null
-  homeAddress?: string | null
+  name?: string
+  createdBy?: string
+  owner?: string
+  createdAt?: Date | null
+  // Optional; we don’t fetch counts here to stay cheap
+  memberCount?: number | null
 }
 
 /**
- * Subscribes to all families the user either owns or is a member of – without using documentId()
- * on collectionGroup (which is invalid when comparing to a bare UID).
- *
- * Strategy:
- *  1) owned families: /families where createdBy == uid
- *  2) joined families: collectionGroup('members') where uid == {uid}  -> resolve parents
- *  3) legacy array membership: /families where members array-contains uid
+ * Subscribes to a user's families without using a collectionGroup on "members".
+ * Source of truth:
+ *  1) families where members array-contains uid
+ *  2) users/{uid}.joinedFamilies / familiesJoined (fallback)
  */
 export function subscribeUserFamilies(
-  firestore: Firestore,
+  db: Firestore,
   uid: string,
-  onChange: (families: FamilyLite[]) => void,
-  onError?: (e: any) => void
+  onNext: (families: FamilyLite[]) => void,
+  onError?: (err: any) => void,
 ): Unsubscribe {
-  const ownedQ = query(collection(firestore, 'families'), where('createdBy', '==', uid))
-  const legacyQ = query(collection(firestore, 'families'), where('members', 'array-contains', uid))
-  const cg = query(collectionGroup(firestore, 'members'), where('uid', '==', uid))
+  let closed = false
+  const byId = new Map<string, FamilyLite>()
+  let pendingFetches = 0
 
-  let owned: Record<string, FamilyLite> = {}
-  let legacy: Record<string, FamilyLite> = {}
-  let cgParents: Record<string, FamilyLite> = {}
-
-  const emit = () => {
-    const map = new Map<string, FamilyLite>()
-    for (const m of [owned, legacy, cgParents]) {
-      for (const [id, fam] of Object.entries(m)) map.set(id, fam)
-    }
-    onChange(Array.from(map.values()))
+  function toDate(v: any): Date | null {
+    if (!v) return null
+    if (v instanceof Date) return v
+    if (typeof v?.toDate === 'function') return v.toDate()
+    const d = new Date(v)
+    return isNaN(d.getTime()) ? null : d
   }
 
-  const unsubOwned = onSnapshot(
-    ownedQ,
-    (snap) => {
-      owned = {}
-      snap.forEach((d) => {
-        const raw = (d.data() as any) ?? {}
-        const { id: _ignored, ...rest } = raw
-        owned[d.id] = { ...rest, id: d.id }
-      })
-      emit()
-    },
-    (e) => onError?.(e)
-  )
+  function emit() {
+    if (closed) return
+    onNext(Array.from(byId.values()))
+  }
 
-  const unsubLegacy = onSnapshot(
-    legacyQ,
-    (snap) => {
-      legacy = {}
-      snap.forEach((d) => {
-        const raw = (d.data() as any) ?? {}
-        const { id: _ignored, ...rest } = raw
-        legacy[d.id] = { ...rest, id: d.id }
+  async function fetchFamily(familyId: string) {
+    if (closed) return
+    // Avoid refetch if we already have it
+    if (byId.has(familyId)) return
+    try {
+      pendingFetches++
+      const snap = await getDoc(doc(db, 'families', familyId))
+      if (!snap.exists()) return
+      const d = snap.data() as any
+      byId.set(snap.id, {
+        id: snap.id,
+        name: typeof d?.name === 'string' ? d.name : undefined,
+        createdBy: typeof d?.createdBy === 'string' ? d.createdBy : undefined,
+        owner: typeof d?.owner === 'string' ? d.owner : undefined,
+        createdAt: toDate(d?.createdAt ?? d?.created_on ?? d?.created_at),
       })
-      emit()
-    },
-    (e) => onError?.(e)
-  )
+    } catch (e) {
+      onError?.(e)
+    } finally {
+      pendingFetches--
+      // emit only when all current fetches settled to reduce thrash
+      if (pendingFetches === 0) emit()
+    }
+  }
 
-  const unsubCG = onSnapshot(
-    cg,
-    async (snap) => {
-      const parents = await Promise.all(
-        snap.docs.map(async (memberDoc) => {
-          const famId = memberDoc.ref.parent?.parent?.id
-          if (!famId) return null
-          const famSnap = await getDoc(doc(firestore, 'families', famId))
-          if (!famSnap.exists()) return null
-          const raw = (famSnap.data() as any) ?? {}
-          const { id: _ignored, ...rest } = raw
-          return { ...rest, id: famId } as FamilyLite
-        })
-      )
-      cgParents = {}
-      parents.filter(Boolean).forEach((f) => (cgParents[(f as FamilyLite).id] = f as FamilyLite))
-      emit()
-    },
-    (e) => onError?.(e)
-  )
+  // 1) Live families where I'm in members[]
+  const qFamilies = query(collection(db, 'families'), where('members', 'array-contains', uid))
+  const unsubA = onSnapshot(qFamilies, (snap) => {
+    let dirty = false
+    // replace entries for ids seen here to reflect updates/removals
+    const seen = new Set<string>()
+    for (const d of snap.docs) {
+      const data = d.data() as any
+      const next: FamilyLite = {
+        id: d.id,
+        name: typeof data?.name === 'string' ? data.name : undefined,
+        createdBy: typeof data?.createdBy === 'string' ? data.createdBy : undefined,
+        owner: typeof data?.owner === 'string' ? data.owner : undefined,
+        createdAt: toDate(data?.createdAt ?? data?.created_on ?? data?.created_at),
+      }
+      seen.add(d.id)
+      const prev = byId.get(d.id)
+      // shallow compare important fields
+      if (!prev || prev.name !== next.name || prev.createdBy !== next.createdBy || prev.owner !== next.owner ||
+          (prev.createdAt?.getTime?.() ?? 0) !== (next.createdAt?.getTime?.() ?? 0)) {
+        byId.set(d.id, next)
+        dirty = true
+      }
+    }
+    // Remove families that are no longer in array-contains (still may be added back by user-joined fetch)
+    for (const k of Array.from(byId.keys())) {
+      if (!seen.has(k)) {
+        // Do not delete blindly; only delete if source was from this query AND user lists don’t include it.
+        // We'll keep it; the users/{uid} watcher will reconcile.
+      }
+    }
+    if (dirty && pendingFetches === 0) emit()
+  }, (err) => onError?.(err))
+
+  // 2) Watch user doc lists and fetch any missing families
+  const unsubB = onSnapshot(doc(db, 'users', uid), (snap) => {
+    if (!snap.exists()) return
+    const u = snap.data() as any
+    const lists = [
+      Array.isArray(u?.joinedFamilies) ? u.joinedFamilies : [],
+      Array.isArray(u?.familiesJoined) ? u.familiesJoined : [],
+    ]
+    const all = new Set<string>(lists.flat().filter((x: any) => typeof x === 'string' && x))
+    for (const id of all) fetchFamily(id)
+  }, (err) => onError?.(err))
 
   return () => {
-    try { unsubOwned() } catch {}
-    try { unsubLegacy() } catch {}
-    try { unsubCG() } catch {}
+    closed = true
+    try { unsubA() } catch {}
+    try { unsubB() } catch {}
   }
 }

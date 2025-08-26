@@ -1,37 +1,25 @@
-// src/app/(main)/family/FamilyPickerPage.tsx
 /* eslint-disable */
 'use client'
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import { HomeIcon, UsersIcon, Loader2, Plus, ChevronRight, CalendarDays } from 'lucide-react'
-import {
-  collection,
-  collectionGroup,
-  doc,
-  getDoc,
-  getDocs,
-  onSnapshot,
-  query,
-  where,
-} from 'firebase/firestore'
 import { formatDistanceToNow } from 'date-fns'
-
-import { useAuth } from '@/lib/useAuth'
-import { firestore } from '@/lib/firebase'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import JoinFamilyModal from '@/app/components/JoinFamilyModal'
-import CreateFamilyModal from '@/app/components/CreateFamilyModal'
 
-type Family = {
+import { useAuth } from '@/lib/useAuth'
+import { useFamiliesContext } from '@/app/providers'
+
+type FamilyCard = {
   id: string
   name?: string
   createdBy?: string
+  owner?: string
   createdAt?: Date | null
   memberCount?: number
 }
@@ -46,18 +34,12 @@ function toDate(v: any): Date | null {
 
 export default function FamilyPickerPage() {
   const { user, loading: authLoading } = useAuth()
+  const { families, familiesLoading } = useFamiliesContext()
   const router = useRouter()
   const search = useSearchParams()
   const joinedFlag = search.get('joined') === '1'
 
-  const cleanedJoinedToast = useRef<boolean>(false)
-
-  const [families, setFamilies] = useState<Family[]>([])
-  const [loading, setLoading] = useState(true)
-  const [joinOpen, setJoinOpen] = useState(false)
-  const [createOpen, setCreateOpen] = useState(false)
-
-  // one-time “joined!” toast + URL cleanup
+  const cleanedJoinedToast = useRef(false)
   useEffect(() => {
     if (cleanedJoinedToast.current) return
     if (joinedFlag && typeof window !== 'undefined') {
@@ -69,131 +51,22 @@ export default function FamilyPickerPage() {
     }
   }, [joinedFlag, router])
 
-  // Primary membership (array-contains) + Fallback via subcollection (collectionGroup)
-  useEffect(() => {
-    if (authLoading || !user?.uid) return
-    setLoading(true)
-
-    let stop1: () => void = () => {}
-    let stop2: () => void = () => {}
-
-    // Store latest IDs from both sources; we’ll merge and fetch docs
-    let primaryIds = new Set<string>()
-    let subcolIds = new Set<string>()
-
-    async function recompute() {
-      try {
-        const allIds = new Set<string>([...primaryIds, ...subcolIds])
-        // Fetch family docs
-        const familyDocs = await Promise.all(
-          Array.from(allIds).map(async (fid) => {
-            try {
-              const s = await getDoc(doc(firestore, 'families', fid))
-              if (!s.exists()) return null
-              const d = s.data() as any
-              return {
-                id: s.id,
-                name: typeof d?.name === 'string' ? d.name : undefined,
-                createdBy: typeof d?.createdBy === 'string' ? d.createdBy : undefined,
-                createdAt: toDate(d?.createdAt ?? d?.created_on ?? d?.created_at),
-              } as Family
-            } catch {
-              return null
-            }
-          })
-        )
-
-        const base = familyDocs.filter(Boolean) as Family[]
-
-        // hydrate member counts (best-effort)
-        const withCounts = await Promise.all(
-          base.map(async (f) => {
-            try {
-              const memSnap = await getDocs(collection(firestore, 'families', f.id, 'members'))
-              return { ...f, memberCount: memSnap.size }
-            } catch {
-              return f
-            }
-          })
-        )
-
-        // sort: owned first then by name (safe if user is null)
-        const myUid = user?.uid ?? ''
-        withCounts.sort((a, b) => {
-          const aOwned = (a.createdBy ?? '') === myUid
-          const bOwned = (b.createdBy ?? '') === myUid
-          if (aOwned !== bOwned) return aOwned ? -1 : 1
-          const an = (a.name ?? '').toString()
-          const bn = (b.name ?? '').toString()
-          return an.localeCompare(bn)
-        })
-
-        setFamilies(withCounts)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    // Listener 1: families where members array-contains me
-    const qFamilies = query(
-      collection(firestore, 'families'),
-      where('members', 'array-contains', user.uid)
-    )
-    stop1 = onSnapshot(
-      qFamilies,
-      (snap) => {
-        primaryIds = new Set(snap.docs.map((d) => d.id))
-        void recompute()
-      },
-      (err) => {
-        console.error('[family] membership (array) error', err)
-        primaryIds = new Set()
-        void recompute()
-      }
-    )
-
-    // Listener 2: collectionGroup membership: any families/{id}/members/* with uid == me
-    // NOTE: querying by documentId() requires a full path; use the stored `uid` field instead.
-    const qMembers = query(
-      collectionGroup(firestore, 'members'),
-      where('uid', '==', user.uid)
-    )
-    stop2 = onSnapshot(
-      qMembers,
-      (snap) => {
-        subcolIds = new Set(
-          snap.docs
-            .map((d) => d.ref.parent?.parent?.id)
-            .filter((x): x is string => typeof x === 'string')
-        )
-        void recompute()
-      },
-      (err) => {
-        console.error('[family] membership (subcol) error', err)
-        subcolIds = new Set()
-        void recompute()
-      }
-    )
-
-    return () => {
-      try { stop1() } catch {}
-      try { stop2() } catch {}
-    }
-  }, [authLoading, user?.uid])
-
-  const owned = useMemo(() => families.filter((f) => f.createdBy === user?.uid), [families, user?.uid])
-  const joined = useMemo(() => families.filter((f) => f.createdBy !== user?.uid), [families, user?.uid])
-
-  const goToFamily = useCallback(
-    async (fid: string) => {
-      router.push(`/family/${fid}`)
-    },
-    [router]
+  const owned = useMemo(
+    () => families.filter(f => (f.createdBy ?? f.owner) === user?.uid) as FamilyCard[],
+    [families, user?.uid]
+  )
+  const joined = useMemo(
+    () => families.filter(f => (f.createdBy ?? f.owner) !== user?.uid) as FamilyCard[],
+    [families, user?.uid]
   )
 
-  const renderFamilyCard = (f: Family) => {
-    const created = f.createdAt ? formatDistanceToNow(f.createdAt, { addSuffix: true }) : null
-    const isOwner = f.createdBy === user?.uid
+  const goToFamily = (fid: string) => router.push(`/family/${fid}`)
+
+  const renderFamilyCard = (f: FamilyCard) => {
+    const createdDate = toDate(f.createdAt)
+    const created = createdDate ? formatDistanceToNow(createdDate, { addSuffix: true }) : null
+    const isOwner = (f.createdBy ?? f.owner) === user?.uid
+
     return (
       <motion.div
         key={f.id}
@@ -250,20 +123,28 @@ export default function FamilyPickerPage() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-semibold">Your Families</h1>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setJoinOpen(true)}>Join</Button>
-          <Button onClick={() => setCreateOpen(true)}><Plus className="w-4 h-4 mr-1" /> Create</Button>
+          <Button variant="outline" onClick={() => router.push('/family/join')}>Join</Button>
+          <Button onClick={() => router.push('/family/create')}>
+            <Plus className="w-4 h-4 mr-1" /> Create
+          </Button>
         </div>
       </div>
 
       <Tabs defaultValue="owned" className="w-full">
         <TabsList className="grid grid-cols-2">
-          <TabsTrigger value="owned" className="flex items-center gap-2"><HomeIcon className="w-4 h-4" /> Owned</TabsTrigger>
-          <TabsTrigger value="joined" className="flex items-center gap-2"><UsersIcon className="w-4 h-4" /> Joined</TabsTrigger>
+          <TabsTrigger value="owned" className="flex items-center gap-2">
+            <HomeIcon className="w-4 h-4" /> Owned
+          </TabsTrigger>
+          <TabsTrigger value="joined" className="flex items-center gap-2">
+            <UsersIcon className="w-4 h-4" /> Joined
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="owned" className="mt-4">
-          {authLoading || loading ? (
-            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          {authLoading || familiesLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            </div>
           ) : owned.length > 0 ? (
             <AnimatePresence initial={false}>
               {owned.map(renderFamilyCard)}
@@ -278,8 +159,10 @@ export default function FamilyPickerPage() {
         </TabsContent>
 
         <TabsContent value="joined" className="mt-4">
-          {authLoading || loading ? (
-            <div className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+          {authLoading || familiesLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            </div>
           ) : joined.length > 0 ? (
             <AnimatePresence initial={false}>
               {joined.map(renderFamilyCard)}
@@ -293,9 +176,6 @@ export default function FamilyPickerPage() {
           )}
         </TabsContent>
       </Tabs>
-
-      <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
-      <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   )
 }
