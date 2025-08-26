@@ -42,7 +42,7 @@ function toMillis(raw: any): number | null {
   return null
 }
 
-// small in-memory cache so we don't fetch the same user doc repeatedly in one session render
+// simple in-memory cache for user docs during the session
 const userDocCache: Record<string, Record<string, any> | null> = {}
 
 export default function FamilyPresenceWidget({
@@ -65,14 +65,14 @@ export default function FamilyPresenceWidget({
             snapshot.docs.map(async (memberSnap: QueryDocumentSnapshot<DocumentData>) => {
               const m = memberSnap.data() as Record<string, any>
 
-              // Support docId==uid (your structure) and arbitrary id + m.uid
+              // Support docId==uid and arbitrary id + m.uid
               const uid: string = (typeof m?.uid === 'string' && m.uid) || memberSnap.id
 
               // Fetch user doc (name/photo + GLOBAL autoPresence)
-              let userData: Record<string, any> | null =
-                Object.prototype.hasOwnProperty.call(userDocCache, uid) ? userDocCache[uid] : undefined
+              const hasCached = Object.prototype.hasOwnProperty.call(userDocCache, uid)
+              let userData: Record<string, any> | null = hasCached ? userDocCache[uid] : null
 
-              if (userData === undefined) {
+              if (!hasCached) {
                 try {
                   const userSnap = await getDoc(doc(firestore, 'users', uid))
                   userData = userSnap.exists() ? (userSnap.data() as Record<string, any>) : null
