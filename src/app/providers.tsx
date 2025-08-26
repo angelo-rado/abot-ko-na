@@ -1,7 +1,14 @@
-// app/providers.tsx
 'use client'
 
-import { ReactNode, useEffect, useMemo, useRef, useState, createContext, useContext } from 'react'
+import {
+  ReactNode,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  createContext,
+  useContext,
+} from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/useAuth'
 import { doc, getDoc } from 'firebase/firestore'
@@ -29,6 +36,14 @@ export default function Providers({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
   const [checking, setChecking] = useState(true)
 
   // Families subscription state
@@ -37,21 +52,26 @@ export default function Providers({ children }: { children: ReactNode }) {
   const [familiesError, setFamiliesError] = useState<any>(undefined)
   const unsubRef = useRef<(() => void) | null>(null)
 
-  // Onboarding gate
+  // Onboarding gate (only after auth is settled)
   useEffect(() => {
     if (loading) return
 
     if (!user) {
-      // not signed in; stop onboarding check and stop families subscription
+      // Signed out — tear down everything cleanly
       setChecking(false)
       setFamilies([])
       setFamiliesLoading(false)
       setFamiliesError(undefined)
-      if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
+      if (unsubRef.current) {
+        try {
+          unsubRef.current()
+        } catch {}
+        unsubRef.current = null
+      }
       return
     }
 
-    const checkOnboarding = async () => {
+    ;(async () => {
       try {
         const snap = await getDoc(doc(firestore, 'users', user.uid))
         const data = snap.data()
@@ -62,21 +82,29 @@ export default function Providers({ children }: { children: ReactNode }) {
           return
         }
       } catch (err) {
+        // Non-fatal: keep UX moving
         console.warn('Error checking onboarding', err)
       } finally {
-        setChecking(false)
+        if (mounted.current) setChecking(false)
       }
-    }
-
-    checkOnboarding()
+    })()
   }, [user, loading, pathname, router, searchParams])
 
-  // Families subscription (no documentId() misuse)
+  // Families subscription
+  // Guarded so it only attaches when:
+  // - auth is ready
+  // - user is present
+  // - onboarding check finished
   useEffect(() => {
-    if (loading) return
+    if (loading || checking) return
 
-    // cleanup previous
-    if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
+    // cleanup previous sub on any dependency change
+    if (unsubRef.current) {
+      try {
+        unsubRef.current()
+      } catch {}
+      unsubRef.current = null
+    }
 
     if (!user?.uid) {
       setFamilies([])
@@ -87,23 +115,30 @@ export default function Providers({ children }: { children: ReactNode }) {
 
     setFamiliesLoading(true)
     setFamiliesError(undefined)
+
     unsubRef.current = subscribeUserFamilies(
       firestore,
       user.uid,
       (rows) => {
+        if (!mounted.current) return
         // stable sort: owned first, then by name
-        const ownedFirst = rows.slice().sort((a, b) => {
-          const me = user.uid
-          const aOwned = (a.createdBy ?? a.owner) === me
-          const bOwned = (b.createdBy ?? b.owner) === me
-          if (aOwned !== bOwned) return aOwned ? -1 : 1
-          return (a.name ?? '').localeCompare(b.name ?? '')
-        })
+        const me = user.uid
+        const ownedFirst = rows
+          .slice()
+          .sort((a, b) => {
+            const aOwned = (a.createdBy ?? a.owner) === me
+            const bOwned = (b.createdBy ?? b.owner) === me
+            if (aOwned !== bOwned) return aOwned ? -1 : 1
+            return (a.name ?? '').localeCompare(b.name ?? '')
+          })
         setFamilies(ownedFirst)
         setFamiliesLoading(false)
       },
       (err) => {
+        // Most common cause is rules rejecting a legacy member doc during CG query.
+        // We still surface it but keep the UI usable.
         console.error('[providers] families subscribe error', err)
+        if (!mounted.current) return
         setFamilies([])
         setFamiliesLoading(false)
         setFamiliesError(err)
@@ -111,15 +146,23 @@ export default function Providers({ children }: { children: ReactNode }) {
     )
 
     return () => {
-      if (unsubRef.current) { try { unsubRef.current() } catch {} ; unsubRef.current = null }
+      if (unsubRef.current) {
+        try {
+          unsubRef.current()
+        } catch {}
+        unsubRef.current = null
+      }
     }
-  }, [loading, user?.uid])
+  }, [loading, checking, user?.uid])
 
-  const ctx = useMemo<FamiliesContextValue>(() => ({
-    families,
-    familiesLoading,
-    familiesError,
-  }), [families, familiesLoading, familiesError])
+  const ctx = useMemo<FamiliesContextValue>(
+    () => ({
+      families,
+      familiesLoading,
+      familiesError,
+    }),
+    [families, familiesLoading, familiesError]
+  )
 
   if (loading || checking) {
     return (
@@ -129,9 +172,5 @@ export default function Providers({ children }: { children: ReactNode }) {
     )
   }
 
-  return (
-    <FamiliesContext.Provider value={ctx}>
-      {children}
-    </FamiliesContext.Provider>
-  )
+  return <FamiliesContext.Provider value={ctx}>{children}</FamiliesContext.Provider>
 }
