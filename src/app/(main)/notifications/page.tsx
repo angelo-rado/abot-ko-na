@@ -1,12 +1,12 @@
 // src/app/(main)/notifications/page.tsx
 'use client'
 
-import { useMemo, useCallback, useState } from 'react'
+import { useMemo, useCallback, useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +17,16 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Bell, CheckCheck, Filter, Truck, DoorOpen, MessageSquare, Users, Info } from 'lucide-react'
+import {
+  Bell,
+  CheckCheck,
+  Filter,
+  Truck,
+  DoorOpen,
+  Users,
+  Info,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { useNotifications } from '@/lib/notifications/useNotifications'
 import { NotificationDoc } from '@/lib/notifications/types'
@@ -29,6 +38,12 @@ import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import { safeFormatDistanceToNow, toDate } from '@/lib/dates'
 import { onJoined } from '@/lib/join-bus'
 
+type Scope = 'all' | { familyId: string }
+type Cat = 'all' | 'deliveries' | 'members' | 'presence'
+
+const CLEAR_KEY_ALL = 'abot:notifs:clear:all'
+const CLEAR_KEY_FAM_PREFIX = 'abot:notifs:clear:family:'
+
 export default function NotificationsPage() {
   const params = useSearchParams()
   const router = useRouter()
@@ -36,11 +51,17 @@ export default function NotificationsPage() {
   const { familyId: defaultFamilyId, families } = useSelectedFamily()
   const isOnline = useOnlineStatus()
 
+  // ===== scope (all vs family) =====
   const familyParam = params.get('family') // 'all' | familyId
-  const scope = useMemo(() => {
-    if (!familyParam || familyParam === 'all') return 'all' as const
-    return { familyId: familyParam } as const
+  const scope: Scope = useMemo(() => {
+    if (!familyParam || familyParam === 'all') return 'all'
+    return { familyId: familyParam }
   }, [familyParam])
+
+  // ===== category filter =====
+  const typeParam = (params.get('type') as Cat | null) || 'all'
+  const [cat, setCat] = useState<Cat>(typeParam)
+  useEffect(() => { setCat(typeParam) }, [typeParam])
 
   const { items, loading, error } = useNotifications(scope)
 
@@ -62,6 +83,27 @@ export default function NotificationsPage() {
     },
     [params, router]
   )
+
+  const navigateCat = useCallback((next: Cat) => {
+    const search = new URLSearchParams(params.toString())
+    if (next === 'all') search.delete('type')
+    else search.set('type', next)
+    router.replace(`/notifications?${search.toString()}`)
+  }, [params, router])
+
+  // ===== clear threshold (local-only hide) =====
+  const clearKey = scope === 'all' ? CLEAR_KEY_ALL : `${CLEAR_KEY_FAM_PREFIX}${scope.familyId}`
+  const [clearTs, setClearTs] = useState<number>(() => {
+    if (typeof window === 'undefined') return 0
+    const v = localStorage.getItem(clearKey)
+    return v ? Number(v) || 0 : 0
+  })
+  useEffect(() => {
+    // scope changed -> load its clear threshold
+    if (typeof window === 'undefined') return
+    const v = localStorage.getItem(clearKey)
+    setClearTs(v ? Number(v) || 0 : 0)
+  }, [clearKey])
 
   const unread = useMemo(() => {
     if (!user?.uid) return new Set<string>()
@@ -101,15 +143,48 @@ export default function NotificationsPage() {
     toast.success('All caught up')
   }, [items, user?.uid])
 
+  const clearReadLocally = useCallback(() => {
+    const now = Date.now()
+    try { localStorage.setItem(clearKey, String(now)) } catch {}
+    setClearTs(now)
+    toast.success('Cleared read notifications')
+  }, [clearKey])
+
+  const clearAllLocally = useCallback(async () => {
+    // Mark all read (server) then hide locally
+    await markAll()
+    const now = Date.now()
+    try { localStorage.setItem(clearKey, String(now)) } catch {}
+    setClearTs(now)
+    toast.success('Cleared all notifications')
+  }, [markAll, clearKey])
+
+  const filtered = useMemo(() => {
+    const byClear = items.filter((n) => {
+      const t = toDate(n.createdAt)
+      const ms = t ? t.getTime() : 0
+      return ms >= clearTs
+    })
+    if (cat === 'all') return byClear
+    return byClear.filter((n) => {
+      const c = categorize(n)
+      return c === cat
+    })
+  }, [items, clearTs, cat])
+
   return (
-    <main className="mx-auto w-full max-w-2xl p-4 md:p-6">
+    <main
+      className="mx-auto w-full max-w-2xl p-4 md:p-6 leading-tight"
+      style={{ WebkitFontSmoothing: 'antialiased' }}
+    >
       {!isOnline && (
         <p className="mb-3 text-center text-xs text-amber-600">Offline — showing cached notifications.</p>
       )}
 
+      {/* Header */}
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Bell className="h-5 w-5" />
+          <Bell className="h-5 w-5 shrink-0" />
           <h1 className="text-lg font-semibold">Notifications</h1>
           {unread.size > 0 && (
             <Badge variant="secondary" className="ml-1">{unread.size}</Badge>
@@ -147,7 +222,28 @@ export default function NotificationsPage() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Trash2 className="mr-2 h-4 w-4" />
+                Clear
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuItem onClick={clearReadLocally}>Clear read</DropdownMenuItem>
+              <DropdownMenuItem onClick={clearAllLocally}>Clear all</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+      </div>
+
+      {/* Category pills (iOS-safe, no jitter) */}
+      <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+        <CatPill current={cat} target="all" onSelect={navigateCat} label="All" />
+        <CatPill current={cat} target="deliveries" onSelect={navigateCat} label="Deliveries" Icon={Truck} />
+        <CatPill current={cat} target="members" onSelect={navigateCat} label="Members" Icon={Users} />
+        <CatPill current={cat} target="presence" onSelect={navigateCat} label="Presence" Icon={DoorOpen} />
       </div>
 
       <Separator />
@@ -156,8 +252,8 @@ export default function NotificationsPage() {
         {loading && (
           <>
             {Array.from({ length: 6 }).map((_, i) => (
-              <Card key={i}>
-                <CardContent className="flex items-center gap-3 p-3">
+              <Card key={i} className="rounded-xl">
+                <CardContent className="flex items-start gap-3 p-3 sm:p-4">
                   <Skeleton className="h-9 w-9 rounded-full" />
                   <div className="grid w-full gap-1">
                     <Skeleton className="h-4 w-2/3" />
@@ -173,52 +269,165 @@ export default function NotificationsPage() {
           <p className="text-sm text-destructive">{error}</p>
         )}
 
-        {!loading && !error && items.length === 0 && (
-          <Card>
+        {!loading && !error && filtered.length === 0 && (
+          <Card className="rounded-xl">
             <CardContent className="p-4 text-sm text-muted-foreground">
-              No notifications yet.
+              No notifications{cat !== 'all' ? ` in ${cat}` : ''}.
             </CardContent>
           </Card>
         )}
 
-        {!loading && !error && items.map((n) => (
-          <NotificationRow key={n.id} n={n} unread={!n.reads?.[(user?.uid ?? '')]} onSeen={() => markOne(n)} />
+        {!loading && !error && filtered.map((n) => (
+          <NotificationRow
+            key={n.id}
+            n={n}
+            unread={!n.reads?.[(user?.uid ?? '')]}
+            onSeen={() => markOne(n)}
+          />
         ))}
       </div>
     </main>
   )
 }
 
+function CatPill({
+  current,
+  target,
+  onSelect,
+  label,
+  Icon,
+}: {
+  current: Cat
+  target: Cat
+  onSelect: (c: Cat) => void
+  label: string
+  Icon?: React.ComponentType<{ className?: string }>
+}) {
+  const active = current === target
+  const Ico = Icon
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(target)}
+      className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs sm:text-sm transition-colors ${
+        active
+          ? 'border-primary bg-primary/10 text-primary'
+          : 'border-border bg-background text-foreground'
+      }`}
+      style={{ WebkitTapHighlightColor: 'transparent' }}
+    >
+      <span className="inline-flex items-center gap-1.5">
+        {Ico ? <Ico className="h-4 w-4" /> : null}
+        {label}
+      </span>
+    </button>
+  )
+}
+
+function categorize(n: NotificationDoc): Cat {
+  const t = (n.type || '').toLowerCase()
+  if (t.startsWith('delivery')) return 'deliveries'
+  if (t.includes('presence')) return 'presence'
+  if (t.includes('member') || t.includes('invite') || t.includes('joined') || t.includes('left')) return 'members'
+  return 'all'
+}
+
 function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: boolean; onSeen: () => void }) {
+  const createdAt = safeFormatDistanceToNow(toDate(n.createdAt))
+  const cat = categorize(n)
+
   const icon = (() => {
     const base = 'h-5 w-5'
-    switch (true) {
-      case n.type.startsWith('delivery'): return <Truck className={base} />
-      case n.type === 'presence_changed': return <DoorOpen className={base} />
-      case n.type === 'note_added': return <MessageSquare className={base} />
-      case n.type === 'invite': return <Users className={base} />
+    switch (cat) {
+      case 'deliveries': return <Truck className={base} />
+      case 'presence': return <DoorOpen className={base} />
+      case 'members': return <Users className={base} />
       default: return <Info className={base} />
     }
   })()
 
-  const createdAt = safeFormatDistanceToNow(toDate(n.createdAt))
+  // Optional details (render if available)
+  // We keep this defensive since events can vary.
+  const meta: any = (n as any).meta || {}
+  const familyName = (n as any).familyName || (n as any).family?.name || null
+  const familyId = (n as any).familyId || (n as any).family?.id || null
+  const actorName = meta.actorName || meta.userName || (n as any).actorName || null
+  const status = meta.status || (n as any).status || null
+  const statusSource = meta.statusSource || (n as any).statusSource || null
+  const expected = toDate(meta.expectedDate || (n as any).expectedDate)
+  const expectedStr = expected ? safeFormatDistanceToNow(expected) : null
+  const courier = meta.courier || meta.carrier || null
+  const tracking = meta.tracking || meta.trackingNumber || null
+  const itemsCount = typeof meta.itemsCount === 'number' ? meta.itemsCount : null
 
   return (
-    <Card data-unread={unread ? '1' : undefined} className="transition-colors data-[unread=1]:border-primary/40">
-      <CardContent className="flex items-start gap-3 p-3">
-        <div className="mt-0.5">{icon}</div>
+    <Card
+      data-unread={unread ? '1' : undefined}
+      className="rounded-xl transition-colors data-[unread=1]:border-primary/40"
+      style={{ transform: 'translateZ(0)' }} // reduce iOS subpixel jitter
+    >
+      <CardContent className="flex items-start gap-3 p-3 sm:p-4">
+        <div className="mt-0.5 shrink-0">{icon}</div>
+
         <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
+          {/* Title row */}
+          <div className="flex items-baseline justify-between gap-2">
             <div className="truncate font-medium">{n.title ?? prettify(n.type)}</div>
             <div className="shrink-0 text-xs text-muted-foreground">{createdAt}</div>
           </div>
-          {n.body && <div className="truncate text-sm text-muted-foreground">{n.body}</div>}
+
+          {/* Body */}
+          {n.body && (
+            <div className="mt-0.5 text-sm text-muted-foreground break-words">
+              {n.body}
+            </div>
+          )}
+
+          {/* Meta row (chips) */}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+              {cat === 'deliveries' ? 'Delivery'
+                : cat === 'presence' ? 'Presence'
+                : cat === 'members' ? 'Members'
+                : 'Info'}
+            </Badge>
+
+            {familyName || familyId ? (
+              <Badge variant="secondary" className="text-[10px]">
+                {familyName ?? familyId}
+              </Badge>
+            ) : null}
+
+            {cat === 'members' && actorName ? (
+              <Badge variant="outline" className="text-[10px]">by {actorName}</Badge>
+            ) : null}
+
+            {cat === 'presence' && status ? (
+              <Badge variant="outline" className="text-[10px] capitalize">
+                {status}{statusSource ? ` • ${statusSource === 'geo' ? 'Auto' : 'Manual'}` : ''}
+              </Badge>
+            ) : null}
+
+            {cat === 'deliveries' && expectedStr ? (
+              <Badge variant="outline" className="text-[10px]">ETA {expectedStr}</Badge>
+            ) : null}
+
+            {cat === 'deliveries' && courier ? (
+              <Badge variant="outline" className="text-[10px]">{courier}</Badge>
+            ) : null}
+
+            {cat === 'deliveries' && typeof itemsCount === 'number' ? (
+              <Badge variant="outline" className="text-[10px]">{itemsCount} item{itemsCount === 1 ? '' : 's'}</Badge>
+            ) : null}
+
+            {cat === 'deliveries' && tracking ? (
+              <Badge variant="outline" className="text-[10px]"># {String(tracking).slice(-8)}</Badge>
+            ) : null}
+          </div>
+
+          {/* Actions */}
           <div className="mt-2 flex gap-2">
-            {n.link && (
-              <Button asChild variant="secondary" size="sm" onClick={onSeen}>
-                <Link href={n.link}>Open</Link>
-              </Button>
-            )}
+            {/* Removed "Open" button per request to avoid misnavigation */}
             {unread && (
               <Button variant="ghost" size="sm" onClick={onSeen}>Mark read</Button>
             )}
@@ -230,5 +439,5 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
 }
 
 function prettify(t: string) {
-  return t.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  return (t || 'Notification').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
