@@ -355,7 +355,7 @@ function SwipeShell({
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
       >
-        {[home, deliveries, family, settings].map((node, i) => (
+        {[home, deliveries, family, notifications, settings].map((node, i) => (
           <div
             key={i}
             ref={(el) => { paneRefs.current[i] = el }}
@@ -443,4 +443,3 @@ export default function MainLayout({
     </ThemeProvider>
   )
 }
-
