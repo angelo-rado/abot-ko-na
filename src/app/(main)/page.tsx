@@ -33,6 +33,12 @@ import { HelpCircleHint } from '../components/HelpCircleHint'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import { useSelectedFamily } from '@/lib/selected-family'
 
+// NEW
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useIsIOS } from '@/lib/useIsIOS'
+import { onJoined, getLastSelectedFamily } from '@/lib/join-bus'
+import { toast } from 'sonner'
+
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth()
   const { familyId, families, loadingFamilies } = useSelectedFamily()
@@ -54,6 +60,14 @@ export default function HomePage() {
   const offlineBanner = !isOnline ? (
     <p className="text-center text-red-500">You're offline — cached content only.</p>
   ) : null
+
+  // NEW
+  const router = useRouter()
+  const qp = useSearchParams()
+  const joined = qp.get('joined')
+  const joinedFamily = qp.get('family')
+  const [hydrationKey, setHydrationKey] = useState(0)
+  const isIOS = useIsIOS()
 
   // family-aware auto presence hook
   useAutoPresence(familyId)
@@ -86,11 +100,15 @@ export default function HomePage() {
   useEffect(() => {
     if (!user?.uid || !familyId) return
     const ref = doc(firestore, 'families', familyId, 'members', user.uid)
-    setDoc(ref, {
-      name: (user as any).name ?? 'Unknown',
-      photoURL: (user as any).photoURL ?? null,
-      uid: user.uid,
-    }, { merge: true }).catch(err => {
+    setDoc(
+      ref,
+      {
+        name: (user as any).name ?? 'Unknown',
+        photoURL: (user as any).photoURL ?? null,
+        uid: user.uid,
+      },
+      { merge: true }
+    ).catch(err => {
       console.warn('Failed to ensure member profile fields', err)
     })
   }, [user?.uid, familyId])
@@ -194,7 +212,7 @@ export default function HomePage() {
     )
 
     return () => unsub()
-  }, [user?.uid, familyId, justChangedStatusAt, userAutoPresence])
+  }, [user?.uid, familyId, justChangedStatusAt, userAutoPresence, hydrationKey])
 
   const handlePresenceChange = async (newStatus: 'home' | 'away') => {
     if (!user || !familyId) return
@@ -217,6 +235,30 @@ export default function HomePage() {
     return formatDistanceToNow(date, { addSuffix: true })
   }
 
+  // NEW: post-join hydration via query param
+  useEffect(() => {
+    if (joined === '1') {
+      const fam = joinedFamily || getLastSelectedFamily()
+      if (fam) {
+        router.replace('/(main)')
+        setHydrationKey(k => k + 1)
+        router.refresh()
+        toast.success('Joined successfully')
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joined, joinedFamily])
+
+  // NEW: post-join hydration via event
+  useEffect(() => {
+    const off = onJoined(() => {
+      setHydrationKey(k => k + 1)
+      router.refresh()
+      toast.success('Family joined')
+    })
+    return off
+  }, [router])
+
   if (authLoading) {
     return (
       <main className="flex items-center justify-center h-screen">
@@ -228,11 +270,10 @@ export default function HomePage() {
   return (
     <>
       {offlineBanner}
-      <main className="max-w-2xl mx-auto p-6 space-y-6">
+      <main className={`max-w-2xl mx-auto p-6 space-y-6 ios-scroll ${isIOS ? 'ios-screen ios-stack' : ''}`}>
         <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
 
-        {/* Default family summary */}
         <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between">
           <div className="text-sm">
             <span className="font-medium">Default family:</span>{' '}
@@ -241,7 +282,6 @@ export default function HomePage() {
           <Link href="/settings#default-family" className="text-sm underline">Change</Link>
         </div>
 
-        {/* Who's Home */}
         <Card>
           <CardHeader>
             <CardTitle>Who's Home</CardTitle>
@@ -273,7 +313,6 @@ export default function HomePage() {
                 const members = membersLive
                 const loading = membersLoading
 
-                // Banner: show only when we positively know it's missing
                 const homeBanner = hasHomeLocation === false ? (
                   <div className="flex items-start gap-3 p-3 border rounded bg-muted/30 mb-2">
                     <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
@@ -291,7 +330,6 @@ export default function HomePage() {
                   </div>
                 ) : null
 
-                // normalize presence fields
                 const presenceMap = new Map(
                   members.map((m) => {
                     const status = normalizeStatus(m)
@@ -396,7 +434,6 @@ export default function HomePage() {
                                       </div>
                                     </div>
 
-                                    {/* ALWAYS show the text label; it was hidden on small screens before */}
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                       <span className="capitalize">{presence.status ?? 'unknown'}</span>
                                       {presence.statusSource && (<span>• {presence.statusSource === 'geo' ? 'Auto' : 'Manual'}</span>)}
@@ -464,7 +501,6 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        {/* Deliveries Today */}
         <Card>
           <CardHeader>
             <CardTitle>Deliveries Today</CardTitle>
@@ -486,7 +522,6 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        {/* Presence buttons */}
         <div className="flex gap-4">
           {(presenceLoading || loadingFamilies) ? (
             <>

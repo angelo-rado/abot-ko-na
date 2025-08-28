@@ -137,3 +137,30 @@ body {
   border-radius: .75rem;
 }
 /* --- end --- */
+
+
+/* --- iOS breathing room + safe area --- */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-platform-ios] .ios-screen {
+  padding-top: max(0.5rem, var(--safe-top));
+  padding-bottom: max(1rem, var(--safe-bottom));
+}
+
+html[data-platform-ios] .ios-stack {
+  /* slightly larger gaps on iOS for breathing room */
+  row-gap: 0.875rem;
+}
+
+html[data-platform-ios] .ios-tight-text h1,
+html[data-platform-ios] .ios-tight-text h2 {
+  letter-spacing: -0.01em;
+}
+
+html[data-platform-ios] .ios-scroll {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}

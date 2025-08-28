@@ -29,7 +29,6 @@ type InviteDoc = {
   revoked?: boolean
 }
 
-/** Accepts full share links, raw invite codes, or family IDs. Returns a normalized key. */
 function normalizeInviteParam(raw: string): string {
   if (!raw) return ''
   const trimmed = raw.trim()
@@ -61,7 +60,6 @@ export default function FamilyJoinPageContent() {
   const [expired, setExpired] = useState(false)
   const triedAutoJoinRef = useRef(false)
 
-  // Peek details for UX
   useEffect(() => {
     let alive = true
     if (!key) return
@@ -93,7 +91,6 @@ export default function FamilyJoinPageContent() {
           return
         }
 
-        // Fallback: family ID
         try {
           const famRef = doc(firestore, 'families', key)
           const famSnap = await getDoc(famRef)
@@ -114,7 +111,6 @@ export default function FamilyJoinPageContent() {
     return () => { alive = false }
   }, [key])
 
-  // Auto-join after login if requested
   useEffect(() => {
     if (!autoJoin || triedAutoJoinRef.current) return
     if (loading) return
@@ -142,6 +138,7 @@ export default function FamilyJoinPageContent() {
     try {
       let familyId: string | null = null
       let viaInvite = false
+      let famName: string | null = null
 
       try {
         const invSnap = await getDoc(doc(firestore, 'invites', key))
@@ -152,16 +149,25 @@ export default function FamilyJoinPageContent() {
             throw new Error('Invite has expired.')
           }
           familyId = inv.familyId
+          famName = inv.familyName ?? null
           viaInvite = true
         }
       } catch (err: any) {
         console.warn('[join] invite lookup error', err?.code || err?.message || err)
       }
 
-      if (!familyId) familyId = key
+      if (!familyId) {
+        familyId = key
+        try {
+          const famSnap = await getDoc(doc(firestore, 'families', familyId))
+          if (famSnap.exists()) {
+            const n = (famSnap.data() as any)?.name
+            famName = typeof n === 'string' ? n : null
+          }
+        } catch {}
+      }
       if (!familyId) throw new Error('Invite is invalid.')
 
-      // 1) Create/merge my member doc
       await setDoc(
         doc(firestore, 'families', familyId, 'members', user.uid),
         {
@@ -172,7 +178,6 @@ export default function FamilyJoinPageContent() {
         { merge: true }
       )
 
-      // 2) Now that I have a member doc, the rule’s isFamilyMember passes; push me into members array
       try {
         await updateDoc(doc(firestore, 'families', familyId), {
           members: arrayUnion(user.uid),
@@ -181,7 +186,6 @@ export default function FamilyJoinPageContent() {
         console.warn('[join] unable to update families.members array', e)
       }
 
-      // 3) Hydrate member doc with my name/photo so others don’t see UID
       await setDoc(
         doc(firestore, 'families', familyId, 'members', user.uid),
         {
@@ -192,19 +196,30 @@ export default function FamilyJoinPageContent() {
         { merge: true }
       )
 
-      // 4) User doc: mark joined & default
       await setDoc(
         doc(firestore, 'users', user.uid),
         { joinedFamilies: arrayUnion(familyId), preferredFamily: familyId },
         { merge: true }
       )
 
-      // 5) Local hints
+      await setDoc(
+        doc(firestore, 'users', user.uid, 'families', familyId),
+        {
+          familyId,
+          familyName: famName ?? familyName ?? familyId,
+          lastUpdated: serverTimestamp(),
+        },
+        { merge: true }
+      )
+
       try { localStorage.setItem(LOCAL_FAMILY_KEY, familyId) } catch {}
       try { sessionStorage.setItem(JUST_JOINED_KEY, familyId) } catch {}
+      try {
+        window.dispatchEvent(new CustomEvent('abn:family-joined', { detail: { familyId } }))
+      } catch {}
 
       toast.success('Joined family!')
-      router.replace(`/family/${familyId}?joined=1${viaInvite ? '' : ''}`)
+      router.replace(`/(main)?joined=1&family=${encodeURIComponent(familyId)}`)
     } catch (e: any) {
       console.error('[join] failed', e)
       const msg =
@@ -246,7 +261,7 @@ export default function FamilyJoinPageContent() {
 
               <div className="flex gap-2 flex-wrap">
                 <Button disabled={isJoiningDisabled} onClick={handleJoin}>
-                  {joining ? 'Joining…' : user ? 'Join' : 'Sign in to Join'}
+                  {joining ? 'Joining…' : (user ? 'Join' : 'Sign in to Join')}
                 </Button>
                 <Button
                   variant="outline"

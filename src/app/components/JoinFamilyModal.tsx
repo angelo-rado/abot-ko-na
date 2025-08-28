@@ -44,6 +44,11 @@ export default function JoinFamilyModal({ open, onOpenChange }: { open: boolean;
     }
   }, [open])
 
+  const navigateToJoin = useCallback((key: string) => {
+    router.push(`/family/join?invite=${encodeURIComponent(key)}&autoJoin=1`)
+    onOpenChange(false)
+  }, [router, onOpenChange])
+
   const onSubmit = useCallback(() => {
     const key = normalizeInviteOrCode(value)
     if (!key) {
@@ -51,9 +56,8 @@ export default function JoinFamilyModal({ open, onOpenChange }: { open: boolean;
       return
     }
     setBusy(true)
-    router.push(`/family/join?invite=${encodeURIComponent(key)}`)
-    onOpenChange(false)
-  }, [value, router, onOpenChange])
+    navigateToJoin(key)
+  }, [value, navigateToJoin])
 
   const onUploadQR = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -71,13 +75,12 @@ export default function JoinFamilyModal({ open, onOpenChange }: { open: boolean;
         return
       }
       setValue(decoded)
-      router.push(`/family/join?invite=${encodeURIComponent(key)}`)
-      onOpenChange(false)
+      navigateToJoin(key)
     } finally {
       setBusy(false)
       try { e.target.value = '' } catch {}
     }
-  }, [router, onOpenChange])
+  }, [navigateToJoin])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
