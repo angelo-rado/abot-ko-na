@@ -13,6 +13,7 @@ import PTR from '../components/PullToRefresh'
 import { SelectedFamilyProvider } from '@/lib/selected-family'
 import { initOutboxProcessor } from '@/lib/offline'
 import { toast } from 'sonner'
+import GlobalMembershipEnsurer from './GlobalMembershipEnsurer'
 
 /** ==== Push config ==== */
 const VAPID_KEY =
@@ -428,6 +429,7 @@ export default function MainLayout({
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <SelectedFamilyProvider>
         <RouteFlash />
+        <GlobalMembershipEnsurer />
         {isStandalone ? (
           <StandaloneShell>{children}</StandaloneShell>
         ) : (
