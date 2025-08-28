@@ -177,20 +177,26 @@ async function sendNotificationToFamilyMembers(
 
     const memberUids = membersSnap.docs.map((d) => d.id).filter((uid) => !exclude.has(uid))
 
-    const fcmTokens: string[] = []
+    const userTokens: Array<{ uid: string; token: string }> = []
     const safariFallbackUids: string[] = []
 
     for (const uid of memberUids) {
       const userDoc = await firestore.collection('users').doc(uid).get()
       const u = userDoc.data() as any
-      if (u && Array.isArray(u.fcmTokens) && u.fcmTokens.length > 0) {
-        fcmTokens.push(...u.fcmTokens)
+      if (u && Array.isArray(u.fcmTokens)) {
+        for (const t of u.fcmTokens) userTokens.push({ uid, token: t })
       } else if (u?.isSafari) {
         safariFallbackUids.push(uid)
       }
     }
 
-    const tokens = Array.from(new Set(fcmTokens)) // dedupe
+    const tokens = Array.from(new Set(userTokens.map(x => x.token))) // dedupe
+    logger.info('Push token summary', {
+      familyId,
+      memberCount: memberUids.length,
+      tokenCount: tokens.length,
+      safariFallbackCount: safariFallbackUids.length,
+    })
 
     const tag = String(extraData.tag ?? `abot:${familyId}`)
     const url = String(extraData.url ?? '/')
@@ -219,11 +225,27 @@ async function sendNotificationToFamilyMembers(
             successCount: res.successCount,
             failureCount: res.failureCount,
           })
+          // prune invalid tokens
+          const removals: Array<Promise<any>> = []
           res.responses.forEach((r, i) => {
             if (!r.success) {
-              logger.error('Push failed', { token: part[i], error: r.error?.message ?? 'unknown' })
+              const token = part[i]
+              const code = (r.error as any)?.code || ''
+              if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
+                const owners = userTokens.filter(ut => ut.token === token).map(ut => ut.uid)
+                owners.forEach(uid => {
+                  removals.push(
+                    firestore.collection('users').doc(uid).update({
+                      fcmTokens: admin.firestore.FieldValue.arrayRemove(token),
+                    }).catch(() => { })
+                  )
+                })
+              } else {
+                logger.error('Push failed', { token, error: r.error?.message ?? 'unknown' })
+              }
             }
           })
+          await Promise.all(removals)
         } catch (err) {
           logger.error('Push multicast exception', { error: err instanceof Error ? err.message : JSON.stringify(err) })
         }
@@ -501,7 +523,7 @@ export const notifyPresenceStatusChange = onDocumentUpdated(
       const uDoc = await firestore.collection('users').doc(userId).get()
       const u = uDoc.data() as any
       displayName = u?.displayName ?? u?.name ?? userId
-    } catch {}
+    } catch { }
 
     const title = next === 'home' ? 'Arrived home' : 'Left home'
     const body = `${displayName} is now ${next}.`

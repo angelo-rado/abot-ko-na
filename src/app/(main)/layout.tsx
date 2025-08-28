@@ -8,7 +8,7 @@ import { motion, useMotionValue, animate } from 'framer-motion'
 import { Bell, HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
-import { getToken } from 'firebase/messaging'
+import { getToken, onMessage } from 'firebase/messaging'
 import PTR from '../components/PullToRefresh'
 import { SelectedFamilyProvider } from '@/lib/selected-family'
 import { initOutboxProcessor } from '@/lib/offline'
@@ -52,9 +52,9 @@ function detectModalOpen(): boolean {
   return !!document.querySelector(
     [
       '[role="dialog"][data-state="open"]',
-      '[role="alertdialog"][data-state="open"]',               
+      '[role="alertdialog"][data-state="open"]',
       '[data-radix-portal] [role="dialog"][data-state="open"]',
-      '[data-radix-portal] [role="alertdialog"][data-state="open"]', 
+      '[data-radix-portal] [role="alertdialog"][data-state="open"]',
       '[data-state="open"][data-side]',
       '[data-radix-portal] [data-state="open"][data-side]',
     ].join(', ')
@@ -167,10 +167,23 @@ function SwipeShell({
             if (!messaging) return
             const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
             if (token) {
+              const idt = await u.getIdToken()
               await fetch('/api/save-fcm-token', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${idt}`,
+                },
                 body: JSON.stringify({ token, userId: u.uid }),
+              }).then(r => r.json()).then(j => {
+                if (!j?.ok) console.warn('[push] save token failed', j)
+              }).catch(err => console.warn('[push] save token error', err))
+
+              // Foreground messages -> toast
+              onMessage(messaging, (payload) => {
+                const title = payload.notification?.title || 'Update'
+                const body = payload.notification?.body || ''
+                toast(title, { description: body })
               })
             }
           } catch { }
@@ -186,7 +199,7 @@ function SwipeShell({
     { label: 'Family', href: '/family', Icon: UsersIcon, node: family },
     { label: 'Notifications', href: '/notifications', Icon: Bell, node: notifications },
     { label: 'Settings', href: '/settings', Icon: SettingsIcon, node: settings },
-    
+
   ]
 
   // Swipe constants (less sensitive)
@@ -393,7 +406,7 @@ export default function MainLayout({
   home,
   deliveries,
   family,
-  notifications, 
+  notifications,
   settings,
 }: {
   children: React.ReactNode
