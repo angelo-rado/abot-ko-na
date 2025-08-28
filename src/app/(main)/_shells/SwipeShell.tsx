@@ -4,7 +4,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
-import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
+import { Bell, HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import PullToRefresh from '@/app/components/PullToRefresh'
 
 const VAPID_KEY =
@@ -28,6 +28,7 @@ export default function SwipeShell({ children }: { children: React.ReactNode[] |
     { label: 'Home', href: '/home', Icon: HomeIcon },
     { label: 'MyDeliveries', href: '/deliveries', Icon: PackageIcon },
     { label: 'Family', href: '/family', Icon: UsersIcon },
+    { label: 'Notifications', href: '/notifications', Icon: Bell },
     { label: 'Settings', href: '/settings', Icon: SettingsIcon },
   ]
 

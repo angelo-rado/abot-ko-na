@@ -5,7 +5,7 @@ import React, { useRef, useEffect, useState } from 'react'
 import { ThemeProvider } from 'next-themes'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, useMotionValue, animate } from 'framer-motion'
-import { HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
+import { Bell, HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirebaseMessaging } from '@/lib/firebase'
 import { getToken } from 'firebase/messaging'
@@ -103,11 +103,12 @@ function StandaloneShell({ children }: { children: React.ReactNode }) {
 
 /** ==== Swipe shell (tabs + swipe + PTR per pane) ==== */
 function SwipeShell({
-  home, deliveries, family, settings,
+  home, deliveries, family, notifications, settings,
 }: {
   home: React.ReactNode
   deliveries: React.ReactNode
   family: React.ReactNode
+  notifications: React.ReactNode
   settings: React.ReactNode
 }) {
   const router = useRouter()
@@ -182,7 +183,9 @@ function SwipeShell({
     { label: 'Home', href: '/', Icon: HomeIcon, node: home },
     { label: 'MyDeliveries', href: '/deliveries', Icon: PackageIcon, node: deliveries },
     { label: 'Family', href: '/family', Icon: UsersIcon, node: family },
+    { label: 'Notifications', href: '/notifications', Icon: Bell, node: notifications },
     { label: 'Settings', href: '/settings', Icon: SettingsIcon, node: settings },
+    
   ]
 
   // Swipe constants (less sensitive)
@@ -389,12 +392,14 @@ export default function MainLayout({
   home,
   deliveries,
   family,
+  notifications, 
   settings,
 }: {
   children: React.ReactNode
   home: React.ReactNode
   deliveries: React.ReactNode
   family: React.ReactNode
+  notifications: React.ReactNode
   settings: React.ReactNode
 }) {
   const pathname = usePathname()
@@ -430,6 +435,7 @@ export default function MainLayout({
             home={home ?? children}
             deliveries={deliveries}
             family={family}
+            notifications={notifications}
             settings={settings}
           />
         )}

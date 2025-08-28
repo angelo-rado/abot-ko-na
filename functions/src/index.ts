@@ -1,3 +1,4 @@
+// functions/src/index.ts
 import * as admin from 'firebase-admin'
 import { LoggingWinston } from '@google-cloud/logging-winston'
 import winston from 'winston'
@@ -8,8 +9,10 @@ import {
   onDocumentCreated,
   onDocumentUpdated,
 } from 'firebase-functions/v2/firestore'
+import { setGlobalOptions } from 'firebase-functions/v2/options'
 
 admin.initializeApp()
+setGlobalOptions({ region: 'asia-southeast1', memory: '256MiB', maxInstances: 10 })
 
 const firestore = admin.firestore()
 const messaging = admin.messaging()
@@ -95,6 +98,59 @@ async function claimInTransitNotification(familyId: string, deliveryId: string):
     return true
   } catch {
     return false
+  }
+}
+
+/* =============================================================================
+   Notification event recorder (for in-app Notifications tab)
+   ============================================================================= */
+
+type EventType =
+  | 'delivery_created'
+  | 'delivery_in_transit'
+  | 'delivery_delivered'
+  | 'delivery_today_summary'
+  | 'presence_changed'
+  | 'system'
+  | string
+
+async function getFamilyMemberUids(familyId: string): Promise<string[]> {
+  const sub = await firestore.collection('families').doc(familyId).collection('members').select().get()
+  if (!sub.empty) return sub.docs.map((d) => d.id)
+
+  const fam = await firestore.doc(`families/${familyId}`).get()
+  const arr = (fam.get('members') as string[] | undefined) ?? []
+  return Array.isArray(arr) ? arr.filter(Boolean) : []
+}
+
+async function recordEvent(
+  familyId: string,
+  type: EventType,
+  title: string,
+  body: string | null,
+  link: string | null,
+  meta: Record<string, any> | null,
+  opts?: { excludeUids?: string[] }
+) {
+  try {
+    const all = await getFamilyMemberUids(familyId)
+    const targets = (opts?.excludeUids?.length ? all.filter((u) => !opts!.excludeUids!.includes(u)) : all)
+      .filter(Boolean)
+    if (targets.length === 0) return
+
+    const evRef = firestore.collection(`families/${familyId}/events`).doc()
+    await evRef.set({
+      familyId,
+      type,
+      title,
+      body: body ?? null,
+      link: link ?? null,
+      meta: meta ?? null,
+      targets,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    })
+  } catch (e) {
+    logger.error('recordEvent failed', { familyId, type, error: e instanceof Error ? e.message : String(e) })
   }
 }
 
@@ -251,6 +307,8 @@ export const notifyDeliveryInTransit = onDocumentUpdated(
     const nextStatus = String(after.status ?? '').toLowerCase()
 
     if (prevStatus !== 'in_transit' && nextStatus === 'in_transit') {
+      const actor = after.updatedBy ?? after.lastEditedBy ?? after.ownerUid ?? null
+
       // Fast race-safe claim (prevents duplicate sends during rapid writes)
       const claimed = await claimInTransitNotification(familyId, deliveryId)
       if (!claimed) {
@@ -267,6 +325,16 @@ export const notifyDeliveryInTransit = onDocumentUpdated(
           expectedDate = isNaN(d.getTime()) ? null : d
         }
       }
+
+      await recordEvent(
+        familyId,
+        'delivery_in_transit',
+        after.title || 'Delivery in transit',
+        after.recipient ? `For ${after.recipient}` : null,
+        `/deliveries?focus=${encodeURIComponent(deliveryId)}`,
+        { deliveryId },
+        actor ? { excludeUids: [actor] } : undefined
+      )
 
       await sendDeliveryNotificationForFamily(familyId, expectedDate, {
         tag: `intransit:${familyId}:${deliveryId}`,
@@ -325,7 +393,15 @@ export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
           continue
         }
 
-        // Collapse/replace earlier daily notifs via `tag`
+        await recordEvent(
+          familyId,
+          'delivery_today_summary',
+          'Today’s deliveries',
+          'You have deliveries scheduled for today.',
+          '/deliveries',
+          { dateKey }
+        )
+
         await sendNotificationToFamilyMembers(
           familyId,
           'Today’s deliveries',
@@ -378,11 +454,24 @@ export const notifyDeliveryCreatedToday = onDocumentCreated(
 
     const { startOfDay, endOfDay } = getTodayBoundsInTimeZone('Asia/Manila')
     if (expected >= startOfDay && expected < endOfDay) {
+      const actor = d.createdBy ?? d.updatedBy ?? d.ownerUid ?? null
+
+      await recordEvent(
+        familyId,
+        'delivery_created',
+        d.title || 'New delivery for today',
+        d.recipient ? `For ${d.recipient}` : null,
+        `/deliveries?focus=${encodeURIComponent(deliveryId)}`,
+        { deliveryId },
+        actor ? { excludeUids: [actor] } : undefined
+      )
+
       await sendNotificationToFamilyMembers(
         familyId,
         'New delivery for today',
         'A delivery scheduled for today was added.',
-        { deliveryId, tag: `today:${familyId}`, url: '/deliveries' }
+        { deliveryId, tag: `today:${familyId}`, url: '/deliveries' },
+        actor ? { excludeUids: [actor] } : undefined
       )
     }
   }
@@ -416,6 +505,16 @@ export const notifyPresenceStatusChange = onDocumentUpdated(
 
     const title = next === 'home' ? 'Arrived home' : 'Left home'
     const body = `${displayName} is now ${next}.`
+
+    await recordEvent(
+      familyId,
+      'presence_changed',
+      title,
+      body,
+      '/family',
+      { uid: userId, status: next, auto: after.autoPresence === true || after.statusSource === 'geo' },
+      { excludeUids: [userId] }
+    )
 
     await sendNotificationToFamilyMembers(
       familyId,
