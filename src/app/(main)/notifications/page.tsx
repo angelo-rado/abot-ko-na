@@ -1,8 +1,6 @@
-// src/app/(main)/notifications/page.tsx
 'use client'
 
 import { useMemo, useCallback, useState, useEffect } from 'react'
-import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -99,7 +97,6 @@ export default function NotificationsPage() {
     return v ? Number(v) || 0 : 0
   })
   useEffect(() => {
-    // scope changed -> load its clear threshold
     if (typeof window === 'undefined') return
     const v = localStorage.getItem(clearKey)
     setClearTs(v ? Number(v) || 0 : 0)
@@ -151,7 +148,6 @@ export default function NotificationsPage() {
   }, [clearKey])
 
   const clearAllLocally = useCallback(async () => {
-    // Mark all read (server) then hide locally
     await markAll()
     const now = Date.now()
     try { localStorage.setItem(clearKey, String(now)) } catch {}
@@ -166,10 +162,7 @@ export default function NotificationsPage() {
       return ms >= clearTs
     })
     if (cat === 'all') return byClear
-    return byClear.filter((n) => {
-      const c = categorize(n)
-      return c === cat
-    })
+    return byClear.filter((n) => categorize(n) === cat)
   }, [items, clearTs, cat])
 
   return (
@@ -194,42 +187,35 @@ export default function NotificationsPage() {
           )}
         </div>
 
-        {/* Actions: compact on mobile */}
+        {/* Actions (responsive) */}
         <div className="flex items-center gap-1.5 sm:gap-2">
-          {/* Icon-only on xs */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="sm:hidden"
-            onClick={markAll}
-            disabled={items.length === 0 || unread.size === 0}
-            aria-label="Mark all read"
-            data-no-swipe
-          >
-            <CheckCheck className="h-4 w-4" />
-          </Button>
-          {/* Text button on sm+ */}
+          {/* Mark all read: icon on xs, text on sm+ */}
           <Button
             variant="ghost"
             size="sm"
-            className="hidden sm:flex"
+            className="gap-1"
             onClick={markAll}
             disabled={items.length === 0 || unread.size === 0}
             data-no-swipe
+            aria-label="Mark all read"
           >
-            <CheckCheck className="mr-1 h-4 w-4" /> Mark all read
+            <CheckCheck className="h-4 w-4" />
+            <span className="hidden sm:inline">Mark all read</span>
           </Button>
 
+          {/* Filter by family */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              {/* Icon-only on xs, text on sm+ */}
-              <Button variant="outline" size="icon" className="sm:hidden" aria-label="Filter by family" data-no-swipe>
+              {/* SINGLE child only (Radix requirement) */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                aria-label="Filter by family"
+                data-no-swipe
+              >
                 <Filter className="h-4 w-4" />
-              </Button>
-              
-              <Button variant="outline" size="sm" className="hidden sm:inline-flex" aria-label="Filter by family" data-no-swipe>
-                <Filter className="mr-2 h-4 w-4" />
-                {currentLabel}
+                <span className="hidden sm:inline">{currentLabel}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
@@ -252,15 +238,19 @@ export default function NotificationsPage() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {/* Clear */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="sm:hidden" aria-label="Clear notifications" data-no-swipe>
+              {/* SINGLE child only (Radix requirement) */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                aria-label="Clear notifications"
+                data-no-swipe
+              >
                 <Trash2 className="h-4 w-4" />
-              </Button>
-
-              <Button variant="outline" size="sm" className="hidden sm:inline-flex" aria-label="Clear notifications" data-no-swipe>
-                <Trash2 className="mr-2 h-4 w-4" />
-                Clear
+                <span className="hidden sm:inline">Clear</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
@@ -416,7 +406,7 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
             <div className="shrink-0 text-xs text-muted-foreground">{createdAt}</div>
           </div>
 
-          {/* Body */}
+        {/* Body */}
           {n.body && (
             <div className="mt-0.5 text-sm text-muted-foreground break-words">
               {n.body}
