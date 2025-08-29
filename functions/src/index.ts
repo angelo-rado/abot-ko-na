@@ -3,12 +3,8 @@ import * as admin from 'firebase-admin'
 import { LoggingWinston } from '@google-cloud/logging-winston'
 import winston from 'winston'
 
-// v2 functions imports
 import { scheduler } from 'firebase-functions/v2'
-import {
-  onDocumentCreated,
-  onDocumentUpdated,
-} from 'firebase-functions/v2/firestore'
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore'
 import { setGlobalOptions } from 'firebase-functions/v2/options'
 
 admin.initializeApp()
@@ -20,35 +16,28 @@ const messaging = admin.messaging()
 const loggingWinston = new LoggingWinston()
 const logger = winston.createLogger({
   level: 'info',
+  defaultMeta: { service: 'abot-functions' },
   transports: [new winston.transports.Console(), loggingWinston],
 })
 
 /* =============================================================================
    Timezone helpers (Asia/Manila)
    ============================================================================= */
-
-const TZ_OFFSETS_HOURS: Record<string, number> = {
-  'Asia/Manila': 8,
-  UTC: 0,
-}
+const TZ_OFFSETS_HOURS: Record<string, number> = { 'Asia/Manila': 8, UTC: 0 }
 
 function getTodayBoundsInTimeZone(timeZone: string): {
   startOfDay: Date
   endOfDay: Date
-  dateKey: string // yyyy-mm-dd in the target time zone
+  dateKey: string
 } {
   const offsetH = TZ_OFFSETS_HOURS[timeZone] ?? 0
-
   const nowUtc = new Date()
   const zonedNow = new Date(nowUtc.getTime() + offsetH * 3600_000)
-
   const y = zonedNow.getUTCFullYear()
   const m = zonedNow.getUTCMonth()
   const d = zonedNow.getUTCDate()
-
   const startOfDayUtc = new Date(Date.UTC(y, m, d) - offsetH * 3600_000)
   const endOfDayUtc = new Date(startOfDayUtc.getTime() + 24 * 3600_000)
-
   const dateKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
   return { startOfDay: startOfDayUtc, endOfDay: endOfDayUtc, dateKey }
 }
@@ -56,7 +45,6 @@ function getTodayBoundsInTimeZone(timeZone: string): {
 /* =============================================================================
    Utils
    ============================================================================= */
-
 function chunk<T>(arr: T[], size: number): T[][] {
   if (size <= 0) return [arr]
   const out: T[][] = []
@@ -67,34 +55,24 @@ function chunk<T>(arr: T[], size: number): T[][] {
 /* =============================================================================
    Idempotency helpers
    ============================================================================= */
-
-// Daily sweep: once per family per day
 async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Promise<boolean> {
   const ref = firestore
-    .collection('system')
-    .doc('dailyDeliveryNotifications')
-    .collection(dateKey)
-    .doc('families')
-    .collection('ids')
-    .doc(familyId)
+    .collection('system').doc('dailyDeliveryNotifications')
+    .collection(dateKey).doc('families')
+    .collection('ids').doc(familyId)
 
   const snap = await ref.get()
   if (snap.exists) return false
-
   await ref.set({ at: admin.firestore.FieldValue.serverTimestamp() })
   return true
 }
 
-// Per-delivery “in transit” notifier claim (race-safe)
 async function claimInTransitNotification(familyId: string, deliveryId: string): Promise<boolean> {
   const ref = firestore
-    .collection('system')
-    .doc('inTransitNotified')
-    .collection(familyId)
-    .doc(deliveryId)
-
+    .collection('system').doc('inTransitNotified')
+    .collection(familyId).doc(deliveryId)
   try {
-    await ref.create({ at: admin.firestore.FieldValue.serverTimestamp() }) // throws if exists
+    await ref.create({ at: admin.firestore.FieldValue.serverTimestamp() })
     return true
   } catch {
     return false
@@ -104,7 +82,6 @@ async function claimInTransitNotification(familyId: string, deliveryId: string):
 /* =============================================================================
    Notification event recorder (for in-app Notifications tab)
    ============================================================================= */
-
 type EventType =
   | 'delivery_created'
   | 'delivery_in_transit'
@@ -134,15 +111,12 @@ async function recordEvent(
 ) {
   try {
     const all = await getFamilyMemberUids(familyId)
-    const targets = (opts?.excludeUids?.length ? all.filter((u) => !opts!.excludeUids!.includes(u)) : all)
-      .filter(Boolean)
+    const targets = (opts?.excludeUids?.length ? all.filter((u) => !opts!.excludeUids!.includes(u)) : all).filter(Boolean)
     if (targets.length === 0) return
 
     const evRef = firestore.collection(`families/${familyId}/events`).doc()
     await evRef.set({
-      familyId,
-      type,
-      title,
+      familyId, type, title,
       body: body ?? null,
       link: link ?? null,
       meta: meta ?? null,
@@ -157,7 +131,6 @@ async function recordEvent(
 /* =============================================================================
    Unified notifier for a family's members (multicast + Safari fallback)
    ============================================================================= */
-
 async function sendNotificationToFamilyMembers(
   familyId: string,
   title: string,
@@ -168,46 +141,46 @@ async function sendNotificationToFamilyMembers(
   try {
     const exclude = new Set(opts?.excludeUids ?? [])
 
-    // Source of truth: subcollection
-    const membersSnap = await firestore
-      .collection('families')
-      .doc(familyId)
-      .collection('members')
-      .get()
-
+    // Members
+    const membersSnap = await firestore.collection('families').doc(familyId).collection('members').get()
     const memberUids = membersSnap.docs.map((d) => d.id).filter((uid) => !exclude.has(uid))
+    logger.info('sendNotificationToFamilyMembers: members fetched', { familyId, memberCount: memberUids.length })
 
+    // Gather tokens
     const userTokens: Array<{ uid: string; token: string }> = []
     const safariFallbackUids: string[] = []
-
     for (const uid of memberUids) {
       const userDoc = await firestore.collection('users').doc(uid).get()
       const u = userDoc.data() as any
-      if (u && Array.isArray(u.fcmTokens)) {
-        for (const t of u.fcmTokens) userTokens.push({ uid, token: t })
+      const tCount = Array.isArray(u?.fcmTokens) ? u.fcmTokens.length : 0
+      logger.info('member token presence', { familyId, uid, tokenCount: tCount, safariFallback: !!u?.isSafari })
+      if (tCount > 0) {
+        for (const t of u!.fcmTokens as string[]) userTokens.push({ uid, token: t })
       } else if (u?.isSafari) {
         safariFallbackUids.push(uid)
       }
     }
 
     const tokens = Array.from(new Set(userTokens.map(x => x.token))) // dedupe
-    logger.info('Push token summary', {
+    logger.info('push token summary', {
       familyId,
       memberCount: memberUids.length,
-      tokenCount: tokens.length,
+      distinctTokenCount: tokens.length,
       safariFallbackCount: safariFallbackUids.length,
     })
 
     const tag = String(extraData.tag ?? `abot:${familyId}`)
     const url = String(extraData.url ?? '/')
 
+    // Multicast in chunks
     if (tokens.length > 0) {
       const chunks = chunk(tokens, 500)
+      logger.info('multicast chunks', { familyId, chunks: chunks.length })
       for (const part of chunks) {
         try {
           const res = await messaging.sendEachForMulticast({
             tokens: part,
-            notification: { title, body }, // For platforms that auto-display
+            notification: { title, body },
             webpush: {
               headers: { TTL: '1800' },
               fcmOptions: { link: url },
@@ -218,13 +191,15 @@ async function sendNotificationToFamilyMembers(
                 icon: '/android-chrome-192x192.png',
               },
             },
-            data: { familyId, ...extraData, tag, url }, // keep strings
+            data: { familyId, ...extraData, tag, url },
           })
-          logger.info('Push multicast result', {
+
+          logger.info('multicast result', {
             familyId,
             successCount: res.successCount,
             failureCount: res.failureCount,
           })
+
           // prune invalid tokens
           const removals: Array<Promise<any>> = []
           res.responses.forEach((r, i) => {
@@ -233,6 +208,7 @@ async function sendNotificationToFamilyMembers(
               const code = (r.error as any)?.code || ''
               if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
                 const owners = userTokens.filter(ut => ut.token === token).map(ut => ut.uid)
+                logger.warn('pruning invalid token', { familyId, ownersCount: owners.length })
                 owners.forEach(uid => {
                   removals.push(
                     firestore.collection('users').doc(uid).update({
@@ -241,36 +217,30 @@ async function sendNotificationToFamilyMembers(
                   )
                 })
               } else {
-                logger.error('Push failed', { token, error: r.error?.message ?? 'unknown' })
+                logger.error('push failed', { familyId, errorCode: code, message: r.error?.message ?? 'unknown' })
               }
             }
           })
           await Promise.all(removals)
         } catch (err) {
-          logger.error('Push multicast exception', { error: err instanceof Error ? err.message : JSON.stringify(err) })
+          logger.error('multicast exception', { familyId, error: err instanceof Error ? err.message : JSON.stringify(err) })
         }
       }
+    } else {
+      logger.info('no webpush tokens to notify', { familyId })
     }
 
-    // Safari fallback
+    // Safari fallback queue
     for (const uid of safariFallbackUids) {
       try {
         await firestore.collection('users').doc(uid).update({
           pendingNotifications: admin.firestore.FieldValue.arrayUnion({
-            title,
-            body,
-            familyId,
-            ...extraData,
-            tag,
-            url,
-            timestamp: Date.now(),
+            title, body, familyId, ...extraData, tag, url, timestamp: Date.now(),
           }),
         })
+        logger.info('queued safari fallback', { familyId, uid })
       } catch (err) {
-        logger.error('Safari fallback queue failed', {
-          uid,
-          error: err instanceof Error ? err.message : JSON.stringify(err),
-        })
+        logger.error('safari fallback queue failed', { familyId, uid, error: err instanceof Error ? err.message : JSON.stringify(err) })
       }
     }
   } catch (err) {
@@ -284,7 +254,6 @@ async function sendNotificationToFamilyMembers(
 /* =============================================================================
    Delivery-specific notifier used by triggers below
    ============================================================================= */
-
 async function sendDeliveryNotificationForFamily(
   familyId: string,
   expectedDate: Date | null,
@@ -294,9 +263,9 @@ async function sendDeliveryNotificationForFamily(
   const tomorrow = new Date(now)
   tomorrow.setDate(now.getDate() + 1)
 
-  logger.info('sendDeliveryNotificationForFamily called', { familyId, expectedDate })
+  logger.info('sendDeliveryNotificationForFamily called', { familyId, hasExpectedDate: !!expectedDate })
   if (!expectedDate || expectedDate < now || expectedDate >= tomorrow) {
-    logger.info('Expected date not within [now, +24h); skip', { familyId, expectedDate })
+    logger.info('skip: expectedDate not within [now, +24h)', { familyId })
     return
   }
   await sendNotificationToFamilyMembers(
@@ -310,10 +279,6 @@ async function sendDeliveryNotificationForFamily(
 /* =============================================================================
    Triggers
    ============================================================================= */
-
-/**
- * 1) Status change -> in_transit
- */
 export const notifyDeliveryInTransit = onDocumentUpdated(
   'families/{familyId}/deliveries/{deliveryId}',
   async (event) => {
@@ -331,7 +296,6 @@ export const notifyDeliveryInTransit = onDocumentUpdated(
     if (prevStatus !== 'in_transit' && nextStatus === 'in_transit') {
       const actor = after.updatedBy ?? after.lastEditedBy ?? after.ownerUid ?? null
 
-      // Fast race-safe claim (prevents duplicate sends during rapid writes)
       const claimed = await claimInTransitNotification(familyId, deliveryId)
       if (!claimed) {
         logger.info('inTransit already claimed; skip', { familyId, deliveryId })
@@ -369,25 +333,19 @@ export const notifyDeliveryInTransit = onDocumentUpdated(
           .collection('deliveries').doc(deliveryId)
           .set({ inTransitNotifiedAt: admin.firestore.FieldValue.serverTimestamp() }, { merge: true })
       } catch (e) {
-        logger.error('Failed to set inTransitNotifiedAt', { e })
+        logger.error('Failed to set inTransitNotifiedAt', { familyId, deliveryId, error: (e as Error).message })
       }
     }
   }
 )
 
-/**
- * 2) Daily 8AM (Asia/Manila) sweep:
- *    Notify once per family if there exists any delivery for TODAY
- *    with status in ['pending','in_transit'].
- */
 export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
   {
-    schedule: '0 8 * * *', // every day at 08:00
+    schedule: '0 8 * * *',
     timeZone: 'Asia/Manila',
   },
   async () => {
     logger.info('Daily 8AM delivery detection start')
-
     const { startOfDay, endOfDay, dateKey } = getTodayBoundsInTimeZone('Asia/Manila')
 
     try {
@@ -434,10 +392,7 @@ export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
         visited.add(familyId)
       }
 
-      logger.info('Daily 8AM delivery detection complete', {
-        dateKey,
-        familiesNotified: visited.size,
-      })
+      logger.info('Daily 8AM delivery detection complete', { dateKey, familiesNotified: visited.size })
     } catch (error) {
       logger.error('Error during daily delivery detection', {
         error: error instanceof Error ? error.message : JSON.stringify(error),
@@ -447,11 +402,6 @@ export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
   }
 )
 
-/**
- * 3) Creation trigger:
- *    Notify when a delivery is CREATED for TODAY (Asia/Manila)
- *    with status in ['pending','in_transit'].
- */
 export const notifyDeliveryCreatedToday = onDocumentCreated(
   'families/{familyId}/deliveries/{deliveryId}',
   async (event) => {
@@ -499,11 +449,6 @@ export const notifyDeliveryCreatedToday = onDocumentCreated(
   }
 )
 
-/**
- * 4) Presence change trigger:
- *    families/{familyId}/presence/{userId}
- *    Notify the family (excluding the user) when status becomes 'home' or 'away'.
- */
 export const notifyPresenceStatusChange = onDocumentUpdated(
   'families/{familyId}/presence/{userId}',
   async (event) => {
@@ -517,7 +462,6 @@ export const notifyPresenceStatusChange = onDocumentUpdated(
     const next = String(after.status ?? '').toLowerCase()
     if (!['home', 'away'].includes(next)) return
 
-    // Try to get a display name
     let displayName = userId
     try {
       const uDoc = await firestore.collection('users').doc(userId).get()

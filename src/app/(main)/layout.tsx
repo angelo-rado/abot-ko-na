@@ -80,6 +80,22 @@ function RouteFlash() {
   return null
 }
 
+function shouldIgnoreTouch(target: EventTarget | null): boolean {
+  if (typeof document === 'undefined' || !target || !(target as Element).closest) return false
+  const el = target as Element
+  return !!el.closest([
+    '[data-no-swipe]',
+    'button',
+    '[role="button"]',
+    'a[href]',
+    'input',
+    'select',
+    'textarea',
+    '[contenteditable]',
+    '[data-radix-portal] *'
+  ].join(','))
+}
+
 /** ==== Standalone shell (no swipe nav) ==== */
 function StandaloneShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -248,6 +264,11 @@ function SwipeShell({
   const baseRef = useRef(0)
 
   function onTouchStart(e: React.TouchEvent) {
+    if (shouldIgnoreTouch(e.target)) {
+      modeRef.current = 'idle'
+      isDragging.current = false
+      return
+    }
     if (uiLocked) return
     modeRef.current = 'detect'
     isDragging.current = false

@@ -70,8 +70,8 @@ export default function NotificationsPage() {
 
   const currentLabel = useMemo(() => {
     if (scope === 'all') return 'All families'
-    const found = families.find((f) => f.id === scope.familyId)
-    return found?.name ?? scope.familyId
+    const found = families.find((f) => f.id === (scope as any).familyId)
+    return found?.name ?? (scope as any).familyId
   }, [scope, families])
 
   const navigateScope = useCallback(
@@ -92,7 +92,7 @@ export default function NotificationsPage() {
   }, [params, router])
 
   // ===== clear threshold (local-only hide) =====
-  const clearKey = scope === 'all' ? CLEAR_KEY_ALL : `${CLEAR_KEY_FAM_PREFIX}${scope.familyId}`
+  const clearKey = scope === 'all' ? CLEAR_KEY_ALL : `${CLEAR_KEY_FAM_PREFIX}${(scope as any).familyId}`
   const [clearTs, setClearTs] = useState<number>(() => {
     if (typeof window === 'undefined') return 0
     const v = localStorage.getItem(clearKey)
@@ -119,9 +119,9 @@ export default function NotificationsPage() {
   }, [items, user?.uid])
 
   const markOne = useCallback(async (n: NotificationDoc) => {
-    if (!user?.uid || !n._path) return
+    if (!user?.uid || !(n as any)._path) return
     try {
-      await updateDoc(doc(firestore, n._path), {
+      await updateDoc(doc(firestore, (n as any)._path), {
         [`reads.${user.uid}`]: serverTimestamp(),
       })
     } catch (e) {
@@ -131,11 +131,11 @@ export default function NotificationsPage() {
 
   const markAll = useCallback(async () => {
     if (!user?.uid) return
-    const targets = items.filter((n) => !n.reads?.[user.uid] && n._path)
+    const targets = items.filter((n) => !n.reads?.[user.uid] && (n as any)._path)
     if (targets.length === 0) return
     await Promise.all(
       targets.map((n) =>
-        updateDoc(doc(firestore, n._path as string), {
+        updateDoc(doc(firestore, (n as any)._path as string), {
           [`reads.${user.uid}`]: serverTimestamp(),
         }).catch(() => {})
       )
@@ -181,9 +181,12 @@ export default function NotificationsPage() {
         <p className="mb-3 text-center text-xs text-amber-600">Offline — showing cached notifications.</p>
       )}
 
-      {/* Header */}
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      {/* Header — mark as no-swipe to keep it tappable on mobile */}
+      <div
+        data-no-swipe
+        className="mb-3 flex items-center justify-between gap-2 sm:gap-3 pointer-events-auto"
+      >
+        <div className="flex items-center gap-2 min-h-[44px]">
           <Bell className="h-5 w-5 shrink-0" />
           <h1 className="text-lg font-semibold">Notifications</h1>
           {unread.size > 0 && (
@@ -191,14 +194,40 @@ export default function NotificationsPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={markAll} disabled={items.length === 0 || unread.size === 0}>
+        {/* Actions: compact on mobile */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Icon-only on xs */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="sm:hidden"
+            onClick={markAll}
+            disabled={items.length === 0 || unread.size === 0}
+            aria-label="Mark all read"
+            data-no-swipe
+          >
+            <CheckCheck className="h-4 w-4" />
+          </Button>
+          {/* Text button on sm+ */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden sm:flex"
+            onClick={markAll}
+            disabled={items.length === 0 || unread.size === 0}
+            data-no-swipe
+          >
             <CheckCheck className="mr-1 h-4 w-4" /> Mark all read
           </Button>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              {/* Icon-only on xs, text on sm+ */}
+              <Button variant="outline" size="icon" className="sm:hidden" aria-label="Filter by family" data-no-swipe>
+                <Filter className="h-4 w-4" />
+              </Button>
+              
+              <Button variant="outline" size="sm" className="hidden sm:inline-flex" aria-label="Filter by family" data-no-swipe>
                 <Filter className="mr-2 h-4 w-4" />
                 {currentLabel}
               </Button>
@@ -225,7 +254,11 @@ export default function NotificationsPage() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="icon" className="sm:hidden" aria-label="Clear notifications" data-no-swipe>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+
+              <Button variant="outline" size="sm" className="hidden sm:inline-flex" aria-label="Clear notifications" data-no-swipe>
                 <Trash2 className="mr-2 h-4 w-4" />
                 Clear
               </Button>
@@ -238,8 +271,13 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      {/* Category pills (iOS-safe, no jitter) */}
-      <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+      {/* Category pills (horiz scroller) — mark as no-swipe */}
+      <div
+        data-no-swipe
+        role="tablist"
+        aria-label="Notification categories"
+        className="mb-2 flex gap-2 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]"
+      >
         <CatPill current={cat} target="all" onSelect={navigateCat} label="All" />
         <CatPill current={cat} target="deliveries" onSelect={navigateCat} label="Deliveries" Icon={Truck} />
         <CatPill current={cat} target="members" onSelect={navigateCat} label="Members" Icon={Users} />
@@ -308,15 +346,19 @@ function CatPill({
   return (
     <button
       type="button"
+      data-no-swipe
+      aria-pressed={active}
+      aria-label={label}
       onClick={() => onSelect(target)}
-      className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs sm:text-sm transition-colors ${
+      className={`whitespace-nowrap rounded-full border px-3 py-2 text-xs sm:text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ${
         active
           ? 'border-primary bg-primary/10 text-primary'
           : 'border-border bg-background text-foreground'
       }`}
       style={{ WebkitTapHighlightColor: 'transparent' }}
+      role="tab"
     >
-      <span className="inline-flex items-center gap-1.5">
+      <span className="inline-flex items-center gap-1.5 min-h-[24px]">
         {Ico ? <Ico className="h-4 w-4" /> : null}
         {label}
       </span>
@@ -346,8 +388,6 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
     }
   })()
 
-  // Optional details (render if available)
-  // We keep this defensive since events can vary.
   const meta: any = (n as any).meta || {}
   const familyName = (n as any).familyName || (n as any).family?.name || null
   const familyId = (n as any).familyId || (n as any).family?.id || null
@@ -427,7 +467,6 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
 
           {/* Actions */}
           <div className="mt-2 flex gap-2">
-            {/* Removed "Open" button per request to avoid misnavigation */}
             {unread && (
               <Button variant="ghost" size="sm" onClick={onSeen}>Mark read</Button>
             )}
