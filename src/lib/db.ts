@@ -23,7 +23,7 @@ export interface Presence {
 }
 
 export interface Delivery {
-  // Dexie PK is still auto-increment under the hood; we keep this loose
+  // Dexie PK is auto-increment under the hood; keep this loose for callers
   id?: any
   familyId: string
   for?: string
@@ -96,6 +96,28 @@ export interface OutboxItem {
   ts: number
 }
 
+export interface MirrorNotification {
+  id: string
+  title?: string | null
+  type: string
+  body?: string | null
+  createdAt?: string | number | Date | null
+  reads?: Record<string, any> | null
+  familyId?: string | null
+  familyName?: string | null
+  meta?: any
+  _path?: string | null
+  updatedAt?: number // unix ms for cache freshness
+}
+
+export interface PendingWrite {
+  id?: number
+  kind: 'mark-read'
+  path: string
+  data: Record<string, any>
+  ts: number
+}
+
 export class AbotKoNaDB extends Dexie {
   presences!: Table<Presence, string>
   // Loosen typing here to avoid TS complaining in callers that pass string keys
@@ -106,6 +128,8 @@ export class AbotKoNaDB extends Dexie {
   homeLocation!: Table<HomeLocationLegacy, string> // legacy, keep
   homeLocationV2!: Table<HomeLocationV2, [string, string]> // new, compound key
   outbox!: Table<OutboxItem, number>
+  notifications!: Table<MirrorNotification, string>
+  pendingWrites!: Table<PendingWrite, number>
 
   constructor() {
     super('abotKoNa')
@@ -166,9 +190,17 @@ export class AbotKoNaDB extends Dexie {
         }
       })
 
-    // v4 — add a secondary index for Firestore docId on deliveries (safe)
+    // v4 — add deliveries.docId index + notifications/pendingWrites stores
     this.version(4).stores({
       deliveries: '++id, docId, familyId, type, eta',
+      notifications: 'id, createdAt, familyId, type, updatedAt',
+      pendingWrites: '++id, kind, ts',
+    })
+
+    // v5 — add compound index for faster family scoping & time sorts (non-breaking)
+    this.version(5).stores({
+      // keep old indexes; add compound [familyId+createdAt] + single createdAt
+      notifications: 'id, [familyId+createdAt], createdAt, familyId, type, updatedAt',
     })
   }
 }
@@ -179,6 +211,5 @@ export async function ensureDbOpen(): Promise<void> {
   if (!db.isOpen()) await db.open()
 }
 
-export type UserSettings = SettingRow;
-
+export type UserSettings = SettingRow
 export type OutboxTask = OutboxItem

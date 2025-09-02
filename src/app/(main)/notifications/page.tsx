@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useNotifications } from '@/lib/notifications/useNotifications'
-import { NotificationDoc } from '@/lib/notifications/types'
+import type { NotificationDoc } from '@/lib/notifications/types'
 import { useAuth } from '@/lib/useAuth'
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
@@ -63,13 +63,17 @@ export default function NotificationsPage() {
 
   const { items, loading, error } = useNotifications(scope)
 
-  // Refresh on join
-  useMemo(() => onJoined(() => router.refresh()), [router])
+  // Refresh when someone joins a family (subscription + cleanup)
+  useEffect(() => {
+    const off = onJoined(() => router.refresh())
+    return () => { try { off?.() } catch {} }
+  }, [router])
 
   const currentLabel = useMemo(() => {
     if (scope === 'all') return 'All families'
-    const found = families.find((f) => f.id === (scope as any).familyId)
-    return found?.name ?? (scope as any).familyId
+    const fid = (scope as any).familyId as string
+    const found = families.find((f) => f.id === fid)
+    return found?.name ?? fid
   }, [scope, families])
 
   const navigateScope = useCallback(
@@ -90,7 +94,13 @@ export default function NotificationsPage() {
   }, [params, router])
 
   // ===== clear threshold (local-only hide) =====
-  const clearKey = scope === 'all' ? CLEAR_KEY_ALL : `${CLEAR_KEY_FAM_PREFIX}${(scope as any).familyId}`
+  const clearKeyBase =
+    scope === 'all'
+      ? CLEAR_KEY_ALL
+      : `${CLEAR_KEY_FAM_PREFIX}${(scope as any).familyId}`
+  // Per-user key to avoid cross-account bleed on shared devices
+  const clearKey = user?.uid ? `${clearKeyBase}:u:${user.uid}` : clearKeyBase
+
   const [clearTs, setClearTs] = useState<number>(() => {
     if (typeof window === 'undefined') return 0
     const v = localStorage.getItem(clearKey)
@@ -106,7 +116,7 @@ export default function NotificationsPage() {
     if (!user?.uid) return new Set<string>()
     const set = new Set<string>()
     for (const n of items) {
-      if (!n.reads || !user?.uid) {
+      if (!n.reads || !user.uid) {
         set.add(n.id)
       } else if (!n.reads[user.uid]) {
         set.add(n.id)
@@ -115,16 +125,19 @@ export default function NotificationsPage() {
     return set
   }, [items, user?.uid])
 
-  const markOne = useCallback(async (n: NotificationDoc) => {
-    if (!user?.uid || !(n as any)._path) return
-    try {
-      await updateDoc(doc(firestore, (n as any)._path), {
-        [`reads.${user.uid}`]: serverTimestamp(),
-      })
-    } catch (e) {
-      console.warn('mark read failed', e)
-    }
-  }, [user?.uid])
+  const markOne = useCallback(
+    async (n: NotificationDoc) => {
+      if (!user?.uid || !(n as any)._path) return
+      try {
+        await updateDoc(doc(firestore, (n as any)._path), {
+          [`reads.${user.uid}`]: serverTimestamp(),
+        })
+      } catch (e) {
+        console.warn('mark read failed', e)
+      }
+    },
+    [user?.uid]
+  )
 
   const markAll = useCallback(async () => {
     if (!user?.uid) return
@@ -141,19 +154,21 @@ export default function NotificationsPage() {
   }, [items, user?.uid])
 
   const clearReadLocally = useCallback(() => {
+    if (items.length === 0) { toast.info('No notifications to clear'); return }
     const now = Date.now()
     try { localStorage.setItem(clearKey, String(now)) } catch {}
     setClearTs(now)
     toast.success('Cleared read notifications')
-  }, [clearKey])
+  }, [clearKey, items.length])
 
   const clearAllLocally = useCallback(async () => {
+    if (items.length === 0) { toast.info('No notifications to clear'); return }
     await markAll()
     const now = Date.now()
     try { localStorage.setItem(clearKey, String(now)) } catch {}
     setClearTs(now)
     toast.success('Cleared all notifications')
-  }, [markAll, clearKey])
+  }, [markAll, clearKey, items.length])
 
   const filtered = useMemo(() => {
     const byClear = items.filter((n) => {
@@ -171,7 +186,9 @@ export default function NotificationsPage() {
       style={{ WebkitFontSmoothing: 'antialiased' }}
     >
       {!isOnline && (
-        <p className="mb-3 text-center text-xs text-amber-600">Offline — showing cached notifications.</p>
+        <p className="mb-3 text-center text-xs text-amber-600" aria-live="polite">
+          Offline — showing cached notifications.
+        </p>
       )}
 
       {/* Header — mark as no-swipe to keep it tappable on mobile */}
@@ -226,7 +243,7 @@ export default function NotificationsPage() {
               </DropdownMenuItem>
               {defaultFamilyId && (
                 <DropdownMenuItem onClick={() => navigateScope(defaultFamilyId)}>
-                  Default: {families.find(f => f.id === defaultFamilyId)?.name ?? defaultFamilyId}
+                  Default: {families.find((f) => f.id === defaultFamilyId)?.name ?? defaultFamilyId}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
@@ -276,7 +293,7 @@ export default function NotificationsPage() {
 
       <Separator />
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 space-y-2" aria-busy={loading ? 'true' : 'false'} aria-live="polite">
         {loading && (
           <>
             {Array.from({ length: 6 }).map((_, i) => (
@@ -364,7 +381,15 @@ function categorize(n: NotificationDoc): Cat {
   return 'all'
 }
 
-function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: boolean; onSeen: () => void }) {
+function NotificationRow({
+  n,
+  unread,
+  onSeen,
+}: {
+  n: NotificationDoc
+  unread: boolean
+  onSeen: () => void
+}) {
   const createdAt = safeFormatDistanceToNow(toDate(n.createdAt))
   const cat = categorize(n)
 
@@ -379,9 +404,17 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
   })()
 
   const meta: any = (n as any).meta || {}
-  const familyName = (n as any).familyName || (n as any).family?.name || null
-  const familyId = (n as any).familyId || (n as any).family?.id || null
-  const actorName = meta.actorName || meta.userName || (n as any).actorName || null
+
+  // Family info – only show badge when we have a human-readable name; never show raw IDs
+  const familyName =
+    (n as any).familyName ||
+    (n as any).family?.name ||
+    meta.familyName ||
+    null
+
+  const actorName =
+    meta.actorName || meta.userName || (n as any).actorName || null
+
   const status = meta.status || (n as any).status || null
   const statusSource = meta.statusSource || (n as any).statusSource || null
   const expected = toDate(meta.expectedDate || (n as any).expectedDate)
@@ -389,6 +422,11 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
   const courier = meta.courier || meta.carrier || null
   const tracking = meta.tracking || meta.trackingNumber || null
   const itemsCount = typeof meta.itemsCount === 'number' ? meta.itemsCount : null
+
+  const familyLabel =
+    typeof familyName === 'string' && familyName.trim().length > 0
+      ? familyName.trim()
+      : null
 
   return (
     <Card
@@ -406,7 +444,7 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
             <div className="shrink-0 text-xs text-muted-foreground">{createdAt}</div>
           </div>
 
-        {/* Body */}
+          {/* Body */}
           {n.body && (
             <div className="mt-0.5 text-sm text-muted-foreground break-words">
               {n.body}
@@ -422,9 +460,9 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
                 : 'Info'}
             </Badge>
 
-            {familyName || familyId ? (
+            {familyLabel ? (
               <Badge variant="secondary" className="text-[10px]">
-                {familyName ?? familyId}
+                {familyLabel}
               </Badge>
             ) : null}
 
@@ -447,7 +485,9 @@ function NotificationRow({ n, unread, onSeen }: { n: NotificationDoc; unread: bo
             ) : null}
 
             {cat === 'deliveries' && typeof itemsCount === 'number' ? (
-              <Badge variant="outline" className="text-[10px]">{itemsCount} item{itemsCount === 1 ? '' : 's'}</Badge>
+              <Badge variant="outline" className="text-[10px]">
+                {itemsCount} item{itemsCount === 1 ? '' : 's'}
+              </Badge>
             ) : null}
 
             {cat === 'deliveries' && tracking ? (
