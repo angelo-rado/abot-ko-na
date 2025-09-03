@@ -14,6 +14,7 @@ import { SelectedFamilyProvider } from '@/lib/selected-family'
 import { initOutboxProcessor } from '@/lib/offline'
 import { toast } from 'sonner'
 import GlobalMembershipEnsurer from './GlobalMembershipEnsurer'
+import { useFcm } from '@/lib/notifications/useFcm'
 
 /** ==== Push config ==== */
 const VAPID_KEY =
@@ -438,6 +439,8 @@ export default function MainLayout({
   settings: React.ReactNode
 }) {
   const pathname = usePathname()
+
+  useFcm();
 
   useEffect(() => { try { initOutboxProcessor() } catch { } }, [])
 
