@@ -4,7 +4,7 @@ import { LoggingWinston } from '@google-cloud/logging-winston'
 import winston from 'winston'
 
 import { scheduler } from 'firebase-functions/v2'
-import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore'
+import { onDocumentCreated, onDocumentUpdated, onDocumentWritten } from 'firebase-functions/v2/firestore'
 import { setGlobalOptions } from 'firebase-functions/v2/options'
 
 admin.initializeApp()
@@ -449,45 +449,68 @@ export const notifyDeliveryCreatedToday = onDocumentCreated(
   }
 )
 
-export const notifyPresenceStatusChange = onDocumentUpdated(
-  'families/{familyId}/presence/{userId}',
+export const notifyPresenceStatusChange = onDocumentWritten(
+  'families/{familyId}/members/{userId}',
   async (event) => {
-    const before = event.data?.before?.data() as any
-    const after = event.data?.after?.data() as any
-    const { familyId, userId } = event.params as { familyId: string; userId: string }
+    const { familyId, userId } = event.params as { familyId: string; userId: string };
 
-    if (!before || !after) return
-    if (before.status === after.status) return
+    const before = event.data?.before.exists ? (event.data?.before.data() as any) : null;
+    const after  = event.data?.after.exists  ? (event.data?.after.data()  as any) : null;
 
-    const next = String(after.status ?? '').toLowerCase()
-    if (!['home', 'away'].includes(next)) return
+    // Deleted doc → ignore
+    if (!after) return;
 
-    let displayName = userId
-    try {
-      const uDoc = await firestore.collection('users').doc(userId).get()
-      const u = uDoc.data() as any
-      displayName = u?.displayName ?? u?.name ?? userId
-    } catch { }
+    // Resolve previous/next status from nested presence.status or fallback top-level status
+    const prevStatus = String(before?.presence?.status ?? before?.status ?? '').toLowerCase();
+    const nextStatus = String(after?.presence?.status  ?? after?.status  ?? '').toLowerCase();
 
-    const title = next === 'home' ? 'Arrived home' : 'Left home'
-    const body = `${displayName} is now ${next}.`
+    // Log so you can see it in Cloud logs
+    logger.info('notifyPresenceStatusChange fired', {
+      familyId, userId, prevStatus, nextStatus, hasBefore: !!before, hasAfter: !!after,
+    });
 
+    // First-time create without prior status? Skip to avoid noise.
+    if (!before || !prevStatus) {
+      return;
+    }
+
+    // Only notify on actual transition and only for home/away
+    if (prevStatus === nextStatus) return;
+    if (!['home', 'away'].includes(nextStatus)) return;
+
+    // Best-effort name: prefer member doc.name, else users/{uid}
+    let displayName = after?.name || userId;
+    if (!after?.name) {
+      try {
+        const uDoc = await firestore.collection('users').doc(userId).get();
+        const u = uDoc.data() as any;
+        displayName = u?.displayName ?? u?.name ?? displayName;
+      } catch { /* ignore */ }
+    }
+
+    const isAuto = (after?.presence?.statusSource === 'geo') || (after?.autoPresence === true);
+    const title = nextStatus === 'home' ? 'Arrived home' : 'Left home';
+    const body  = `${displayName} is now ${nextStatus}.`;
+
+    // Record event (exclude the actor user)
     await recordEvent(
       familyId,
       'presence_changed',
       title,
       body,
       '/family',
-      { uid: userId, status: next, auto: after.autoPresence === true || after.statusSource === 'geo' },
+      { uid: userId, status: nextStatus, auto: isAuto },
       { excludeUids: [userId] }
-    )
+    );
 
+    // Push to family members (exclude the actor user)
     await sendNotificationToFamilyMembers(
       familyId,
       title,
       body,
-      { changedUserId: userId, status: next, tag: `presence:${familyId}:${userId}` },
+      { changedUserId: userId, status: nextStatus, tag: `presence:${familyId}:${userId}`, url: '/family' },
       { excludeUids: [userId] }
-    )
+    );
   }
-)
+);
+
