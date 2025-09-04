@@ -4,6 +4,7 @@ on:
     branches: [ "**" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch: {}   # ← add this to enable the “Run workflow” button
 
 jobs:
   snapshot:
