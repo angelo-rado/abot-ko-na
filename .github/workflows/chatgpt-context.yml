@@ -4,19 +4,19 @@ on:
     branches: [ "**" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: {}  # run from Actions UI
+  workflow_dispatch: {}
 
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
 
@@ -26,42 +26,24 @@ jobs:
       - name: Generate snapshot
         run: npx tsx tools/chatgpt-context.ts
 
-      - name: Install jq (if missing)
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Update Gist via API
-        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
-        env:
-          GIST_ID: ${{ secrets.GIST_ID }}
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+      # ---- Diagnostics so we see exactly what's wrong (no secrets printed) ----
+      - name: Check secrets exist
         run: |
-          set -euo pipefail
-          FILE=".chatgpt/chatgpt-context.md"
-          if [ ! -f "$FILE" ]; then
-            echo "Snapshot not found: $FILE"
-            exit 1
-          fi
-          # Encode file content as JSON string safely
-          CONTENT=$(jq -Rsa . < "$FILE")
-          PAYLOAD=$(jq -n --argfile c <(echo "$CONTENT") '{files: {"abot-ko-na-context.md": {content: $c}}}')
+          if [ -z "${{ secrets.GIST_ID }}" ]; then echo "GIST_ID is MISSING"; exit 1; else echo "GIST_ID is present"; fi
+          if [ -z "${{ secrets.GIST_TOKEN }}" ]; then echo "GIST_TOKEN is MISSING"; exit 1; else echo "GIST_TOKEN is present"; fi
+          test -f .chatgpt/chatgpt-context.md || (echo "snapshot file missing"; exit 1)
 
-          echo "Patching Gist $GIST_ID..."
-          HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/gist_resp.json \
-            -X PATCH "https://api.github.com/gists/${GIST_ID}" \
-            -H "Authorization: Bearer ${GIST_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -d "{\"files\": {\"abot-ko-na-context.md\": {\"content\": $(cat <<'JSON'
-$CONTENT
-JSON
-)}}}")
+      # ---- Update Gist (simple, reliable) ----
+      - name: Update Gist
+        uses: exuanbo/actions-deploy-gist@v1
+        with:
+          token: ${{ secrets.GIST_TOKEN }}          # PAT with gist scope
+          gist_id: ${{ secrets.GIST_ID }}           # e.g. 51ed72896ed154e274ce17f4a7093937
+          file_path: .chatgpt/chatgpt-context.md    # local file
+          file_type: text/markdown                  # content type
 
-          echo "HTTP status: $HTTP_STATUS"
-          echo "Response:"
-          cat /tmp/gist_resp.json
-
-          test "$HTTP_STATUS" = "200" || exit 1
-
-      - name: Upload artifact (fallback if no secrets)
+      # Always upload artifact for debugging
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: chatgpt-context
