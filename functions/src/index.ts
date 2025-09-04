@@ -172,7 +172,7 @@ async function sendNotificationToFamilyMembers(
     const tag = String(extraData.tag ?? `abot:${familyId}`)
     const url = String(extraData.url ?? '/')
 
-    // Multicast in chunks
+    // Multicast in chunks — DATA-ONLY payloads
     if (tokens.length > 0) {
       const chunks = chunk(tokens, 500)
       logger.info('multicast chunks', { familyId, chunks: chunks.length })
@@ -180,18 +180,21 @@ async function sendNotificationToFamilyMembers(
         try {
           const res = await messaging.sendEachForMulticast({
             tokens: part,
-            notification: { title, body },
+            // No "notification" key here → data-only
             webpush: {
               headers: { TTL: '1800' },
-              fcmOptions: { link: url },
-              notification: {
-                tag,
-                renotify: false,
-                badge: '/favicon-32x32.png',
-                icon: '/android-chrome-192x192.png',
-              },
+              // fcmOptions.link is optional in data-only; we still set url in data and handle in SW
             },
-            data: { familyId, ...extraData, tag, url },
+            data: {
+              familyId,
+              ...extraData,
+              tag,
+              url,
+              title,
+              body,
+              icon: '/android-chrome-192x192.png',
+              badge: '/favicon-32x32.png',
+            },
           })
 
           logger.info('multicast result', {
@@ -513,4 +516,3 @@ export const notifyPresenceStatusChange = onDocumentWritten(
     );
   }
 );
-

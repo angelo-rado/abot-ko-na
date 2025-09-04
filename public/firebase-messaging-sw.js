@@ -56,52 +56,66 @@ messaging.onBackgroundMessage((payload) => {
 // Optional: fallback push handler (for non-FCM web push sources)
 // -------------------------------------------------------------
 self.addEventListener('push', (event) => {
-  let data = {};
-  try { data = event?.data?.json?.() ?? event?.data?.json() ?? {}; } catch {}
+  let payload = {};
+  try {
+    payload = event.data ? event.data.json() : {};
+  } catch (_) {
+    // ignore malformed payloads
+  }
 
-  const looksLikeFCM =
-    data?.fcmOptions ||
-    data?.fcmMessageId ||
-    data?.from ||
-    (data?.notification &&
-      (data?.data?.firebaseMessaging || data?.data?.google || data?.data?.gcm_message_id));
-  if (looksLikeFCM) return;
+  // FCM may nest custom keys under `data` or mix levels
+  const d = payload.data || payload;
 
-  const title = data?.notification?.title || data?.title || 'Abot Ko Na';
-  const body = data?.notification?.body || data?.body || '📦 You have a new update!';
-  const url = data?.data?.url || data?.data?.link || data?.notification?.click_action || '/';
-  const tag = data?.data?.tag || 'general';
+  const title = d.title || 'Abot Ko Na';
+  const body = d.body || '';
+  const tag = d.tag || 'abot';
+  const url = d.url || '/';
+
+  const icon = d.icon || '/android-chrome-192x192.png';
+  const badge = d.badge || '/favicon-32x32.png';
+
+  const options = {
+    body,
+    tag,
+    renotify: false,
+    icon,
+    badge,
+    data: { url },
+  };
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: '/android-chrome-192x192.png',
-      badge: '/favicon-32x32.png',
-      tag,
-      renotify: false,
-      data: { url },
-    })
+    self.registration.showNotification(title, options)
   );
 });
 
 // Click → focus existing tab or open new
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || '/';
+  const url = (event.notification && event.notification.data && event.notification.data.url) || '/';
+
   event.waitUntil((async () => {
-    const windowClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const desired = new URL(targetUrl, self.location.origin);
-    for (const client of windowClients) {
+    const targetUrl = new URL(url, self.location.origin).toString();
+    const clientList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+
+    // Focus an open tab with our app if it exists
+    for (const client of clientList) {
       try {
         const clientUrl = new URL(client.url);
-        if (clientUrl.origin === desired.origin) {
-          client.navigate(targetUrl);
-          return client.focus();
+        if (clientUrl.origin === self.location.origin) {
+          await client.focus();
+          // Optionally, navigate if it's a different path
+          if ('navigate' in client && clientUrl.toString() !== targetUrl) {
+            await client.navigate(targetUrl);
+          }
+          return;
         }
-      } catch {}
+      } catch (_) { /* ignore */ }
     }
-    if (clients.openWindow) return clients.openWindow(targetUrl);
-    return null;
+
+    // Otherwise open a new tab
+    if (clients.openWindow) {
+      await clients.openWindow(targetUrl);
+    }
   })());
 });
 

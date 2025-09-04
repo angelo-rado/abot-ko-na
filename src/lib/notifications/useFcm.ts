@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { initializeApp, getApps } from 'firebase/app';
 import { getMessaging, getToken, onMessage, isSupported, deleteToken, Messaging } from 'firebase/messaging';
+import type { User } from 'firebase/auth';
 import { useAuth } from '@/lib/useAuth';
 
 type Status = 'idle' | 'checking' | 'granted' | 'denied' | 'unsupported' | 'error';
@@ -26,12 +27,22 @@ function getMessagingSingleton() {
   return messagingSingleton;
 }
 
-async function saveTokenToServer(token: string, userId: string) {
-  // Reuse your existing API route that union-adds tokens to users/{uid}.fcmTokens
+async function getOrRegisterFcmSW(): Promise<ServiceWorkerRegistration> {
+  // Ensure our dedicated SW exists; fallback to registering it
+  const existing = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+  if (existing) return existing;
+  return navigator.serviceWorker.register('/firebase-messaging-sw.js');
+}
+
+async function saveTokenToServer(token: string, user: User) {
+  const idToken = await user.getIdToken();
   await fetch('/api/fcm/save', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, userId }),
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ token, userId: user.uid }),
   });
 }
 
@@ -54,8 +65,16 @@ export function useFcm() {
         return null;
       }
 
+      // Ensure our SW is registered and ready
+      const swReg = await getOrRegisterFcmSW();
+
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') {
+        // If previously had a token, attempt cleanup
+        if (lastTokenRef.current) {
+          try { await deleteToken(messaging); } catch {}
+          lastTokenRef.current = null;
+        }
         setStatus('denied');
         return null;
       }
@@ -65,21 +84,20 @@ export function useFcm() {
         console.warn('[FCM] Missing NEXT_PUBLIC_FIREBASE_VAPID_KEY');
       }
 
-      const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: await navigator.serviceWorker.ready });
+      // Primary token attempt
+      let token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg });
+
+      // Occasionally returns empty; retry once after a delete
       if (!token) {
-        // Occasionally the browser returns empty token; try to recover once
-        await deleteToken(messaging);
-        const retry = await getToken(messaging, { vapidKey, serviceWorkerRegistration: await navigator.serviceWorker.ready });
-        if (!retry) throw new Error('FCM getToken returned empty twice');
-        lastTokenRef.current = retry;
-        if (user?.uid) await saveTokenToServer(retry, user.uid);
-        setStatus('granted');
-        return retry;
+        try { await deleteToken(messaging); } catch {}
+        token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg });
+        if (!token) throw new Error('FCM getToken returned empty twice');
       }
 
+      // Save to server if changed
       if (token !== lastTokenRef.current) {
         lastTokenRef.current = token;
-        if (user?.uid) await saveTokenToServer(token, user.uid);
+        if (user?.uid) await saveTokenToServer(token, user as User);
       }
 
       setStatus('granted');
@@ -92,28 +110,38 @@ export function useFcm() {
   }, [user?.uid]);
 
   useEffect(() => {
-    // Initial token + refresh every 24h (FCM web no longer exposes onTokenRefresh)
+    // Initial token + refresh every 24h
     ensureToken();
     const id = window.setInterval(ensureToken, 24 * 60 * 60 * 1000);
     return () => window.clearInterval(id);
   }, [ensureToken]);
 
   useEffect(() => {
+    // Foreground message handler (data-only)
     (async () => {
       if (!(await isSupported())) return;
       const messaging = getMessagingSingleton();
       if (!messaging) return;
       onMessage(messaging, (payload) => {
-        // Foreground messages: show a toast / in-app banner
-        const title = payload?.notification?.title || payload?.data?.title || 'Abot Ko Na';
-        const body = payload?.notification?.body || payload?.data?.body || '';
-        // Minimal non-opinionated: browser Notification if permitted; your UI can hook into this event instead.
+        const d = (payload as any).data || {};
+        const title = d.title || 'Abot Ko Na';
+        const body = d.body || '';
         if (Notification.permission === 'granted') {
+          // Lightweight foreground toast via Notification API; app can hook here for custom UI
           new Notification(title, { body });
         }
       });
     })();
   }, []);
+
+  // Optional: if the tab regains focus and permission flipped, re-check
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') ensureToken();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [ensureToken]);
 
   return { status, ensureToken };
 }

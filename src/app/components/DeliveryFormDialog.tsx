@@ -238,13 +238,13 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         itemMode === 'single'
           ? ''
           : (() => {
-            const nums = prev
-              .map((it) => (typeof it?.name === 'string' ? it.name.trim() : ''))
-              .map((n) => (/^\d+$/.test(n) ? parseInt(n, 10) : null))
-              .filter((n): n is number => n != null)
-            const next = nums.length ? Math.max(...nums) + 1 : prev.length + 1
-            return String(next < 1 ? 1 : next)
-          })()
+              const nums = prev
+                .map((it) => (typeof it?.name === 'string' ? it.name.trim() : ''))
+                .map((n) => (/^\d+$/.test(n) ? parseInt(n, 10) : null))
+                .filter((n): n is number => n != null)
+              const next = nums.length ? Math.max(...nums) + 1 : prev.length + 1
+              return String(next < 1 ? 1 : next)
+            })()
 
       return [
         ...prev,
@@ -259,7 +259,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       ]
     })
   }
-
 
   function updateItemRow(id: string, patch: Partial<ItemRow>) {
     modifiedItemsRef.current.add(id)
@@ -313,11 +312,39 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     if (!isOnline()) {
       try {
         const now = Date.now()
-        const tempId = `offline-${'${'}now${'}'}`
+        const tempId = `offline-${now}`
         const fam = familyId
         // Basic single delivery optimistic mirror
-        await db.deliveries.put({ id: tempId, familyId: fam!, title: values.title?.trim() || 'Untitled', type: itemMode === 'single' ? 'single' : 'multiple', amount: values.codAmount ?? null, note: values.note ?? '', eta: values.expectedDate ? Date.parse(values.expectedDate) : null, createdAt: now, updatedAt: now, itemCount: itemMode === 'single' ? 1 : items.length })
-        await enqueue({ op: 'addDelivery', familyId: fam, payload: { familyId: fam, id: tempId, payload: { title: values.title?.trim() || 'Untitled', type: itemMode === 'single' ? 'single' : 'multiple', amount: values.codAmount ?? null, note: values.note ?? '', expectedDate: values.expectedDate ? Date.parse(values.expectedDate) : null, createdAt: now, updatedAt: now, itemCount: itemMode === 'single' ? 1 : items.length } } })
+        await db.deliveries.put({
+          id: tempId,
+          familyId: fam!,
+          title: values.title?.trim() || 'Untitled',
+          type: itemMode === 'single' ? 'single' : 'multiple',
+          amount: values.codAmount ?? null,
+          note: values.note ?? '',
+          eta: values.expectedDate ? Date.parse(values.expectedDate) : null,
+          createdAt: now,
+          updatedAt: now,
+          itemCount: itemMode === 'single' ? 1 : items.length,
+        })
+        await enqueue({
+          op: 'addDelivery',
+          familyId: fam,
+          payload: {
+            familyId: fam,
+            id: tempId,
+            payload: {
+              title: values.title?.trim() || 'Untitled',
+              type: itemMode === 'single' ? 'single' : 'multiple',
+              amount: values.codAmount ?? null,
+              note: values.note ?? '',
+              expectedDate: values.expectedDate ? Date.parse(values.expectedDate) : null,
+              createdAt: now,
+              updatedAt: now,
+              itemCount: itemMode === 'single' ? 1 : items.length,
+            },
+          },
+        })
         toast('Saved offline — will sync when online', { icon: '📶' })
         onOpenChange(false)
         return
@@ -325,7 +352,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         toast.error('Failed to save offline draft')
       }
     }
-    e?.preventDefault()
+
     setFormErrors({})
     const errors: Record<string, string> = {}
 
@@ -418,7 +445,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           itemCount: 0,
           type: determinedType,
           codAmount: values.codAmount ?? undefined,
-          expectedDate: headerDate ?? undefined,  // 23:59 local
+          expectedDate: headerDate ?? undefined, // 23:59 local
           note: values.note?.trim() || '',
           receiverNote: '',
         })
@@ -490,22 +517,30 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               key="dialog"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.2 }}
+              exit={{ opacity: 0, scale: 0.97 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
             >
-              <DialogContent aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto">
+              <DialogContent aria-describedby={undefined} className="relative max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
                 </DialogHeader>
 
-                {isSaving && (
-                  <div className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md">
-                    <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
-                  </div>
-                )}
+                <AnimatePresence>
+                  {isSaving && (
+                    <motion.div
+                      key="saving-overlay"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md"
+                    >
+                      <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
 
                 <form onSubmit={onSubmit}
-                  className={`space-y-4 transition-opacity duration-200 ${isSaving ? 'opacity-50 pointer-events-none' : ''}`}>
+                  className={`space-y-4 transition-all duration-200 ${isSaving ? 'opacity-50 pointer-events-none blur-[1px]' : ''}`}>
                   <div>
                     <Label>Title</Label>
                     <Input
@@ -813,4 +848,3 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     </>
   )
 }
-
