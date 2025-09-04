@@ -1,4 +1,5 @@
 name: Update ChatGPT Context
+
 on:
   push:
     branches: [ "**" ]
@@ -30,7 +31,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Update Gist via API
-        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
+        if: ${{ secrets.GIST_ID != '' && secrets.GIST_TOKEN != '' }}
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
