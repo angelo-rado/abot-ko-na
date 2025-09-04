@@ -79,11 +79,11 @@ export function useFcm() {
         return null;
       }
 
-      console.log('[vapid length]', (process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ?? '').trim().length);
+      console.log('[vapid length]', (process.env.NEXT_PUBLIC_VAPID_KEY ?? '').trim().length);
 
-      const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY!;
+      const vapidKey = process.env.NEXT_PUBLIC_VAPID_KEY!;
       if (!vapidKey) {
-        console.warn('[FCM] Missing NEXT_PUBLIC_FIREBASE_VAPID_KEY');
+        console.warn('[FCM] Missing NEXT_PUBLIC_VAPID_KEY');
       }
 
       // Primary token attempt
