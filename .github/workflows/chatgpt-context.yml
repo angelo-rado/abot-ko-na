@@ -56,9 +56,8 @@ jobs:
             exit 1
           fi
 
-          # Encode file content as JSON string safely
-          CONTENT=$(jq -Rsa . < "$FILE")
-          PAYLOAD=$(jq -n --arg c "$CONTENT" '{files: {"abot-ko-na-context.md": {content: $c}}}')
+          # Build payload safely from file content
+          PAYLOAD=$(jq -Rs --arg fn "abot-ko-na-context.md" '{files: {($fn): {content: .}}}' < "$FILE")
 
           echo "Patching Gist $GIST_ID..."
           HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/gist_resp.json \
