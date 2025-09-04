@@ -30,8 +30,22 @@ jobs:
       - name: Install jq (if missing)
         run: sudo apt-get update && sudo apt-get install -y jq
 
+      - name: Debug secrets presence
+        run: |
+          if [ -z "${{ secrets.GIST_ID }}" ]; then
+            echo "GIST_ID is NOT set"
+          else
+            echo "GIST_ID is set"
+          fi
+
+          if [ -z "${{ secrets.GIST_TOKEN }}" ]; then
+            echo "GIST_TOKEN is NOT set"
+          else
+            echo "GIST_TOKEN is set"
+          fi
+
       - name: Update Gist via API
-        if: ${{ secrets.GIST_ID != '' && secrets.GIST_TOKEN != '' }}
+        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
