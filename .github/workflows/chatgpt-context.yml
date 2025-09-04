@@ -4,7 +4,7 @@ on:
     branches: [ "**" ]
   pull_request:
     branches: [ "main" ]
-  workflow_dispatch: {}   # ← add this to enable the “Run workflow” button
+  workflow_dispatch: {}  # run from Actions UI
 
 jobs:
   snapshot:
@@ -15,33 +15,52 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-      - name: Install deps
-        run: pnpm install --frozen-lockfile || npm ci
+
+      - name: Install deps (npm fallback)
+        run: npm ci || npm i
+
       - name: Generate snapshot
         run: npx tsx tools/chatgpt-context.ts
-      - name: Update Gist
+
+      - name: Install jq (if missing)
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Update Gist via API
         if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
-        uses: actions/github-script@v7
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
-        with:
-          script: |
-            const fs = require('fs');
-            const { Octokit } = require('@octokit/rest');
-            const content = fs.readFileSync('.chatgpt/chatgpt-context.md', 'utf8');
-            const octokit = new Octokit({ auth: process.env.GIST_TOKEN });
-            await octokit.gists.update({
-              gist_id: process.env.GIST_ID,
-              files: { 'abot-ko-na-context.md': { content } },
-              description: `Abot Ko Na context @ ${process.env.GITHUB_REF_NAME} ${process.env.GITHUB_SHA?.slice(0,7)}`
-            });
+        run: |
+          set -euo pipefail
+          FILE=".chatgpt/chatgpt-context.md"
+          if [ ! -f "$FILE" ]; then
+            echo "Snapshot not found: $FILE"
+            exit 1
+          fi
+          # Encode file content as JSON string safely
+          CONTENT=$(jq -Rsa . < "$FILE")
+          PAYLOAD=$(jq -n --argfile c <(echo "$CONTENT") '{files: {"abot-ko-na-context.md": {content: $c}}}')
+
+          echo "Patching Gist $GIST_ID..."
+          HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/gist_resp.json \
+            -X PATCH "https://api.github.com/gists/${GIST_ID}" \
+            -H "Authorization: Bearer ${GIST_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"files\": {\"abot-ko-na-context.md\": {\"content\": $(cat <<'JSON'
+$CONTENT
+JSON
+)}}}")
+
+          echo "HTTP status: $HTTP_STATUS"
+          echo "Response:"
+          cat /tmp/gist_resp.json
+
+          test "$HTTP_STATUS" = "200" || exit 1
+
       - name: Upload artifact (fallback if no secrets)
         uses: actions/upload-artifact@v4
         with:
