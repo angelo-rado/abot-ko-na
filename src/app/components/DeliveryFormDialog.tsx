@@ -222,9 +222,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
   }, [itemMode])
 
-  const updateField = (k: keyof DeliveryFormValues, v: any) =>
-    setValues((s) => ({ ...s, [k]: v }))
-
   function addItemRow() {
     if (itemMode === 'single' && items.length >= 1) return
 
@@ -445,7 +442,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           itemCount: 0,
           type: determinedType,
           codAmount: values.codAmount ?? undefined,
-          expectedDate: headerDate ?? undefined, // 23:59 local
+          expectedDate: headerDate ?? undefined,  // 23:59 local
           note: values.note?.trim() || '',
           receiverNote: '',
         })
@@ -504,344 +501,319 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
   }
 
-  const previewNames = (draftItemsRef.current ?? items).slice(0, 5).map((it) => it.name?.trim() || '(unnamed item)')
-
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => {
         if (!v) { handleDialogClose() } else { onOpenChange(true) }
       }}>
-        <AnimatePresence>
-          {open && (
-            <motion.div
-              key="dialog"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.97 }}
-              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <DialogContent aria-describedby={undefined} className="relative max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
-                </DialogHeader>
+        {/* Remove outer motion wrapper to avoid breaking Radix centering */}
+        <DialogContent
+          aria-describedby={undefined}
+          className="relative max-h-[90vh] overflow-y-auto"
+        >
+          <DialogHeader>
+            <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
+          </DialogHeader>
 
-                <AnimatePresence>
-                  {isSaving && (
-                    <motion.div
-                      key="saving-overlay"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md"
-                    >
-                      <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
-                    </motion.div>
+          <AnimatePresence>
+            {isSaving && (
+              <motion.div
+                key="saving-overlay"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md"
+              >
+                <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <form onSubmit={onSubmit}
+            className={`space-y-4 transition-all duration-200 ${isSaving ? 'opacity-50 pointer-events-none blur-[1px]' : ''}`}>
+            <div>
+              <Label>Title</Label>
+              <Input
+                value={values.title}
+                onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
+                required
+                autoFocus
+              />
+              {formErrors.title && <p className="text-sm text-red-500 mt-1">{formErrors.title}</p>}
+            </div>
+
+            <div>
+              <Label>Expected date &amp; time</Label>
+              <input
+                type="datetime-local"
+                className="mt-1 block w-full rounded border px-2 py-1"
+                value={values.expectedDate}
+                onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value }))}
+              />
+              {formErrors.expectedDate && (
+                <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>
+              )}
+              {!isEdit && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Time is auto-set to <strong>11:59 PM</strong> on create.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Label>Item mode</Label>
+              <div className="mt-1 flex gap-2 items-center">
+                <Button type="button" variant={itemMode === 'single' ? 'default' : 'outline'} onClick={handleSetSingleMode} size="sm">
+                  Single
+                </Button>
+                <Button type="button" variant={itemMode === 'multiple' ? 'default' : 'outline'} onClick={handleSetMultipleMode} size="sm">
+                  Multiple
+                </Button>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                {itemMode === 'single'
+                  ? 'Single delivery — only one item allowed. COD enabled.'
+                  : 'Multiple items (bulk) — COD is disabled and handled per item.'}
+              </p>
+            </div>
+
+            <div>
+              <Label>COD Amount (optional)</Label>
+              <Input
+                type="number"
+                value={values.codAmount ?? ''}
+                onChange={(e) => setValues((v) => ({ ...v, codAmount: e.target.value ? Number(e.target.value) : null }))}
+                min={0}
+                disabled={itemMode === 'multiple' || items.length > 1}
+                title={itemMode === 'multiple' || items.length > 1 ? 'COD is calculated per item in bulk deliveries' : ''}
+              />
+              {(itemMode === 'multiple' || items.length > 1) && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  COD is automatically calculated per item in bulk deliveries.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <Label htmlFor="status">Status</Label>
+              <Select
+                value={values.status}
+                onValueChange={(val) =>
+                  setValues((v) => ({ ...v, status: val as DeliveryStatus }))
+                }
+              >
+                <SelectTrigger id="status" className="mt-1 w-full">
+                  <SelectValue placeholder="Select status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="in_transit">In Transit</SelectItem>
+                  <SelectItem value="delivered">Delivered</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label>Notes</Label>
+              <Textarea
+                id="note"
+                value={values.note}
+                onChange={(e) => setValues((v) => ({ ...v, note: e.target.value }))}
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <Label>Items</Label>
+                {formErrors.items && (
+                  <p className="text-sm text-red-500 mt-1">{formErrors.items}</p>
+                )}
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={addItemRow}
+                    disabled={addItemDisabled}
+                    title={addItemDisabled ? 'Switch to Multiple to add items' : 'Add item'}
+                  >
+                    Add item
+                  </Button>
+                  {addItemDisabled && !isEdit && (
+                    <span className="text-sm text-muted-foreground max-w-[200px]">
+                      Switch to <strong>Multiple</strong> mode to add more items.
+                    </span>
                   )}
-                </AnimatePresence>
+                </div>
+              </div>
 
-                <form onSubmit={onSubmit}
-                  className={`space-y-4 transition-all duration-200 ${isSaving ? 'opacity-50 pointer-events-none blur-[1px]' : ''}`}>
-                  <div>
-                    <Label>Title</Label>
-                    <Input
-                      value={values.title}
-                      onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
-                      required
-                      autoFocus
-                    />
-                    {formErrors.title && <p className="text-sm text-red-500 mt-1">{formErrors.title}</p>}
-                  </div>
-
-                  <div>
-                    <Label>Expected date &amp; time</Label>
-                    <input
-                      type="datetime-local"
-                      className="mt-1 block w-full rounded border px-2 py-1"
-                      value={values.expectedDate}
-                      onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value }))}
-                    />
-                    {formErrors.expectedDate && (
-                      <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>
-                    )}
-                    {!isEdit && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Time is auto-set to <strong>11:59 PM</strong> on create.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <Label>Item mode</Label>
-                    <div className="mt-1 flex gap-2 items-center">
-                      <Button type="button" variant={itemMode === 'single' ? 'default' : 'outline'} onClick={handleSetSingleMode} size="sm">
-                        Single
-                      </Button>
-                      <Button type="button" variant={itemMode === 'multiple' ? 'default' : 'outline'} onClick={handleSetMultipleMode} size="sm">
-                        Multiple
-                      </Button>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {itemMode === 'single'
-                        ? 'Single delivery — only one item allowed. COD enabled.'
-                        : 'Multiple items (bulk) — COD is disabled and handled per item.'}
-                    </p>
-                  </div>
-
-                  <div>
-                    <Label>COD Amount (optional)</Label>
-                    <Input
-                      type="number"
-                      value={values.codAmount ?? ''}
-                      onChange={(e) => setValues((v) => ({ ...v, codAmount: e.target.value ? Number(e.target.value) : null }))}
-                      min={0}
-                      disabled={itemMode === 'multiple' || items.length > 1}
-                      title={itemMode === 'multiple' || items.length > 1 ? 'COD is calculated per item in bulk deliveries' : ''}
-                    />
-                    {(itemMode === 'multiple' || items.length > 1) && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        COD is automatically calculated per item in bulk deliveries.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
-                    <Label htmlFor="status">Status</Label>
-                    <Select
-                      value={values.status}
-                      onValueChange={(val) =>
-                        setValues((v) => ({ ...v, status: val as DeliveryStatus }))
-                      }
+              <div className="space-y-2 mt-2">
+                <AnimatePresence>
+                  {items.map((it) => (
+                    <motion.div
+                      key={it.id}
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -5 }}
+                      transition={{ duration: 0.2 }}
+                      className="flex flex-wrap items-start sm:items-center gap-3 border rounded-md p-3"
                     >
-                      <SelectTrigger id="status" className="mt-1 w-full">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="in_transit">In Transit</SelectItem>
-                        <SelectItem value="delivered">Delivered</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label>Notes</Label>
-                    <Textarea
-                      id="note"
-                      value={values.note}
-                      onChange={(e) => setValues((v) => ({ ...v, note: e.target.value }))}
-                    />
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <Label>Items</Label>
-                      {formErrors.items && (
-                        <p className="text-sm text-red-500 mt-1">{formErrors.items}</p>
-                      )}
-                      <div className="flex items-center gap-3">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={addItemRow}
-                          disabled={addItemDisabled}
-                          title={addItemDisabled ? 'Switch to Multiple to add items' : 'Add item'}
-                        >
-                          Add item
-                        </Button>
-                        {addItemDisabled && !isEdit && (
-                          <span className="text-sm text-muted-foreground max-w-[200px]">
-                            Switch to <strong>Multiple</strong> mode to add more items.
-                          </span>
+                      <div className="flex-1 min-w-0">
+                        <Input
+                          placeholder="Name"
+                          value={it.name}
+                          onChange={(e) => updateItemRow(it.id, { name: e.target.value })}
+                        />
+                        {formErrors[`item-${it.id}-name`] && (
+                          <p className="text-xs text-red-500 mt-1">
+                            {formErrors[`item-${it.id}-name`]}
+                          </p>
                         )}
                       </div>
-                    </div>
 
-                    <div className="space-y-2 mt-2">
-                      <AnimatePresence>
-                        {items.map((it) => (
-                          <motion.div
-                            key={it.id}
-                            initial={{ opacity: 0, y: -5 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -5 }}
-                            transition={{ duration: 0.2 }}
-                            className="flex flex-wrap items-start sm:items-center gap-3 border rounded-md p-3"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <Input
-                                placeholder="Name"
-                                value={it.name}
-                                onChange={(e) => updateItemRow(it.id, { name: e.target.value })}
-                              />
-                              {formErrors[`item-${it.id}-name`] && (
-                                <p className="text-xs text-red-500 mt-1">
-                                  {formErrors[`item-${it.id}-name`]}
-                                </p>
-                              )}
-                            </div>
+                      <div className="w-28">
+                        <Input
+                          placeholder="Price"
+                          type="number"
+                          data-price-for={it.id}
+                          value={it.price ?? ''}
+                          min={0}
+                          onChange={(e) =>
+                            updateItemRow(it.id, {
+                              price: e.target.value ? Number(e.target.value) : null,
+                            })
+                          }
+                        />
+                        {formErrors[`item-${it.id}-price`] && (
+                          <p className="text-xs text-red-500 mt-1">
+                            {formErrors[`item-${it.id}-price`]}
+                          </p>
+                        )}
+                      </div>
 
-                            <div className="w-28">
-                              <Input
-                                placeholder="Price"
-                                type="number"
-                                data-price-for={it.id}
-                                value={it.price ?? ''}
-                                min={0}
-                                onChange={(e) =>
-                                  updateItemRow(it.id, {
-                                    price: e.target.value ? Number(e.target.value) : null,
-                                  })
-                                }
-                              />
-                              {formErrors[`item-${it.id}-price`] && (
-                                <p className="text-xs text-red-500 mt-1">
-                                  {formErrors[`item-${it.id}-price`]}
-                                </p>
-                              )}
-                            </div>
+                      <div className="w-full sm:w-56">
+                        <Input
+                          type="datetime-local"
+                          value={it.expectedDate}
+                          onChange={(e) => updateItemRow(it.id, { expectedDate: e.target.value })}
+                        />
+                        {formErrors[`item-${it.id}-date`] && (
+                          <p className="text-xs text-red-500 mt-1">
+                            {formErrors[`item-${it.id}-date`]}
+                          </p>
+                        )}
+                      </div>
 
-                            <div className="w-full sm:w-56">
-                              <Input
-                                type="datetime-local"
-                                value={it.expectedDate}
-                                onChange={(e) => updateItemRow(it.id, { expectedDate: e.target.value })}
-                              />
-                              {formErrors[`item-${it.id}-date`] && (
-                                <p className="text-xs text-red-500 mt-1">
-                                  {formErrors[`item-${it.id}-date`]}
-                                </p>
-                              )}
-                            </div>
-
-                            <div className="flex-shrink-0">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                onClick={() => removeItemRow(it.id)}
-                                className="text-sm"
-                              >
-                                Remove
-                              </Button>
-                            </div>
-                          </motion.div>
-                        ))}
-                      </AnimatePresence>
-
-                      {items.length === 0 && (
-                        <motion.p
-                          className="text-sm text-muted-foreground italic mt-2"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
+                      <div className="flex-shrink-0">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => removeItemRow(it.id)}
+                          className="text-sm"
                         >
-                          No items added yet.
-                        </motion.p>
-                      )}
-                    </div>
-                  </div>
+                          Remove
+                        </Button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
 
-                  <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-2 border-t mt-6">
-                    <div className="flex gap-2 justify-end w-full">
-                      <Button type="button" variant="ghost" onClick={handleDialogClose} disabled={isSaving}>
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={isSaving}>
-                        {isEdit ? 'Save' : 'Create'}
-                      </Button>
-                    </div>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                {items.length === 0 && (
+                  <motion.p
+                    className="text-sm text-muted-foreground italic mt-2"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                  >
+                    No items added yet.
+                  </motion.p>
+                )}
+              </div>
+            </div>
+
+            <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-2 border-t mt-6">
+              <div className="flex gap-2 justify-end w-full">
+                <Button type="button" variant="ghost" onClick={handleDialogClose} disabled={isSaving}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isSaving}>
+                  {isEdit ? 'Save' : 'Create'}
+                </Button>
+              </div>
+            </DialogFooter>
+          </form>
+        </DialogContent>
       </Dialog>
 
       <AnimatePresence mode="wait">
         {confirmSinglePromptOpen && (
           <Dialog open={true} onOpenChange={setConfirmSinglePromptOpen}>
-            <motion.div
-              key="confirm-dialog"
-              initial={{ opacity: 0, y: -8, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 4, scale: 0.98 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <DialogContent aria-describedby={undefined}>
-                <DialogHeader>
-                  <DialogTitle>
-                    {confirmContext === 'switch' ? 'Switch to Single delivery?' : 'Discard this delivery?'}
-                  </DialogTitle>
-                </DialogHeader>
+            <DialogContent aria-describedby={undefined}>
+              <DialogHeader>
+                <DialogTitle>
+                  {confirmContext === 'switch' ? 'Switch to Single delivery?' : 'Discard this delivery?'}
+                </DialogTitle>
+              </DialogHeader>
 
-                <div className="py-2">
-                  <p className="mb-3">
-                    You currently have <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
-                    item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in this delivery.
+              <div className="py-2">
+                <p className="mb-3">
+                  You currently have <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
+                  item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in this delivery.
+                </p>
+
+                <div className="mb-3">
+                  <p className="text-sm font-medium">
+                    Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):
                   </p>
-
-                  <div className="mb-3">
-                    <p className="text-sm font-medium">
-                      Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):
+                  <ul className="list-disc ml-5 text-sm">
+                    {(draftItemsRef.current ?? items).slice(0, 5).map((it, idx) => (
+                      <li key={idx}>{it.name?.trim() || '(unnamed item)'}</li>
+                    ))}
+                  </ul>
+                  {(draftItemsRef.current ?? items).length > 5 && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      ...and {(draftItemsRef.current ?? items).length - 5} more.
                     </p>
-                    <ul className="list-disc ml-5 text-sm">
-                      {(draftItemsRef.current ?? items).slice(0, 5).map((it, idx) => (
-                        <li key={idx}>{it.name?.trim() || '(unnamed item)'}</li>
-                      ))}
-                    </ul>
-                    {(draftItemsRef.current ?? items).length > 5 && (
-                      <p className="text-sm text-muted-foreground mt-1">
-                        ...and {(draftItemsRef.current ?? items).length - 5} more.
-                      </p>
-                    )}
-                  </div>
-
-                  <p className="mb-1 text-sm text-muted-foreground">
-                    If you proceed, <strong>all items will be removed</strong> and the delivery will become a single-item delivery.
-                  </p>
+                  )}
                 </div>
 
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 6 }}
-                  transition={{ delay: 0.15, duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-                >
-                  <DialogFooter className="pt-4">
-                    <div className="flex gap-2 justify-end w-full">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => {
-                          setConfirmSinglePromptOpen(false)
-                          setConfirmContext(null)
-                        }}
-                      >
-                        Cancel
-                      </Button>
+                <p className="mb-1 text-sm text-muted-foreground">
+                  If you proceed, <strong>all items will be removed</strong> and the delivery will become a single-item delivery.
+                </p>
+              </div>
 
-                      {confirmContext === 'switch' ? (
-                        <Button type="button" onClick={confirmSwitchToSingleProceed}>
-                          Proceed — remove all items
-                        </Button>
-                      ) : (
-                        <Button
-                          type="button"
-                          onClick={() => {
-                            draftItemsRef.current = null
-                            setConfirmSinglePromptOpen(false)
-                            setConfirmContext(null)
-                            onOpenChange(false)
-                          }}
-                        >
-                          Discard and Close
-                        </Button>
-                      )}
-                    </div>
-                  </DialogFooter>
-                </motion.div>
-              </DialogContent>
-            </motion.div>
+              <DialogFooter className="pt-4">
+                <div className="flex gap-2 justify-end w-full">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setConfirmSinglePromptOpen(false)
+                      setConfirmContext(null)
+                    }}
+                  >
+                    Cancel
+                  </Button>
+
+                  {confirmContext === 'switch' ? (
+                    <Button type="button" onClick={confirmSwitchToSingleProceed}>
+                      Proceed — remove all items
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        draftItemsRef.current = null
+                        setConfirmSinglePromptOpen(false)
+                        setConfirmContext(null)
+                        onOpenChange(false)
+                      }}
+                    >
+                      Discard and Close
+                    </Button>
+                  )}
+                </div>
+              </DialogFooter>
+            </DialogContent>
           </Dialog>
         )}
       </AnimatePresence>
