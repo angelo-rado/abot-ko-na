@@ -56,15 +56,15 @@ jobs:
             exit 1
           fi
 
-          # Build payload safely from file content
-          PAYLOAD=$(jq -Rs --arg fn "abot-ko-na-context.md" '{files: {($fn): {content: .}}}' < "$FILE")
+          # Build payload safely from file and save to temp JSON
+          jq -Rs --arg fn "abot-ko-na-context.md" '{files: {($fn): {content: .}}}' < "$FILE" > payload.json
 
           echo "Patching Gist $GIST_ID..."
           HTTP_STATUS=$(curl -sS -w "%{http_code}" -o /tmp/gist_resp.json \
             -X PATCH "https://api.github.com/gists/${GIST_ID}" \
             -H "Authorization: Bearer ${GIST_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            -d "$PAYLOAD")
+            -d @payload.json)
 
           echo "HTTP status: $HTTP_STATUS"
           echo "Response:"
