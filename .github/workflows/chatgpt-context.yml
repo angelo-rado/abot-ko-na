@@ -45,7 +45,6 @@ jobs:
           fi
 
       - name: Update Gist via API
-        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
@@ -56,6 +55,7 @@ jobs:
             echo "Snapshot not found: $FILE"
             exit 1
           fi
+
           # Encode file content as JSON string safely
           CONTENT=$(jq -Rsa . < "$FILE")
           PAYLOAD=$(jq -n --arg c "$CONTENT" '{files: {"abot-ko-na-context.md": {content: $c}}}')
