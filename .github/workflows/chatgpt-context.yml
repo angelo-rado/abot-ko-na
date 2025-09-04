@@ -1,0 +1,48 @@
+name: Update ChatGPT Context
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Install deps
+        run: pnpm install --frozen-lockfile || npm ci
+      - name: Generate snapshot
+        run: npx tsx tools/chatgpt-context.ts
+      - name: Update Gist
+        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
+        uses: actions/github-script@v7
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { Octokit } = require('@octokit/rest');
+            const content = fs.readFileSync('.chatgpt/chatgpt-context.md', 'utf8');
+            const octokit = new Octokit({ auth: process.env.GIST_TOKEN });
+            await octokit.gists.update({
+              gist_id: process.env.GIST_ID,
+              files: { 'abot-ko-na-context.md': { content } },
+              description: `Abot Ko Na context @ ${process.env.GITHUB_REF_NAME} ${process.env.GITHUB_SHA?.slice(0,7)}`
+            });
+      - name: Upload artifact (fallback if no secrets)
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-context
+          path: .chatgpt/chatgpt-context.md
