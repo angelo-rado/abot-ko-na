@@ -11,13 +11,13 @@ import {
 import type { Messaging } from 'firebase/messaging'
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyCBDitj3mvJf_wy6g2fw4s3XsYrwnhZA8Y',
-  authDomain: 'abot-ko-na.firebaseapp.com',
-  projectId: 'abot-ko-na',
-  storageBucket: 'abot-ko-na.appspot.com',
-  messagingSenderId: '882171741289',
-  appId: '1:882171741289:web:f7b8dc68a88bdae6a5cef8',
-  measurementId: 'G-EYEF7WK99V',
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 }
 
 const app = initializeApp(firebaseConfig)
