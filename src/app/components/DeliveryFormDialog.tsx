@@ -509,7 +509,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         {/* Remove outer motion wrapper to avoid breaking Radix centering */}
         <DialogContent
           aria-describedby={undefined}
-          className="relative max-h-[90vh] overflow-y-auto"
+          className="max-h-[90vh] overflow-y-auto"
         >
           <DialogHeader>
             <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
