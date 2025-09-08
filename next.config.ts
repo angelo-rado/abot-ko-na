@@ -12,9 +12,6 @@ const nextConfig = withPWA({
   experimental: {
     serverActions: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true, // ✅ Bypass ESLint errors on Vercel builds
-  },
 })
 
 module.exports = nextConfig
