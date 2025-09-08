@@ -219,7 +219,7 @@ export default function FamilyJoinPageContent() {
       } catch {}
 
       toast.success('Joined family!')
-      router.replace(`/(main)?joined=1&family=${encodeURIComponent(familyId)}`)
+      router.replace(`/?joined=1&family=${encodeURIComponent(familyId)}`)
     } catch (e: any) {
       console.error('[join] failed', e)
       const msg =
