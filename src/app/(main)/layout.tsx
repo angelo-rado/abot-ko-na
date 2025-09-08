@@ -185,7 +185,7 @@ function SwipeShell({
             const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: registration })
             if (token) {
               const idt = await u.getIdToken()
-              await fetch('/api/save-fcm-token', {
+              await fetch('/api/fcm/save', {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
