@@ -8,6 +8,16 @@ service cloud.firestore {
              (get(/databases/$(database)/documents/families/$(familyId)).data.members is list &&
               request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.members);
     }
+    function isFamilyOwner(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid ||
+             get(/databases/$(database)/documents/families/$(familyId)).data.owner == request.auth.uid;
+    }
+    function isFamilyAdmin(familyId) {
+      return isFamilyOwner(familyId) || (
+        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
 
     // === USERS ===
     match /users/{userId} {
@@ -37,10 +47,8 @@ service cloud.firestore {
       // Only members can read the family doc
       allow read: if isSignedIn() && isFamilyMember(familyId);
 
-      // Update/Delete by creator or members
-      allow update, delete: if isSignedIn() && (
-        resource.data.createdBy == request.auth.uid || isFamilyMember(familyId)
-      );
+      // Update/Delete by owner or admins
+      allow update, delete: if isSignedIn() && isFamilyAdmin(familyId);
 
       // === MEMBERS SUBCOLLECTION ===
       match /members/{memberId} {
@@ -48,7 +56,7 @@ service cloud.firestore {
         allow create: if isSignedIn() && request.auth.uid == memberId && isFamilyMember(familyId);
         allow update, delete: if isSignedIn() && (
           request.auth.uid == memberId ||
-          get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid
+          isFamilyAdmin(familyId)
         );
       }
 
@@ -61,10 +69,10 @@ service cloud.firestore {
         allow create: if isSignedIn() && isFamilyMember(familyId) &&
           request.resource.data.createdBy == request.auth.uid;
 
-        // Update/Delete by creator or family owner (and must be a member)
+        // Update/Delete by creator, owner or admins (and must be a member)
         allow update, delete: if isSignedIn() && isFamilyMember(familyId) && (
           resource.data.createdBy == request.auth.uid ||
-          get(/databases/$(database)/documents/families/$(familyId)).data.createdBy == request.auth.uid
+          isFamilyAdmin(familyId)
         );
 
         // === DELIVERY ITEMS SUBCOLLECTION ===
