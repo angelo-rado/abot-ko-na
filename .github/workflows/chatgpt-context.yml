@@ -19,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install deps (npm fallback)
         run: npm ci || npm i
@@ -44,15 +44,19 @@ jobs:
             echo "GIST_TOKEN is set"
           fi
 
+      - name: Skip Gist update if secrets missing
+        if: ${{ !secrets.GIST_ID || !secrets.GIST_TOKEN }}
+        run: |
+          echo "Skipping Gist update: GIST_ID or GIST_TOKEN not set"
+
       - name: Update Gist via API
-        # Best-effort: publishing the context snapshot to a Gist must not fail CI.
-        # (If this step errors with HTTP 401, rotate the GIST_TOKEN repo secret.)
-        continue-on-error: true
+        if: ${{ secrets.GIST_ID && secrets.GIST_TOKEN }}
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
         run: |
           set -euo pipefail
+
           FILE=".chatgpt/chatgpt-context.md"
           if [ ! -f "$FILE" ]; then
             echo "Snapshot not found: $FILE"
@@ -67,13 +71,17 @@ jobs:
             -X PATCH "https://api.github.com/gists/${GIST_ID}" \
             -H "Authorization: Bearer ${GIST_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            -d @payload.json)
+            -H "Content-Type: application/json" \
+            -d @payload.json || true)
 
           echo "HTTP status: $HTTP_STATUS"
           echo "Response:"
-          cat /tmp/gist_resp.json
+          cat /tmp/gist_resp.json || true
 
-          test "$HTTP_STATUS" = "200" || exit 1
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "Gist update failed (status $HTTP_STATUS). Ensure GIST_TOKEN is a valid PAT with 'gist' scope and GIST_ID is correct."
+            exit 1
+          fi
 
       - name: Upload artifact (fallback if no secrets)
         uses: actions/upload-artifact@v4
