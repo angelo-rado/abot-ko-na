@@ -516,3 +516,57 @@ export const notifyPresenceStatusChange = onDocumentWritten(
     );
   }
 );
+
+/**
+ * Notify the family when a member broadcasts "on my way home".
+ * Fires only on the enRoute false -> true transition, skips if already home.
+ */
+export const notifyEnRoute = onDocumentWritten(
+  'families/{familyId}/members/{userId}',
+  async (event) => {
+    const { familyId, userId } = event.params as { familyId: string; userId: string };
+
+    const before = event.data?.before.exists ? (event.data?.before.data() as any) : null;
+    const after = event.data?.after.exists ? (event.data?.after.data() as any) : null;
+    if (!after) return;
+
+    const wasEnRoute = before?.enRoute === true;
+    const isEnRoute = after?.enRoute === true;
+    if (wasEnRoute || !isEnRoute) return; // only on false -> true
+
+    // Don't announce if the member is already home.
+    const status = String(after?.status ?? after?.presence?.status ?? '').toLowerCase();
+    if (status === 'home') return;
+
+    let displayName = after?.name || userId;
+    if (!after?.name) {
+      try {
+        const uDoc = await firestore.collection('users').doc(userId).get();
+        const u = uDoc.data() as any;
+        displayName = u?.displayName ?? u?.name ?? displayName;
+      } catch { /* ignore */ }
+    }
+
+    const eta = typeof after?.etaMinutes === 'number' ? after.etaMinutes : null;
+    const title = 'On the way home';
+    const body = eta != null ? `${displayName} is heading home (ETA ~${eta} min).` : `${displayName} is heading home.`;
+
+    await recordEvent(
+      familyId,
+      'presence_enroute',
+      title,
+      body,
+      '/',
+      { uid: userId, etaMinutes: eta },
+      { excludeUids: [userId] }
+    );
+
+    await sendNotificationToFamilyMembers(
+      familyId,
+      title,
+      body,
+      { changedUserId: userId, tag: `enroute:${familyId}:${userId}`, url: '/' },
+      { excludeUids: [userId] }
+    );
+  }
+);

@@ -13,7 +13,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart } from 'lucide-react'
+import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart, Truck, X } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
@@ -44,6 +44,7 @@ import {
   normalizeMember,
 } from '@/lib/models/presence'
 import { hasHomeLocation as familyHasHomeLocation } from '@/lib/models/family'
+import { setEnRoute, clearEnRoute, ETA_OPTIONS } from '@/lib/enroute'
 
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth()
@@ -179,9 +180,35 @@ export default function HomePage() {
       name: user.name ?? 'Unknown',
       photoURL: user.photoURL ?? null,
       uid: user.uid,
+      // Arriving home ends any "on my way" broadcast.
+      ...(newStatus === 'home' ? { enRoute: false, etaMinutes: null } : {}),
     }, { merge: true })
     setIsHome(newStatus === 'home')
     setJustChangedStatusAt(Date.now())
+  }
+
+  // "On my way home" broadcast (derived from my live member doc)
+  const me = user?.uid ? membersLive.find((m) => m.uid === user.uid) : undefined
+  const myPresence = me ? normalizeMember(me, { autoPresenceOverride: userAutoPresence === true }) : null
+  const [etaChoice, setEtaChoice] = useState<number | null>(null)
+
+  const handleSetEnRoute = async () => {
+    if (!user || !familyId) return
+    try {
+      await setEnRoute(familyId, user.uid, etaChoice, { name: user.name ?? 'Unknown', photoURL: user.photoURL ?? null })
+      toast.success("Family notified you're on the way")
+    } catch {
+      toast.error('Could not update your status')
+    }
+  }
+
+  const handleClearEnRoute = async () => {
+    if (!user || !familyId) return
+    try {
+      await clearEnRoute(familyId, user.uid)
+    } catch {
+      toast.error('Could not update your status')
+    }
   }
 
   // NEW: post-join hydration via query param
@@ -380,8 +407,13 @@ export default function HomePage() {
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                                       <span className="capitalize">{presence.status ?? 'unknown'}</span>
+                                      {presence.enRoute && (
+                                        <span className="inline-flex items-center gap-1 text-sky-600 font-medium">
+                                          <Truck className="w-3 h-3" /> on the way{presence.etaMinutes != null ? ` (~${presence.etaMinutes}m)` : ''}
+                                        </span>
+                                      )}
                                       {presence.source && (<span>• {presence.source === 'geo' ? 'Auto' : 'Manual'}</span>)}
                                       {updatedDate && <span>• {formatDistanceToNow(updatedDate, { addSuffix: true })}</span>}
                                     </div>
@@ -536,6 +568,46 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
+        {/* On my way home broadcast */}
+        {!presenceLoading && !loadingFamilies && familyId && (
+          myPresence?.enRoute ? (
+            <div className="rounded-lg border p-3 bg-sky-50/60 dark:bg-sky-950/20 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm min-w-0">
+                <Truck className="w-4 h-4 text-sky-600 shrink-0" />
+                <span className="font-medium">You&apos;re on the way home</span>
+                {myPresence.etaMinutes != null && (
+                  <span className="text-muted-foreground truncate">• ETA ~{myPresence.etaMinutes} min</span>
+                )}
+              </div>
+              <Button type="button" variant="ghost" size="sm" onClick={handleClearEnRoute} className="shrink-0">
+                <X className="w-4 h-4 mr-1" /> Cancel
+              </Button>
+            </div>
+          ) : isHome ? null : (
+            <div className="rounded-lg border p-3 bg-muted/20 flex flex-col sm:flex-row sm:items-center gap-2">
+              <div className="flex items-center gap-2 text-sm flex-1 min-w-0">
+                <Truck className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground truncate">Let your family know you&apos;re heading home</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={etaChoice ?? ''}
+                  onChange={(e) => setEtaChoice(e.target.value === '' ? null : Number(e.target.value))}
+                  className="border border-input bg-background text-foreground px-2 py-1 rounded text-sm"
+                  aria-label="Estimated time to arrival"
+                >
+                  {ETA_OPTIONS.map((o) => (
+                    <option key={o.label} value={o.minutes ?? ''}>{o.label}</option>
+                  ))}
+                </select>
+                <Button type="button" onClick={handleSetEnRoute}>
+                  <Truck className="w-4 h-4 mr-2" /> On my way home
+                </Button>
+              </div>
+            </div>
+          )
+        )}
       </main>
     </>
   )

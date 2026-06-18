@@ -87,6 +87,8 @@ export function useAutoPresence(familyId?: string | null) {
         statusSource: 'geo',
         updatedAt: serverTimestamp(),
         autoPresence: true, // helpful for UI normalizeSource
+        // Auto-arriving home ends any "on my way" broadcast.
+        ...(status === 'home' ? { enRoute: false, etaMinutes: null } : {}),
         ...(lastGeo ? { lastGeo } : {}),
         // keep basic profile fields fresh
         uid: user.uid,

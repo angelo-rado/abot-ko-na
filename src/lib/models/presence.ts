@@ -28,6 +28,11 @@ export interface MemberPresence {
   status: PresenceStatus | null
   source: PresenceSource | null
   updatedAt: Date | null
+  /** "On my way home" broadcast. */
+  enRoute: boolean
+  enRouteSince: Date | null
+  /** Optional self-reported minutes-to-arrival when the broadcast was set. */
+  etaMinutes: number | null
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -96,11 +101,22 @@ export function normalizeMemberUpdatedAt(m: RawMember): Date | null {
   return toDate(raw as Parameters<typeof toDate>[0])
 }
 
+/**
+ * Whether a member is broadcasting "on my way home".
+ * A member who is already home is never considered en route, even if a stale
+ * flag lingers on the document.
+ */
+export function isMemberEnRoute(m: RawMember): boolean {
+  if (m?.enRoute !== true) return false
+  return normalizeMemberStatus(m) !== 'home'
+}
+
 /** Collapse a raw Firestore member doc into a fully-typed presence view. */
 export function normalizeMember(
   m: RawMember,
   opts: { autoPresenceOverride?: boolean } = {}
 ): MemberPresence {
+  const etaRaw = m?.etaMinutes
   return {
     uid: (m?.uid as string) ?? '',
     name: normalizeMemberName(m),
@@ -108,5 +124,8 @@ export function normalizeMember(
     status: normalizeMemberStatus(m),
     source: normalizeMemberSource(m, opts),
     updatedAt: normalizeMemberUpdatedAt(m),
+    enRoute: isMemberEnRoute(m),
+    enRouteSince: toDate(m?.enRouteSince as Parameters<typeof toDate>[0]),
+    etaMinutes: typeof etaRaw === 'number' && Number.isFinite(etaRaw) ? etaRaw : null,
   }
 }
