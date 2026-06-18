@@ -201,7 +201,9 @@ export async function createDelivery(familyId: string, payload: {
   totalAmount?: number | null,
   itemCount?: number,
   note?: string,
-  receiverNote?: string
+  receiverNote?: string,
+  courier?: string | null,
+  trackingNumber?: string | null
 }) {
   if (!familyId) throw new Error('familyId required')
   const deliveriesRef = collection(firestore, 'families', familyId, 'deliveries')
@@ -220,6 +222,8 @@ export async function createDelivery(familyId: string, payload: {
     itemCount: computedItemCount,
     note: payload.note ?? null,
     receiverNote: payload.receiverNote ?? null,
+    courier: payload.courier ?? null,
+    trackingNumber: payload.trackingNumber ?? null,
   }
   if (payload.expectedDate) docPayload.expectedDate = Timestamp.fromDate(payload.expectedDate)
   if (payload.codAmount != null) docPayload.codAmount = payload.codAmount
@@ -456,6 +460,8 @@ export async function createDeliveryWithItems(
     type?: string | null
     totalAmount?: number | null
     note?: string
+    courier?: string | null
+    trackingNumber?: string | null
   },
   items: { name: string; price?: number | null; expectedDate?: Date | null }[] = []
 ) {
@@ -475,6 +481,8 @@ export async function createDeliveryWithItems(
     type: computedType,
     itemCount: items.length,
     note: deliveryPayload.note ?? null,
+    courier: deliveryPayload.courier ?? null,
+    trackingNumber: deliveryPayload.trackingNumber ?? null,
   }
   if (deliveryPayload.expectedDate) docPayload.expectedDate = Timestamp.fromDate(deliveryPayload.expectedDate)
   if (deliveryPayload.codAmount != null) docPayload.codAmount = deliveryPayload.codAmount
