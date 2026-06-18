@@ -28,7 +28,6 @@ import CreateFamilyModal from '../components/CreateFamilyModal'
 import JoinFamilyModal from '../components/JoinFamilyModal'
 import HomeDeliveriesToday from '../components/HomeDeliveriesToday'
 import Link from 'next/link'
-import { HelpCircleHint } from '../components/HelpCircleHint'
 import { useOnlineStatus } from '@/lib/hooks/useOnlinestatus'
 import { useSelectedFamily } from '@/lib/selected-family'
 
@@ -517,97 +516,87 @@ export default function HomePage() {
           </Link>
         )}
 
-        <div className="flex gap-4">
-          {(presenceLoading || loadingFamilies) ? (
-            <>
-              <Skeleton className="h-10 flex-1 rounded-md" />
-              <Skeleton className="h-10 flex-1 rounded-md" />
-            </>
-          ) : (
-            <div className="flex gap-4 w-full">
-              {myStatusSource === 'geo' ? (
-                <span className="flex-1">
-                  <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="w-full" disabled>
-                    <HomeIcon className="w-4 h-4 mr-2" />
-                    I’m Home
-                  </Button>
-                </span>
-              ) : (
-                <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="flex-1" disabled={presenceLoading || loadingFamilies}>
-                  <HomeIcon className="w-4 h-4 mr-2" />
-                  I’m Home
-                </Button>
-              )}
-
-              {myStatusSource === 'geo' ? (
-                <>
-                  <span className="flex-1">
-                    <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="w-full" disabled>
-                      <DoorOpen className="w-4 h-4 mr-2" />
-                      I’m Out
-                    </Button>
-                  </span>
-                  <HelpCircleHint title="Auto-set status">
-                    <div className="space-y-2">
-                      <p>Your presence is updated automatically using your location.</p>
-                      <p>
-                        To change this, visit{' '}
-                        <Link href="/settings#default-family" className="text-blue-600 hover:underline">
-                          Settings →
-                        </Link>
-                      </p>
+        {/* Your status */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Your status</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(presenceLoading || loadingFamilies) ? (
+              <Skeleton className="h-11 w-full rounded-md" />
+            ) : myStatusSource === 'geo' ? (
+              <>
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+                  <div className="flex items-center gap-3">
+                    {isHome ? (
+                      <HomeIcon className="h-5 w-5 text-green-600" />
+                    ) : (
+                      <DoorOpen className="h-5 w-5 text-muted-foreground" />
+                    )}
+                    <div>
+                      <div className="font-medium">{isHome ? "You're home" : "You're out"}</div>
+                      <div className="text-xs text-muted-foreground">Set automatically from your location</div>
                     </div>
-                  </HelpCircleHint>
-                </>
-              ) : (
-                <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="flex-1">
-                  <DoorOpen className="w-4 h-4 mr-2" />
-                  I’m Out
+                  </div>
+                  <span className="text-[11px] px-2 py-0.5 rounded-full border bg-background text-muted-foreground">Auto</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Prefer to set it yourself? Turn off auto-presence in{' '}
+                  <Link href="/settings#default-family" className="underline">Settings</Link>.
+                </p>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="h-11">
+                  <HomeIcon className="w-4 h-4 mr-2" /> I’m Home
                 </Button>
-              )}
-            </div>
-          )}
-        </div>
+                <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="h-11">
+                  <DoorOpen className="w-4 h-4 mr-2" /> I’m Out
+                </Button>
+              </div>
+            )}
 
-        {/* On my way home broadcast */}
-        {!presenceLoading && !loadingFamilies && familyId && (
-          myPresence?.enRoute ? (
-            <div className="rounded-lg border p-3 bg-sky-50/60 dark:bg-sky-950/20 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm min-w-0">
-                <Truck className="w-4 h-4 text-sky-600 shrink-0" />
-                <span className="font-medium">You&apos;re on the way home</span>
-                {myPresence.etaMinutes != null && (
-                  <span className="text-muted-foreground truncate">• ETA ~{myPresence.etaMinutes} min</span>
-                )}
-              </div>
-              <Button type="button" variant="ghost" size="sm" onClick={handleClearEnRoute} className="shrink-0">
-                <X className="w-4 h-4 mr-1" /> Cancel
-              </Button>
-            </div>
-          ) : isHome ? null : (
-            <div className="rounded-lg border p-3 bg-muted/20 flex flex-col sm:flex-row sm:items-center gap-2">
-              <div className="flex items-center gap-2 text-sm flex-1 min-w-0">
-                <Truck className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="text-muted-foreground truncate">Let your family know you&apos;re heading home</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={etaChoice ?? ''}
-                  onChange={(e) => setEtaChoice(e.target.value === '' ? null : Number(e.target.value))}
-                  className="border border-input bg-background text-foreground px-2 py-1 rounded text-sm"
-                  aria-label="Estimated time to arrival"
-                >
-                  {ETA_OPTIONS.map((o) => (
-                    <option key={o.label} value={o.minutes ?? ''}>{o.label}</option>
-                  ))}
-                </select>
-                <Button type="button" onClick={handleSetEnRoute}>
-                  <Truck className="w-4 h-4 mr-2" /> On my way home
-                </Button>
-              </div>
-            </div>
-          )
-        )}
+            {/* On my way home — secondary action, only when not currently home */}
+            {!presenceLoading && !loadingFamilies && familyId && !isHome && (
+              myPresence?.enRoute ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-sky-50/60 dark:bg-sky-950/20 p-3">
+                  <div className="flex items-center gap-2 text-sm min-w-0">
+                    <Truck className="w-4 h-4 text-sky-600 shrink-0" />
+                    <span className="font-medium">On the way home</span>
+                    {myPresence.etaMinutes != null && (
+                      <span className="text-muted-foreground truncate">• ~{myPresence.etaMinutes} min</span>
+                    )}
+                  </div>
+                  <Button type="button" variant="ghost" size="sm" onClick={handleClearEnRoute} className="shrink-0">
+                    <X className="w-4 h-4 mr-1" /> Cancel
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-1">
+                  <div className="flex items-center gap-2 text-sm flex-1 min-w-0 text-muted-foreground">
+                    <Truck className="w-4 h-4 shrink-0" />
+                    <span className="truncate">Heading home? Let your family know.</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={etaChoice ?? ''}
+                      onChange={(e) => setEtaChoice(e.target.value === '' ? null : Number(e.target.value))}
+                      className="h-9 border border-input bg-background text-foreground px-2 rounded-md text-sm"
+                      aria-label="Estimated time to arrival"
+                    >
+                      {ETA_OPTIONS.map((o) => (
+                        <option key={o.label} value={o.minutes ?? ''}>{o.label}</option>
+                      ))}
+                    </select>
+                    <Button type="button" onClick={handleSetEnRoute} className="h-9">
+                      <Truck className="w-4 h-4 mr-2" /> On my way
+                    </Button>
+                  </div>
+                </div>
+              )
+            )}
+          </CardContent>
+        </Card>
       </main>
     </>
   )
