@@ -219,6 +219,17 @@ function NotesToggle({ open, count, onClick }: { open: boolean; count: number; o
   )
 }
 
+/** Small tappable screenshot thumbnail; opens the full image in a new tab. */
+function ScreenshotThumb({ url }: { url?: string | null }) {
+  if (!url) return null
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block" title="View screenshot">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={url} alt="Delivery screenshot" className="h-14 w-14 rounded border object-cover" />
+    </a>
+  )
+}
+
 function DeliveryNotesThreadInline({ familyId, deliveryId }: { familyId: string; deliveryId: string }) {
   const [notes, setNotes] = useState<any[]>([])
   const [text, setText] = useState('')
@@ -636,6 +647,7 @@ export default function HomeDeliveriesToday({
                         <CodChip amount={codTotal ?? undefined} />
                         <span className="text-[11px] text-muted-foreground">by <UserName familyId={familyId} userId={d.createdBy} /></span>
                       </div>
+                      <ScreenshotThumb url={d.screenshotUrl} />
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
@@ -761,6 +773,7 @@ export default function HomeDeliveriesToday({
                         <CodChip amount={codTotal ?? undefined} />
                         <span className="text-[11px] text-muted-foreground">by <UserName familyId={familyId} userId={d.createdBy} /></span>
                       </div>
+                      <ScreenshotThumb url={d.screenshotUrl} />
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
@@ -875,6 +888,7 @@ export default function HomeDeliveriesToday({
                           {receivedAtStr ? ` • ${receivedAtStr}` : ''}
                         </span>
                       </div>
+                      <ScreenshotThumb url={d.screenshotUrl} />
                     </div>
 
                     <NotesToggle open={notesOpen} count={0} onClick={() => toggleNotes(d.id)} />

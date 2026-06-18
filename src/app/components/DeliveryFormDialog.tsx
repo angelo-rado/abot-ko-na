@@ -22,7 +22,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { enqueue, isOnline } from '@/lib/offline'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
+import { upload } from '@vercel/blob/client'
+import { ChevronDown, ChevronUp, Plus, Trash2, ImageIcon, Loader2, X } from 'lucide-react'
 
 type DeliveryStatus = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
@@ -108,6 +109,9 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   const [isSaving, setIsSaving] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [pickCustom, setPickCustom] = useState(false)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(delivery?.screenshotUrl ?? null)
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // Derived: more than one item => bulk; COD only makes sense for a single item.
   const isBulk = items.length > 1
@@ -156,6 +160,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setItems([])
     setShowDetails(false)
     setPickCustom(false)
+    setScreenshotUrl(null)
     setFormErrors({})
   }, [open, isEdit])
 
@@ -173,6 +178,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       trackingNumber: delivery.trackingNumber ?? '',
     })
     initialExpectedRef.current = expected
+    setScreenshotUrl(delivery.screenshotUrl ?? null)
     if (delivery.type !== 'bulk') setItems([])
     const dp = (expected || '').slice(0, 10)
     setPickCustom(dp !== todayDP && dp !== tomorrowDP)
@@ -222,6 +228,34 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
 
   function removeItemRow(id: string) {
     setItems((prev) => prev.filter((r) => r.id !== id))
+  }
+
+  async function onPickScreenshot(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file')
+      return
+    }
+    if (!isOnline()) {
+      toast.error('You need to be online to upload a screenshot')
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      return
+    }
+    setUploading(true)
+    try {
+      const result = await upload(file.name, file, {
+        access: 'public',
+        handleUploadUrl: '/api/upload-screenshot',
+      })
+      setScreenshotUrl(result.url)
+    } catch (err) {
+      console.error('screenshot upload failed', err)
+      toast.error('Could not upload screenshot')
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   const onSubmit = async (e?: React.FormEvent) => {
@@ -332,6 +366,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           note: values.note?.trim() || '',
           courier: values.courier?.trim() || null,
           trackingNumber: values.trackingNumber?.trim() || null,
+          screenshotUrl: screenshotUrl ?? null,
           itemCount: items.length,
           type: isBulk ? 'bulk' : 'single',
           updatedAt: Timestamp.now(),
@@ -363,6 +398,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         receiverNote: '',
         courier: values.courier?.trim() || null,
         trackingNumber: values.trackingNumber?.trim() || null,
+        screenshotUrl: screenshotUrl ?? null,
       })
 
       const newId = created.id
@@ -540,6 +576,45 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
             )}
           </div>
 
+          {/* Screenshot of items (optional) */}
+          <div>
+            <Label>Screenshot <span className="font-normal text-muted-foreground">(optional)</span></Label>
+            <p className="mt-0.5 text-xs text-muted-foreground">Attach a photo or screenshot of the order/items for the family to see.</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickScreenshot}
+            />
+            {screenshotUrl ? (
+              <div className="mt-2 flex items-start gap-3">
+                <a href={screenshotUrl} target="_blank" rel="noopener noreferrer" className="block">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={screenshotUrl} alt="Delivery screenshot" className="h-24 w-24 rounded-md border object-cover" />
+                </a>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setScreenshotUrl(null)} disabled={uploading}>
+                  <X className="h-4 w-4 mr-1" /> Remove
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Uploading…</>
+                ) : (
+                  <><ImageIcon className="h-4 w-4 mr-1" /> Upload screenshot</>
+                )}
+              </Button>
+            )}
+          </div>
+
           {/* Items (optional itemization) */}
           <div>
             <div className="flex items-center justify-between gap-2">
@@ -610,7 +685,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={isSaving}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={isSaving}>
+              <Button type="submit" disabled={isSaving || uploading}>
                 {isEdit ? 'Save' : 'Create'}
               </Button>
             </div>
