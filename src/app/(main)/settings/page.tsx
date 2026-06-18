@@ -28,6 +28,7 @@ import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import DefaultFamilySelector from '@/app/components/DefaultFamilySelector';
+import NotificationPreferences from '@/app/components/NotificationPreferences';
 import { Skeleton } from '@/components/ui/skeleton';
 
 // ⬇️ Dynamic client-only import fixes "editor not showing" issues in some builds.
@@ -231,6 +232,10 @@ export default function SettingsPage() {
                 Notifications are blocked in your browser. Allow them in site settings and try again.
               </p>
             )}
+
+            <Separator />
+            <p className="text-xs font-medium text-muted-foreground">What to notify me about</p>
+            <NotificationPreferences />
           </CardContent>
         </Card>
 

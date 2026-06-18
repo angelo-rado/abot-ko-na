@@ -11,9 +11,10 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  deleteField,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart, Truck, X } from 'lucide-react'
+import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart, Truck, X, Bell, BellRing } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
@@ -169,6 +170,22 @@ export default function HomePage() {
     return () => unsub()
   }, [user?.uid, familyId, justChangedStatusAt, userAutoPresence, hydrationKey])
 
+  const toggleWatch = async (targetUid: string) => {
+    if (!user?.uid || !familyId || targetUid === user.uid) return
+    const mine = membersLive.find((mm) => mm.uid === user.uid)?.watchHome as Record<string, boolean> | undefined
+    const isWatching = !!mine?.[targetUid]
+    try {
+      await setDoc(
+        doc(firestore, 'families', familyId, 'members', user.uid),
+        { watchHome: { [targetUid]: isWatching ? deleteField() : true } },
+        { merge: true }
+      )
+      toast.success(isWatching ? 'Stopped watching' : 'You’ll be notified when they get home')
+    } catch {
+      toast.error('Could not update')
+    }
+  }
+
   const handlePresenceChange = async (newStatus: 'home' | 'away') => {
     if (!user || !familyId) return
     const ref = doc(firestore, 'families', familyId, 'members', user.uid)
@@ -315,6 +332,10 @@ export default function HomePage() {
                   })
                 )
 
+                const myWatch = (membersLive.find((mm) => mm.uid === user?.uid)?.watchHome ?? {}) as Record<string, boolean>
+                const homeCount = members.filter((m) => presenceMap.get(m.uid)?.status === 'home').length
+                const outCount = members.filter((m) => presenceMap.get(m.uid)?.status === 'away').length
+
                 if (loading) {
                   return (
                     <>
@@ -354,6 +375,15 @@ export default function HomePage() {
                     <div className="space-y-2">
                       {homeBanner}
 
+                      <div className="flex items-center gap-3 px-2 text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1">
+                          <HomeIcon className="h-3.5 w-3.5 text-green-600" /> {homeCount} home
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <DoorOpen className="h-3.5 w-3.5" /> {outCount} out
+                        </span>
+                      </div>
+
                       <div className="space-y-2">
                         <AnimatePresence>
                           {members.map((m) => {
@@ -367,6 +397,7 @@ export default function HomePage() {
                               .toUpperCase()
 
                             const isCurrentUser = m.uid === user?.uid
+                            const watchingMember = !!myWatch[m.uid as string]
 
                             return (
                               <motion.div
@@ -423,6 +454,17 @@ export default function HomePage() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  {!isCurrentUser && (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleWatch(m.uid as string)}
+                                      aria-label={watchingMember ? `Stop home alerts for ${presence.name}` : `Notify me when ${presence.name} gets home`}
+                                      title={watchingMember ? 'Watching — you’ll be alerted when they get home' : 'Notify me when they get home'}
+                                      className={`rounded-md p-1.5 transition-colors active:scale-95 ${watchingMember ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                                    >
+                                      {watchingMember ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+                                    </button>
+                                  )}
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10 cursor-default">
