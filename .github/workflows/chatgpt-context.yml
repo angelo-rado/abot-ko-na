@@ -45,6 +45,9 @@ jobs:
           fi
 
       - name: Update Gist via API
+        # Best-effort: publishing the context snapshot to a Gist must not fail CI.
+        # (If this step errors with HTTP 401, rotate the GIST_TOKEN repo secret.)
+        continue-on-error: true
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
           GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
