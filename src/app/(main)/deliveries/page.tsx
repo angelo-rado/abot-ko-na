@@ -13,7 +13,7 @@ import { useSelectedFamily } from '@/lib/selected-family'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Loader2, MessageSquareText, Package } from 'lucide-react'
+import { Plus, Loader2, MessageSquareText, Package, Search, PackageOpen } from 'lucide-react'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -418,24 +418,26 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
         </div>
 
         {/* Search + status filter */}
-        <input
-          value={queryText}
-          onChange={(e) => setQueryText(e.target.value)}
-          placeholder="Search deliveries..."
-          className="border border-input bg-background text-foreground placeholder:text-muted-foreground px-3 py-1 rounded w-full sm:w-64"
-        />
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            value={queryText}
+            onChange={(e) => setQueryText(e.target.value)}
+            placeholder="Search deliveries…"
+            className="h-9 w-full rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          />
+        </div>
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value as any)}
-          className="border border-input bg-background text-foreground px-3 py-1 rounded text-sm"
+          className="h-9 rounded-md border border-input bg-background text-foreground px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <option value="all">All</option>
+          <option value="all">All statuses</option>
           <option value="pending">Pending</option>
           <option value="in_transit">In Transit</option>
           <option value="delivered">Delivered</option>
           <option value="cancelled">Cancelled</option>
         </select>
-        {/* ⬅️ removed Mine-only toggle */}
       </div>
 
       {/* Content */}
@@ -464,7 +466,10 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
             </div>
 
             {singles.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No single deliveries</p>
+              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-8 text-center">
+                <PackageOpen className="h-6 w-6 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">No single deliveries {tab === 'archived' ? 'archived yet' : 'yet'}.</p>
+              </div>
             ) : (
               <div className="space-y-4">
                 {singles.map((d) => {
@@ -545,7 +550,10 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
             </div>
 
             {multiples.length === 0 ? (
-              <p className="text-muted-foreground text-sm">No multiple deliveries</p>
+              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-8 text-center">
+                <PackageOpen className="h-6 w-6 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">No multiple-item deliveries {tab === 'archived' ? 'archived yet' : 'yet'}.</p>
+              </div>
             ) : (
               <div className="space-y-4">
                 {multiples.map((d) => {
