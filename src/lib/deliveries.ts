@@ -203,7 +203,8 @@ export async function createDelivery(familyId: string, payload: {
   note?: string,
   receiverNote?: string,
   courier?: string | null,
-  trackingNumber?: string | null
+  trackingNumber?: string | null,
+  screenshotUrl?: string | null
 }) {
   if (!familyId) throw new Error('familyId required')
   const deliveriesRef = collection(firestore, 'families', familyId, 'deliveries')
@@ -224,6 +225,7 @@ export async function createDelivery(familyId: string, payload: {
     receiverNote: payload.receiverNote ?? null,
     courier: payload.courier ?? null,
     trackingNumber: payload.trackingNumber ?? null,
+    screenshotUrl: payload.screenshotUrl ?? null,
   }
   if (payload.expectedDate) docPayload.expectedDate = Timestamp.fromDate(payload.expectedDate)
   if (payload.codAmount != null) docPayload.codAmount = payload.codAmount
