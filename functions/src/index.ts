@@ -53,6 +53,41 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 /* =============================================================================
+   Notification preferences (per-user): quiet hours + per-type toggles
+   Stored at users/{uid}.notificationPrefs
+   ============================================================================= */
+type NotifType = 'delivery' | 'presence' | 'enroute'
+
+/** Current minute-of-day in Asia/Manila (UTC+8). */
+function nowManilaMinutes(): number {
+  const z = new Date(Date.now() + 8 * 3600_000)
+  return z.getUTCHours() * 60 + z.getUTCMinutes()
+}
+function parseHM(s: any): number | null {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(typeof s === 'string' ? s : '')
+  if (!m) return null
+  const v = Number(m[1]) * 60 + Number(m[2])
+  return v >= 0 && v < 1440 ? v : null
+}
+/** Is "now" inside the user's quiet-hours window (supports overnight ranges)? */
+function isQuietNow(prefs: any): boolean {
+  if (!prefs?.quietHoursEnabled) return false
+  const start = parseHM(prefs.quietHoursStart)
+  const end = parseHM(prefs.quietHoursEnd)
+  if (start == null || end == null || start === end) return false
+  const now = nowManilaMinutes()
+  return start < end ? now >= start && now < end : now >= start || now < end
+}
+/** Whether a notification type should reach this user per their toggles.
+ *  mode 'forceWhenDisabled' inverts it (used for explicit opt-ins like watch-home). */
+function userAcceptsType(prefs: any, type: NotifType | undefined, mode: 'normal' | 'forceWhenDisabled'): boolean {
+  if (!type) return true
+  const enabled = prefs?.[type] !== false // default ON
+  return mode === 'forceWhenDisabled' ? !enabled : enabled
+}
+
+
+/* =============================================================================
    Idempotency helpers
    ============================================================================= */
 async function markDailyNotifiedIfNeeded(familyId: string, dateKey: string): Promise<boolean> {
@@ -131,29 +166,29 @@ async function recordEvent(
 /* =============================================================================
    Unified notifier for a family's members (multicast + Safari fallback)
    ============================================================================= */
-async function sendNotificationToFamilyMembers(
+async function sendNotificationToUids(
+  uids: string[],
   familyId: string,
   title: string,
   body: string,
   extraData: Record<string, string> = {},
-  opts?: { excludeUids?: string[] }
+  opts?: { type?: NotifType; mode?: 'normal' | 'forceWhenDisabled' }
 ): Promise<void> {
   try {
-    const exclude = new Set(opts?.excludeUids ?? [])
+    const mode = opts?.mode ?? 'normal'
 
-    // Members
-    const membersSnap = await firestore.collection('families').doc(familyId).collection('members').get()
-    const memberUids = membersSnap.docs.map((d) => d.id).filter((uid) => !exclude.has(uid))
-    logger.info('sendNotificationToFamilyMembers: members fetched', { familyId, memberCount: memberUids.length })
-
-    // Gather tokens
+    // Gather tokens — honouring each user's per-type prefs + quiet hours.
     const userTokens: Array<{ uid: string; token: string }> = []
     const safariFallbackUids: string[] = []
-    for (const uid of memberUids) {
+    for (const uid of uids) {
       const userDoc = await firestore.collection('users').doc(uid).get()
       const u = userDoc.data() as any
+      const prefs = u?.notificationPrefs ?? {}
+
+      if (!userAcceptsType(prefs, opts?.type, mode)) continue
+      if (isQuietNow(prefs)) continue
+
       const tCount = Array.isArray(u?.fcmTokens) ? u.fcmTokens.length : 0
-      logger.info('member token presence', { familyId, uid, tokenCount: tCount, safariFallback: !!u?.isSafari })
       if (tCount > 0) {
         for (const t of u!.fcmTokens as string[]) userTokens.push({ uid, token: t })
       } else if (u?.isSafari) {
@@ -164,9 +199,11 @@ async function sendNotificationToFamilyMembers(
     const tokens = Array.from(new Set(userTokens.map(x => x.token))) // dedupe
     logger.info('push token summary', {
       familyId,
-      memberCount: memberUids.length,
+      recipients: uids.length,
       distinctTokenCount: tokens.length,
       safariFallbackCount: safariFallbackUids.length,
+      type: opts?.type ?? null,
+      mode,
     })
 
     const tag = String(extraData.tag ?? `abot:${familyId}`)
@@ -175,16 +212,11 @@ async function sendNotificationToFamilyMembers(
     // Multicast in chunks — DATA-ONLY payloads
     if (tokens.length > 0) {
       const chunks = chunk(tokens, 500)
-      logger.info('multicast chunks', { familyId, chunks: chunks.length })
       for (const part of chunks) {
         try {
           const res = await messaging.sendEachForMulticast({
             tokens: part,
-            // No "notification" key here → data-only
-            webpush: {
-              headers: { TTL: '1800' },
-              // fcmOptions.link is optional in data-only; we still set url in data and handle in SW
-            },
+            webpush: { headers: { TTL: '1800' } },
             data: {
               familyId,
               ...extraData,
@@ -211,7 +243,6 @@ async function sendNotificationToFamilyMembers(
               const code = (r.error as any)?.code || ''
               if (code.includes('registration-token-not-registered') || code.includes('invalid-registration-token')) {
                 const owners = userTokens.filter(ut => ut.token === token).map(ut => ut.uid)
-                logger.warn('pruning invalid token', { familyId, ownersCount: owners.length })
                 owners.forEach(uid => {
                   removals.push(
                     firestore.collection('users').doc(uid).update({
@@ -241,11 +272,30 @@ async function sendNotificationToFamilyMembers(
             title, body, familyId, ...extraData, tag, url, timestamp: Date.now(),
           }),
         })
-        logger.info('queued safari fallback', { familyId, uid })
       } catch (err) {
         logger.error('safari fallback queue failed', { familyId, uid, error: err instanceof Error ? err.message : JSON.stringify(err) })
       }
     }
+  } catch (err) {
+    logger.error('sendNotificationToUids error', {
+      familyId,
+      error: err instanceof Error ? err.message : JSON.stringify(err),
+    })
+  }
+}
+
+async function sendNotificationToFamilyMembers(
+  familyId: string,
+  title: string,
+  body: string,
+  extraData: Record<string, string> = {},
+  opts?: { excludeUids?: string[]; type?: NotifType }
+): Promise<void> {
+  try {
+    const exclude = new Set(opts?.excludeUids ?? [])
+    const membersSnap = await firestore.collection('families').doc(familyId).collection('members').get()
+    const memberUids = membersSnap.docs.map((d) => d.id).filter((uid) => !exclude.has(uid))
+    await sendNotificationToUids(memberUids, familyId, title, body, extraData, { type: opts?.type })
   } catch (err) {
     logger.error('sendNotificationToFamilyMembers error', {
       familyId,
@@ -275,7 +325,8 @@ async function sendDeliveryNotificationForFamily(
     familyId,
     'Delivery is on its way!',
     'Delivery expected today is now in transit.',
-    extra
+    extra,
+    { type: 'delivery' }
   )
 }
 
@@ -389,7 +440,8 @@ export const scheduledDailyDeliveryNotification = scheduler.onSchedule(
           familyId,
           'Today’s deliveries',
           'You have deliveries scheduled for today.',
-          { tag: `today:${familyId}`, url: '/deliveries' }
+          { tag: `today:${familyId}`, url: '/deliveries' },
+          { type: 'delivery' }
         )
 
         visited.add(familyId)
@@ -446,7 +498,7 @@ export const notifyDeliveryCreatedToday = onDocumentCreated(
         'New delivery for today',
         'A delivery scheduled for today was added.',
         { deliveryId, tag: `today:${familyId}`, url: '/deliveries' },
-        actor ? { excludeUids: [actor] } : undefined
+        { type: 'delivery', ...(actor ? { excludeUids: [actor] } : {}) }
       )
     }
   }
@@ -512,8 +564,32 @@ export const notifyPresenceStatusChange = onDocumentWritten(
       title,
       body,
       { changedUserId: userId, status: nextStatus, tag: `presence:${familyId}:${userId}`, url: '/family' },
-      { excludeUids: [userId] }
+      { excludeUids: [userId], type: 'presence' }
     );
+
+    // "Notify me when ___ gets home": members who explicitly watch this user
+    // still get an arrival alert even if they muted general presence pushes.
+    if (nextStatus === 'home') {
+      try {
+        const watchSnap = await firestore
+          .collection('families').doc(familyId).collection('members')
+          .where(`watchHome.${userId}`, '==', true)
+          .get();
+        const watchers = watchSnap.docs.map((d) => d.id).filter((uid) => uid !== userId);
+        if (watchers.length) {
+          await sendNotificationToUids(
+            watchers,
+            familyId,
+            `🏠 ${displayName} is home`,
+            `${displayName} just arrived home.`,
+            { changedUserId: userId, status: 'home', tag: `watchhome:${familyId}:${userId}`, url: '/family' },
+            { type: 'presence', mode: 'forceWhenDisabled' }
+          );
+        }
+      } catch (e) {
+        logger.error('watch-home notify failed', { familyId, userId, error: e instanceof Error ? e.message : String(e) });
+      }
+    }
   }
 );
 
@@ -566,7 +642,7 @@ export const notifyEnRoute = onDocumentWritten(
       title,
       body,
       { changedUserId: userId, tag: `enroute:${familyId}:${userId}`, url: '/' },
-      { excludeUids: [userId] }
+      { excludeUids: [userId], type: 'enroute' }
     );
   }
 );
