@@ -503,7 +503,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       }
     } catch (err) {
       console.error('DeliveryFormDialog submit err', err)
-      alert('Failed to save delivery')
+      toast.error('Failed to save delivery')
     } finally {
       setIsSaving(false)
     }

@@ -224,7 +224,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
     setProcessing(true)
     try {
       const res = await markChildItemAsReceived(familyId, parentCollection, parent.id, itemId)
-      if (!res || res.success === false) alert(res?.message ?? 'Failed')
+      if (!res || res.success === false) toast.error(res?.message ?? 'Failed to mark item received')
     } finally {
       setProcessing(false)
     }
@@ -255,7 +255,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
           })
         } else {
           const res = await markDeliveryAsReceived(familyId, parent.id, '')
-          if (!res || res.success === false) { alert(res?.message ?? 'Failed'); setProcessing(false); setConfirmOpen(false); return }
+          if (!res || res.success === false) { toast.error(res?.message ?? 'Failed to mark delivered'); setProcessing(false); setConfirmOpen(false); return }
           await updateDoc(ref, {
             archived: true,
             archivedAt: new Date(),
@@ -264,7 +264,7 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
         }
       }
     } catch {
-      alert('Failed to mark as delivered')
+      toast.error('Failed to mark as delivered')
     } finally {
       setProcessing(false)
       setConfirmOpen(false)

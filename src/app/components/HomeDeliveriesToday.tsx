@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
+import { toast } from 'sonner'
 import { MarkDeliveryButton } from './MarkDeliveryButton'
 import { MarkDeliveryItemButton } from './MarkDeliveryItemButton'
 import { ReceiverNoteDialog } from './ReceiverNoteDialog'
@@ -260,7 +261,7 @@ function DeliveryNotesThreadInline({ familyId, deliveryId }: { familyId: string;
       setText('')
     } catch (e) {
       console.error('Failed to add note', e)
-      alert('Failed to add note')
+      toast.error('Failed to add note')
     } finally {
       setAdding(false)
     }
@@ -518,7 +519,7 @@ export default function HomeDeliveriesToday({
         })
       }
     } catch (err) {
-      console.error('handleMarkDelivery', err); alert('Failed to mark delivery')
+      console.error('handleMarkDelivery', err); toast.error('Failed to mark delivery')
     } finally {
       setProcessingId(null); setDialogOpenId(null)
     }
@@ -529,9 +530,9 @@ export default function HomeDeliveriesToday({
     setProcessingId(itemId)
     try {
       const res = await markChildItemAsReceived(familyId, 'deliveries', deliveryId, itemId)
-      if (!res || res.success === false) alert(res?.message ?? 'Failed to mark item')
+      if (!res || res.success === false) toast.error(res?.message ?? 'Failed to mark item')
     } catch (err) {
-      console.error('handleMarkDeliveryItem', err); alert('Failed to mark item')
+      console.error('handleMarkDeliveryItem', err); toast.error('Failed to mark item')
     } finally {
       setProcessingId(null)
     }
