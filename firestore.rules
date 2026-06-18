@@ -53,7 +53,12 @@ service cloud.firestore {
       // === MEMBERS SUBCOLLECTION ===
       match /members/{memberId} {
         allow read: if isSignedIn() && isFamilyMember(familyId);
-        allow create: if isSignedIn() && request.auth.uid == memberId && isFamilyMember(familyId);
+        // A signed-in user may create THEIR OWN member doc to join a family
+        // (the invite QR carries the familyId). Requiring isFamilyMember here
+        // was circular — a new joiner is never a member yet — so it blocked all
+        // joins with permission-denied. Gate on the family existing instead.
+        allow create: if isSignedIn() && request.auth.uid == memberId &&
+          exists(/databases/$(database)/documents/families/$(familyId));
         allow update, delete: if isSignedIn() && (
           request.auth.uid == memberId ||
           isFamilyAdmin(familyId)
