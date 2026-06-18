@@ -503,7 +503,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       }
     } catch (err) {
       console.error('DeliveryFormDialog submit err', err)
-      alert('Failed to save delivery')
+      toast.error('Failed to save delivery')
     } finally {
       setIsSaving(false)
     }
@@ -554,7 +554,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               <Label>Expected date &amp; time</Label>
               <input
                 type="datetime-local"
-                className="mt-1 block w-full rounded border px-2 py-1"
+                className="mt-1 block h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
                 value={values.expectedDate}
                 onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value }))}
               />

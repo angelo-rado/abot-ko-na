@@ -173,7 +173,9 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
               if (/Android/i.test(navigator.userAgent)) {
                 window.open('intent://settings#Intent;scheme=android.settings.LOCATION_SOURCE_SETTINGS;end')
               } else {
-                alert('To enable location on iOS:\n\n1) Open Settings\n2) Scroll to Safari (or your browser)\n3) Tap Location\n4) Set to “While Using the App”.')
+                toast.message('Enable location on iOS', {
+                  description: 'Settings → Safari (or your browser) → Location → set to “While Using the App”.',
+                })
               }
             }
           }
