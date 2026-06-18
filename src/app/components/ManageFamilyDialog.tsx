@@ -50,8 +50,6 @@ type Props = {
   onOpenChange: (open: boolean) => void
 }
 
-const LOCAL_FAMILY_KEY = 'abot:selectedFamily'
-
 function initials(name?: string | null, uid?: string) {
   if (!name && uid) return uid.slice(0, 2).toUpperCase()
   if (!name) return '👤'
@@ -199,7 +197,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
     try {
       await updateDoc(doc(firestore, 'families', family.id, 'members', memberId), { role: nextRole })
       toast.success(`Role updated to ${nextRole}`)
-    } catch (err) {
+    } catch {
       toast.error('Failed to update role')
       setMembers(prev => prev.map(m => m.id === memberId ? { ...m, role: currentRole } : m))
     } finally { setBusy(false) }
@@ -229,7 +227,7 @@ export default function ManageFamilyDialog({ family, open, onOpenChange }: Props
       await deleteDoc(doc(firestore, 'families', family.id, 'members', memberId))
       try { await updateDoc(doc(firestore, 'families', family.id), { members: arrayRemove(memberId) }) } catch {}
       toast.success('Member removed')
-    } catch (err) {
+    } catch {
       toast.error('Failed to remove member')
       setMembers(prev)
     } finally { setBusy(false) }

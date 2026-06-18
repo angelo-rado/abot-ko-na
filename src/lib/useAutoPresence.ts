@@ -3,45 +3,10 @@
 import { useEffect, useRef } from 'react'
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore'
 import { auth, firestore } from '@/lib/firebase'
-
-type HomeLoc =
-  | { latitude: number; longitude: number }      // Firestore GeoPoint-like
-  | { lat: number; lng?: number; lon?: number }  // {lat,lng} or {lat,lon}
-  | { coordinates: [number, number] }            // [lon, lat]
-  | null
+import { getHomeLocation } from '@/lib/models/family'
 
 function isNum(v: unknown): v is number {
   return typeof v === 'number' && Number.isFinite(v)
-}
-
-function parseHomeLocation(d: any): { lat: number; lng: number } | null {
-  if (!d) return null
-
-  // Direct objects
-  const direct: HomeLoc =
-    d.homeLocation ?? d.home ?? d.location ?? null
-
-  if (direct) {
-    // GeoPoint-like
-    if (isNum((direct as any).latitude) && isNum((direct as any).longitude)) {
-      return { lat: (direct as any).latitude, lng: (direct as any).longitude }
-    }
-    // {lat,lng}/{lat,lon}
-    if (isNum((direct as any).lat) && (isNum((direct as any).lng) || isNum((direct as any).lon))) {
-      return { lat: (direct as any).lat, lng: (isNum((direct as any).lng) ? (direct as any).lng : (direct as any).lon) }
-    }
-    // [lon,lat]
-    if (Array.isArray((direct as any).coordinates) && isNum((direct as any).coordinates[1]) && isNum((direct as any).coordinates[0])) {
-      return { lat: (direct as any).coordinates[1], lng: (direct as any).coordinates[0] }
-    }
-  }
-
-  // Legacy flat fields
-  if (isNum(d?.homeLat) && (isNum(d?.homeLng) || isNum(d?.homeLon))) {
-    return { lat: d.homeLat, lng: (isNum(d.homeLng) ? d.homeLng : d.homeLon) }
-  }
-
-  return null
 }
 
 // meters between two WGS84 points
@@ -122,11 +87,13 @@ export function useAutoPresence(familyId?: string | null) {
         statusSource: 'geo',
         updatedAt: serverTimestamp(),
         autoPresence: true, // helpful for UI normalizeSource
+        // Auto-arriving home ends any "on my way" broadcast.
+        ...(status === 'home' ? { enRoute: false, etaMinutes: null } : {}),
         ...(lastGeo ? { lastGeo } : {}),
         // keep basic profile fields fresh
         uid: user.uid,
-        name: (user as any)?.name ?? user.displayName ?? 'Unknown',
-        photoURL: (user as any)?.photoURL ?? user.photoURL ?? null,
+        name: user.displayName ?? 'Unknown',
+        photoURL: user.photoURL ?? null,
       },
       { merge: true }
     )
@@ -169,7 +136,7 @@ export function useAutoPresence(familyId?: string | null) {
       familyDoc,
       (snap) => {
         const data = snap.data()
-        const loc = parseHomeLocation(data)
+        const loc = getHomeLocation(data)
         const baseRadius = isNum(data?.homeRadiusMeters) ? Math.max(30, Math.min(1000, data.homeRadiusMeters)) : 120
         // hysteresis radii
         const enter = baseRadius

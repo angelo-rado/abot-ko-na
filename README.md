@@ -1,29 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Abot Ko Na
 
-## Getting Started
+> _"Abot ko na"_ (Filipino) — roughly *"I've got it / I've arrived."*
 
-First, run the development server:
+A realtime **family presence & delivery-tracking** Progressive Web App. Families
+share a single space where members can see **who's home** and keep track of
+**incoming deliveries**, with push notifications when a package is on its way or
+when someone arrives/leaves home.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Features
+
+- **Who's Home** — realtime presence per family member. Set manually
+  (_I'm Home / I'm Out_) or automatically via geolocation against a saved family
+  home location (geofence-based auto-presence).
+- **Deliveries** — log packages with expected dates, recipients and line items;
+  mark them `pending → in_transit → delivered`; per-delivery notes thread.
+- **Notifications** — Firebase Cloud Messaging push + an in-app notifications
+  feed, driven by Cloud Functions (in-transit alerts, daily 8AM summary,
+  presence changes). Includes a Safari/iOS fallback queue.
+- **Families** — create or join via invite link / QR code, with owner/admin
+  roles and member management.
+- **Offline-first PWA** — installable, service worker caching, and a Dexie
+  (IndexedDB) mirror for offline reads.
+
+## Tech stack
+
+| Layer        | Technology |
+|--------------|------------|
+| Framework    | Next.js 15 (App Router, parallel routes), React 19, TypeScript |
+| Styling      | Tailwind CSS v4, shadcn/ui, framer-motion |
+| Backend      | Firebase — Auth (Google), Firestore, Cloud Messaging, Cloud Functions v2 |
+| Maps         | Leaflet + leaflet-geosearch (home-location picker) |
+| Offline      | next-pwa (Workbox) service worker, Dexie / IndexedDB |
+| Hosting      | Vercel (web) + Firebase (functions, rules, indexes) |
+| Functions TZ | `asia-southeast1`, schedules in `Asia/Manila` |
+
+## Project structure
+
+```
+src/
+  app/
+    (main)/            App Router routes — parallel slots (@home, @deliveries,
+                       @family, @settings, @notifications) + swipe/standalone shells
+    components/        Feature components (delivery cards, modals, presence, maps)
+    api/save-fcm-token/  Route handler for persisting FCM tokens
+    login/ onboarding/   Auth & onboarding flows
+  components/ui/       shadcn/ui primitives
+  lib/                 Firebase init, hooks, presence/delivery/family logic, Dexie db
+functions/src/         Cloud Functions (notifications, schedulers, triggers)
+firestore.rules        Firestore security rules
+firebase.indexes.json  Composite index definitions
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Getting started
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Prerequisites
+- Node.js 20+ (Cloud Functions target Node 22)
+- A Firebase project with Auth (Google), Firestore and Cloud Messaging enabled
+- Firebase CLI (`npm i -g firebase-tools`) for deploying functions/rules
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 1. Install
+```bash
+npm install
+```
 
-## Environment Variables
-
-Create a `.env.local` file based on `.env.example` and provide values for the following Firebase settings:
-
+### 2. Configure environment
+Create `.env.local` from the example and fill in your Firebase web config:
+```bash
+cp .env.example .env.local
+```
 ```
 NEXT_PUBLIC_FIREBASE_API_KEY=
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
@@ -32,23 +76,56 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
 NEXT_PUBLIC_FIREBASE_APP_ID=
 NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=
+NEXT_PUBLIC_VAPID_KEY=          # Web Push certificate key pair (FCM)
+```
+> `NEXT_PUBLIC_VAPID_KEY` comes from Firebase Console → Project Settings →
+> Cloud Messaging → Web Push certificates.
+
+The same variables must be configured in your hosting environment (Vercel)
+before deploying — see `vercel.json` for the expected secret names.
+
+### 3. Run
+```bash
+npm run dev          # start dev server (Turbopack) at http://localhost:3000
 ```
 
-These variables must also be configured in your hosting environment (e.g., Vercel) before deploying.
+## Scripts
 
-## Learn More
+| Command            | Description |
+|--------------------|-------------|
+| `npm run dev`      | Dev server (Turbopack) |
+| `npm run build`    | Production build |
+| `npm run start`    | Serve the production build |
+| `npm run lint`     | ESLint (next lint) |
+| `npm run typecheck`| `tsc --noEmit` |
 
-To learn more about Next.js, take a look at the following resources:
+## Deployment
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+**Web (Vercel):** push to the deploy branch; set the `NEXT_PUBLIC_*` env vars
+above directly in the Vercel project (Settings → Environment Variables) for
+Production and Preview. `NEXT_PUBLIC_*` values are inlined at build time, so they
+must be configured there. `vercel.json` only configures PWA/service-worker
+headers and rewrites.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+**Firebase (functions, rules, indexes):**
+```bash
+firebase deploy --only functions      # Cloud Functions (builds via predeploy)
+firebase deploy --only firestore:rules
+firebase deploy --only firestore:indexes
+```
 
-## Deploy on Vercel
+## Data model (Firestore)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```
+users/{uid}                         profile, fcmTokens[], autoPresence, isSafari
+families/{familyId}                 name, createdBy, members[], homeLocation
+  members/{uid}                     name, photoURL, status, statusSource, updatedAt
+  deliveries/{deliveryId}           title, recipient, status, expectedDate, createdBy
+    items/{itemId}                  line items
+  events/{eventId}                  in-app notification feed (targets[], type, createdAt)
+system/...                          idempotency markers for notifications
+```
 
-Before deploying, make sure the environment variables listed above are configured in your Vercel project settings.
+## License
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Private project.

@@ -459,7 +459,7 @@ export default function MainLayout({
     }
   }, [])
 
-  const STANDALONE_PREFIXES = ['/family/join', '/login', '/onboarding', '/family/create'] as const
+  const STANDALONE_PREFIXES = ['/family/join', '/login', '/onboarding', '/family/create', '/shopping'] as const
   const isStandalone = STANDALONE_PREFIXES.some((p) => pathname.startsWith(p))
 
   return (

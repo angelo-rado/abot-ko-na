@@ -1,4 +1,6 @@
 // app/not-found.tsx
+import Link from 'next/link'
+
 export default function NotFound() {
   return (
     <div style={{ maxWidth: 480, margin: '3rem auto', textAlign: 'center' }}>
@@ -6,7 +8,7 @@ export default function NotFound() {
       <p style={{ opacity: 0.7, marginBottom: 16 }}>
         The page you’re looking for doesn’t exist.
       </p>
-      <a
+      <Link
         href="/"
         style={{
           display: 'inline-block',
@@ -17,8 +19,7 @@ export default function NotFound() {
         }}
       >
         Go home
-      </a>
+      </Link>
     </div>
   )
 }
-

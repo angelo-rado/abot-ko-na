@@ -80,6 +80,16 @@ service cloud.firestore {
           allow read, create, update, delete: if isSignedIn() && isFamilyMember(familyId);
         }
       }
+
+      // === SHOPPING LIST SUBCOLLECTION ===
+      // Shared family errand/shopping list. Any family member can read and
+      // manage items.
+      match /shoppingItems/{itemId} {
+        allow read: if isSignedIn() && isFamilyMember(familyId);
+        allow create: if isSignedIn() && isFamilyMember(familyId) &&
+          request.resource.data.createdBy == request.auth.uid;
+        allow update, delete: if isSignedIn() && isFamilyMember(familyId);
+      }
     }
   }
 }

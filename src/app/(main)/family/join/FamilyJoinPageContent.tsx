@@ -137,7 +137,6 @@ export default function FamilyJoinPageContent() {
     setJoining(true)
     try {
       let familyId: string | null = null
-      let viaInvite = false
       let famName: string | null = null
 
       try {
@@ -150,7 +149,6 @@ export default function FamilyJoinPageContent() {
           }
           familyId = inv.familyId
           famName = inv.familyName ?? null
-          viaInvite = true
         }
       } catch (err: any) {
         console.warn('[join] invite lookup error', err?.code || err?.message || err)

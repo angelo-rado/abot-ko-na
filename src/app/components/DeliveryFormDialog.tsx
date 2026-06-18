@@ -32,6 +32,8 @@ type DeliveryFormValues = {
   status: DeliveryStatus
   note?: string
   receiverNote?: string
+  courier?: string
+  trackingNumber?: string
 }
 
 type ItemRow = {
@@ -106,6 +108,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     codAmount: delivery?.codAmount ?? null,
     status: (delivery?.status as DeliveryStatus) ?? 'pending',
     note: delivery?.note ?? '',
+    courier: delivery?.courier ?? '',
+    trackingNumber: delivery?.trackingNumber ?? '',
   })
 
   const [itemMode, setItemMode] = useState<'single' | 'multiple'>(
@@ -154,6 +158,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       codAmount: null,
       status: 'pending',
       note: '',
+      courier: '',
+      trackingNumber: '',
     })
     initialExpectedRef.current = null
 
@@ -179,6 +185,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       codAmount: delivery.codAmount ?? null,
       status: (delivery.status as DeliveryStatus) ?? 'pending',
       note: delivery.note ?? '',
+      courier: delivery.courier ?? '',
+      trackingNumber: delivery.trackingNumber ?? '',
     })
     initialExpectedRef.current = expected
 
@@ -287,12 +295,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setConfirmSinglePromptOpen(false)
   }
 
-  function confirmSwitchToSingleCancel() {
-    if (draftItemsRef.current) setItems(draftItemsRef.current)
-    setConfirmSinglePromptOpen(false)
-    setItemMode('multiple')
-  }
-
   function handleDialogClose() {
     if (!isEdit && itemMode === 'multiple' && items.length > 0) {
       draftItemsRef.current = items
@@ -335,6 +337,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               type: itemMode === 'single' ? 'single' : 'multiple',
               amount: values.codAmount ?? null,
               note: values.note ?? '',
+              courier: values.courier?.trim() || null,
+              trackingNumber: values.trackingNumber?.trim() || null,
               expectedDate: values.expectedDate ? Date.parse(values.expectedDate) : null,
               createdAt: now,
               updatedAt: now,
@@ -345,7 +349,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         toast('Saved offline — will sync when online', { icon: '📶' })
         onOpenChange(false)
         return
-      } catch (err) {
+      } catch {
         toast.error('Failed to save offline draft')
       }
     }
@@ -413,6 +417,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           codAmount: values.codAmount ?? null,
           status: values.status,
           note: values.note?.trim() || '',
+          courier: values.courier?.trim() || null,
+          trackingNumber: values.trackingNumber?.trim() || null,
           itemCount: items.length,
           type: items.length > 1 ? 'bulk' : 'single',
           updatedAt: Timestamp.now(),
@@ -445,6 +451,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
           expectedDate: headerDate ?? undefined,  // 23:59 local
           note: values.note?.trim() || '',
           receiverNote: '',
+          courier: values.courier?.trim() || null,
+          trackingNumber: values.trackingNumber?.trim() || null,
         })
 
         const newId = created.id
@@ -592,6 +600,27 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                   COD is automatically calculated per item in bulk deliveries.
                 </p>
               )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="courier">Courier (optional)</Label>
+                <Input
+                  id="courier"
+                  placeholder="e.g. J&T, LBC, Lalamove"
+                  value={values.courier ?? ''}
+                  onChange={(e) => setValues((v) => ({ ...v, courier: e.target.value }))}
+                />
+              </div>
+              <div>
+                <Label htmlFor="trackingNumber">Tracking number (optional)</Label>
+                <Input
+                  id="trackingNumber"
+                  placeholder="e.g. 1234567890"
+                  value={values.trackingNumber ?? ''}
+                  onChange={(e) => setValues((v) => ({ ...v, trackingNumber: e.target.value }))}
+                />
+              </div>
             </div>
 
             <div>

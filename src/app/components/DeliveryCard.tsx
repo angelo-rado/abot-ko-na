@@ -22,8 +22,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Check, Trash2, ChevronDown } from 'lucide-react'
+import { Check, Trash2, ChevronDown, Copy, Truck } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { toast } from 'sonner'
 
 type MetaChipProps = {
   tone?: 'muted' | 'info' | 'warn'
@@ -130,20 +131,6 @@ function friendlyDeliveredLabel(raw: any) {
 }
 
 /* ---------- tiny UI helpers ---------- */
-const MetaChip = ({ children, tone = 'muted' }: MetaChipProps) => {
-  const toneCls =
-    tone === 'info'
-      ? 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50'
-      : tone === 'warn'
-      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50'
-      : 'bg-muted text-muted-foreground border border-muted-foreground/10'
-
-  return (
-    <span className={`text-[11px] px-2 py-0.5 rounded ${toneCls}`}>
-      {children}
-    </span>
-  )
-}
 const Dot = () => <span className="mx-1.5 text-muted-foreground/60">•</span>
 
 /* ---------- lock helper (kept for parity) ---------- */
@@ -219,6 +206,18 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
   const cancelled = parent?.status === 'cancelled'
   const isSingle = parentType === 'delivery' && (parent.type === 'single' || !parent.type)
   const itemsCount = items.length || parent?.itemCount || 0
+  const courier: string | null = (typeof parent?.courier === 'string' && parent.courier.trim()) ? parent.courier.trim() : null
+  const trackingNumber: string | null = (typeof parent?.trackingNumber === 'string' && parent.trackingNumber.trim()) ? parent.trackingNumber.trim() : null
+
+  const copyTracking = async () => {
+    if (!trackingNumber) return
+    try {
+      await navigator.clipboard.writeText(trackingNumber)
+      toast.success('Tracking number copied')
+    } catch {
+      toast.error('Could not copy tracking number')
+    }
+  }
 
   /* ---------- actions ---------- */
   const onMarkItem = async (itemId: string) => {
@@ -314,6 +313,22 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
               {eta && <MetaChip tone={isPastETA ? 'warn' : 'info'}>ETA {friendlyExpectedLabel(eta)}{isPastETA ? ' (past due)' : ''}</MetaChip>}
               {typeof parent.totalAmount === 'number' && <MetaChip>₱{Number(parent.totalAmount).toFixed(2)}</MetaChip>}
               {!isSingle && <MetaChip>{itemsCount} item{itemsCount !== 1 ? 's' : ''}</MetaChip>}
+              {courier && (
+                <MetaChip tone="info">
+                  <span className="inline-flex items-center gap-1"><Truck className="h-3 w-3" />{courier}</span>
+                </MetaChip>
+              )}
+              {trackingNumber && (
+                <button
+                  type="button"
+                  onClick={copyTracking}
+                  title="Copy tracking number"
+                  className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10 inline-flex items-center gap-1 hover:bg-muted-foreground/10 transition-colors"
+                >
+                  #{trackingNumber}
+                  <Copy className="h-3 w-3" />
+                </button>
+              )}
               {parent.platform && (<><Dot />{parent.platform}</>)}
             </div>
 
@@ -431,11 +446,11 @@ export default function DeliveryCard({ familyId, order, delivery, onDelete }: Pr
       )}
 
       {/* Single deliveries: keep ultra-minimal — details already in header chips */}
-      {isSingle && parent.notes && (
+      {isSingle && (parent.note ?? parent.notes) && (
         <CardContent className="pt-2">
           <div className="text-sm">
             <span className="text-muted-foreground">Notes: </span>
-            <span className="italic">{parent.notes}</span>
+            <span className="italic">{parent.note ?? parent.notes}</span>
           </div>
         </CardContent>
       )}

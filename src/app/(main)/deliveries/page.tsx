@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation'
 import DeliveryNotesThread from '@/app/components/delivery-notes/DeliveryNotesThread'
 import BulkEditBar from './BulkEditBar'
 import Link from 'next/link'
+import { deliveryMatchesQuery } from '@/lib/models/delivery'
 
 import {
   AlertDialog,
@@ -291,13 +292,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
   const [queryText, setQueryText] = useState('')
 
   const matchesQuery = useCallback((d: any) => {
-    const q = queryText.trim().toLowerCase()
-    if (!q) return true
-    return (
-      (d.name && String(d.name).toLowerCase().includes(q)) ||
-      (d.notes && String(d.notes).toLowerCase().includes(q)) ||
-      (d.items && Array.isArray(d.items) && d.items.some((it: any) => String(it?.name || '').toLowerCase().includes(q)))
-    )
+    return deliveryMatchesQuery(d, queryText)
   }, [queryText])
 
   // Always show only my deliveries (the query is already scoped; this is a safety net)
