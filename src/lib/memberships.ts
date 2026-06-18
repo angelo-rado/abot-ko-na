@@ -5,8 +5,6 @@ import {
   query,
   where,
   getDocs,
-  doc,
-  getDoc,
 } from 'firebase/firestore'
 
 export type FamilyLite = {

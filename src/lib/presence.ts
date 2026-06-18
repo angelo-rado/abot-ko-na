@@ -1,5 +1,4 @@
 // lib/presence.ts
-import { serverTimestamp } from 'firebase/firestore';
 import { db } from './db';
 import { User } from 'firebase/auth';
 

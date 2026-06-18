@@ -93,12 +93,12 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
   const [serverPreferredResolved, setServerPreferredResolved] = useState<boolean>(false)
 
   // loading/saving
-  const [loaded, setLoaded] = useState<boolean>(false)
+  const [, setLoaded] = useState<boolean>(false)
   const [savingAuto, setSavingAuto] = useState<boolean>(false)
 
   // current family member (for manual controls + fallback)
   const [myMemberDoc, setMyMemberDoc] = useState<MemberDoc | null>(null)
-  const [memberLoading, setMemberLoading] = useState<boolean>(true)
+  const [, setMemberLoading] = useState<boolean>(true)
   const [savingStatus, setSavingStatus] = useState<boolean>(false)
 
   // user-level auto presence (GLOBAL flag)
@@ -441,7 +441,7 @@ export default function PresenceSettings({ familyId: propFamilyId }: { familyId?
           No default family set.{' '}
           <a
             href="/settings#default-family"
-            onClick={(e) => {
+            onClick={() => {
               try {
                 // fire a custom event that DefaultFamilySelector can listen to for a subtle focus/flash
                 window.dispatchEvent(new CustomEvent('focus-default-family'))

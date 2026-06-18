@@ -11,7 +11,6 @@ import {
   query,
   orderBy,
   getDocs,
-  getDoc,
   runTransaction,
   updateDoc,
   onSnapshot,

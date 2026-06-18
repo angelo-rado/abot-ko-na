@@ -1,7 +1,7 @@
 // lib/useAuth.ts
 import { useEffect, useState } from 'react'
 import { auth, firestore } from './firebase'
-import { User as FirebaseUser, onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged } from 'firebase/auth'
 import { doc, onSnapshot, setDoc } from 'firebase/firestore'
 import { ensureUserPresence } from './firestoreUtils'
 

@@ -82,7 +82,7 @@ export function SelectedFamilyProvider({ children }: { children: React.ReactNode
         const rawIds = Array.from(new Set(qs.docs.map((d) => d.ref.parent.parent?.id).filter(Boolean) as string[]))
 
         // Include JUST_JOINED_KEY one-shot to improve immediate UX after join
-        let ids = rawIds.slice()
+        const ids = rawIds.slice()
         try {
           const jj = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(JUST_JOINED_KEY) : null
           if (jj && !ids.includes(jj)) ids.push(jj)
@@ -183,7 +183,4 @@ export function useSelectedFamily() {
   if (!ctx) throw new Error('useSelectedFamily must be used inside <SelectedFamilyProvider>')
   return ctx
 }
-
-// Helper to satisfy TS when toggling booleans in refs
-function FalseGuard(v: boolean) { return v }
 

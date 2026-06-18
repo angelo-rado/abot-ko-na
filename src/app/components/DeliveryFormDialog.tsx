@@ -339,7 +339,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
         toast('Saved offline — will sync when online', { icon: '📶' })
         onOpenChange(false)
         return
-      } catch (err) {
+      } catch {
         toast.error('Failed to save offline draft')
       }
     }
