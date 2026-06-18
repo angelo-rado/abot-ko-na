@@ -22,6 +22,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { enqueue, isOnline } from '@/lib/offline'
 import { db } from '@/lib/db'
 import { toast } from 'sonner'
+import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
 
 type DeliveryStatus = 'pending' | 'in_transit' | 'delivered' | 'cancelled'
 
@@ -52,16 +53,14 @@ type Props = {
 }
 
 // ---- Time helpers (LOCAL) ----
-function getLocalISOStringForTime(hour: number, minute: number) {
-  const date = new Date()
-  date.setHours(hour, minute, 0, 0)
-  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
-  const y = date.getFullYear()
-  const m = pad(date.getMonth() + 1)
-  const d = pad(date.getDate())
-  const hh = pad(date.getHours())
-  const mm = pad(date.getMinutes())
-  return `${y}-${m}-${d}T${hh}:${mm}` // for <input type="datetime-local">
+const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
+
+/** Local "YYYY-MM-DDTHH:mm" string at 23:59 for today + daysFromToday. */
+function localEndOfDayISO(daysFromToday = 0) {
+  const d = new Date()
+  d.setDate(d.getDate() + daysFromToday)
+  d.setHours(23, 59, 0, 0)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T23:59`
 }
 
 /** Clamp an input "YYYY-MM-DDTHH:mm" to end-of-day LOCAL (23:59) */
@@ -80,7 +79,6 @@ function parseExpectedDate(d: any) {
   else if (d instanceof Date) dt = d
   else dt = new Date(d)
   if (isNaN(dt.getTime())) return ''
-  const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`)
   const y = dt.getFullYear()
   const m = pad(dt.getMonth() + 1)
   const day = pad(dt.getDate())
@@ -92,19 +90,13 @@ function parseExpectedDate(d: any) {
 export default function DeliveryFormDialog({ open, onOpenChange, familyId, delivery }: Props) {
   const lastAddedItemIdRef = useRef<string | null>(null)
   const isEdit = !!delivery
-
-  const draftItemsRef = useRef<ItemRow[] | null>(null)
-  const modifiedItemsRef = useRef<Set<string>>(new Set())
-
   const initialExpectedRef = useRef<string | null>(null)
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const [values, setValues] = useState<DeliveryFormValues>({
     title: delivery?.title ?? '',
-    expectedDate: delivery?.expectedDate
-      ? parseExpectedDate(delivery.expectedDate)
-      : getLocalISOStringForTime(23, 59),
+    expectedDate: delivery?.expectedDate ? parseExpectedDate(delivery.expectedDate) : localEndOfDayISO(0),
     codAmount: delivery?.codAmount ?? null,
     status: (delivery?.status as DeliveryStatus) ?? 'pending',
     note: delivery?.note ?? '',
@@ -112,49 +104,48 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     trackingNumber: delivery?.trackingNumber ?? '',
   })
 
-  const [itemMode, setItemMode] = useState<'single' | 'multiple'>(
-    delivery?.type === 'bulk' ? 'multiple' : 'single'
-  )
-
   const [items, setItems] = useState<ItemRow[]>([])
-  const [confirmSinglePromptOpen, setConfirmSinglePromptOpen] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
-  const [confirmContext, setConfirmContext] = useState<'switch' | 'close' | null>(null)
+  const [showDetails, setShowDetails] = useState(false)
+  const [pickCustom, setPickCustom] = useState(false)
 
-  const addItemDisabled = itemMode === 'single' && (!isEdit || items.length >= 1)
+  // Derived: more than one item => bulk; COD only makes sense for a single item.
+  const isBulk = items.length > 1
+  const todayDP = localEndOfDayISO(0).slice(0, 10)
+  const tomorrowDP = localEndOfDayISO(1).slice(0, 10)
+  const dateDP = values.expectedDate?.slice(0, 10) || ''
+  const isToday = dateDP === todayDP
+  const isTomorrow = dateDP === tomorrowDP
 
+  // Auto-focus the name field of a newly added item row.
   useEffect(() => {
     const id = lastAddedItemIdRef.current
     if (!id) return
-    let raf = 0
-    raf = requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLInputElement>(`[data-price-for="${id}"]`)
-      if (el) {
-        el.focus()
-        el.select?.()
-        lastAddedItemIdRef.current = null
-      }
+    const raf = requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>(`[data-name-for="${id}"]`)
+      if (el) { el.focus(); lastAddedItemIdRef.current = null }
     })
     return () => cancelAnimationFrame(raf)
   }, [items])
 
+  // Clear the items error once any item exists.
   useEffect(() => {
     if (formErrors.items && items.length > 0) {
-      setFormErrors((prev) => {
-        const { items, ...rest } = prev
-        return rest
-      })
+      setFormErrors((prev) => { const { items: _omit, ...rest } = prev; return rest })
     }
   }, [items.length, formErrors.items])
 
-  // Reset values on open (CREATE only), default 23:59 local
+  // COD is per-item for bulk — drop a header COD if it becomes bulk.
+  useEffect(() => {
+    if (isBulk && values.codAmount != null) setValues((v) => ({ ...v, codAmount: null }))
+  }, [isBulk, values.codAmount])
+
+  // Reset for CREATE on open.
   useEffect(() => {
     if (!open || isEdit) return
-
-    const defaultDate = getLocalISOStringForTime(23, 59)
     setValues({
       title: '',
-      expectedDate: defaultDate,
+      expectedDate: localEndOfDayISO(0),
       codAmount: null,
       status: 'pending',
       note: '',
@@ -162,26 +153,19 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       trackingNumber: '',
     })
     initialExpectedRef.current = null
-
-    if (draftItemsRef.current) {
-      setItems(draftItemsRef.current)
-      setItemMode('multiple')
-    } else {
-      setItems([])
-      setItemMode('single')
-    }
-
-    setConfirmSinglePromptOpen(false)
+    setItems([])
+    setShowDetails(false)
+    setPickCustom(false)
+    setFormErrors({})
   }, [open, isEdit])
 
-  // Load values for EDIT mode (preserve exact times from Firestore)
+  // Load values for EDIT mode (preserve exact times from Firestore).
   useEffect(() => {
     if (!delivery || !isEdit) return
-
     const expected = parseExpectedDate(delivery.expectedDate)
     setValues({
       title: delivery.title ?? '',
-      expectedDate: expected,
+      expectedDate: expected || localEndOfDayISO(0),
       codAmount: delivery.codAmount ?? null,
       status: (delivery.status as DeliveryStatus) ?? 'pending',
       note: delivery.note ?? '',
@@ -189,24 +173,24 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       trackingNumber: delivery.trackingNumber ?? '',
     })
     initialExpectedRef.current = expected
-
     if (delivery.type !== 'bulk') setItems([])
-
-    setItemMode(delivery.type === 'bulk' ? 'multiple' : 'single')
-    draftItemsRef.current = null
-    setConfirmSinglePromptOpen(false)
+    const dp = (expected || '').slice(0, 10)
+    setPickCustom(dp !== todayDP && dp !== tomorrowDP)
+    setShowDetails(!!(delivery.courier || delivery.trackingNumber || delivery.codAmount != null || (delivery.note && delivery.note.trim())))
+    setFormErrors({})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [delivery, isEdit])
 
-  // Fetch bulk items on edit (preserve each item's time)
+  // Fetch bulk items on edit (preserve each item's time).
   useEffect(() => {
     async function fetchItems() {
       if (!delivery || !delivery.id || delivery.type !== 'bulk') return
       const itemsCol = collection(firestore, 'families', familyId, 'deliveries', delivery.id, 'items')
       const snap = await getDocs(itemsCol)
-      const rows: ItemRow[] = snap.docs.map((doc) => {
-        const data = doc.data()
+      const rows: ItemRow[] = snap.docs.map((d) => {
+        const data = d.data()
         return {
-          id: doc.id,
+          id: d.id,
           name: data.name ?? '',
           price: data.price ?? null,
           expectedDate: parseExpectedDate(data.expectedDate),
@@ -218,55 +202,21 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     if (open && isEdit && delivery?.type === 'bulk') fetchItems()
   }, [open, isEdit, delivery, familyId])
 
-  useEffect(() => {
-    if ((items.length > 1 || itemMode === 'multiple') && values.codAmount != null) {
-      setValues((v) => ({ ...v, codAmount: null }))
-    }
-  }, [items.length, itemMode, values.codAmount])
-
-  useEffect(() => {
-    if (itemMode === 'single' && items.length > 1) {
-      setItems((prev) => prev.slice(0, 1))
-    }
-  }, [itemMode])
+  function setDate(daysFromToday: number) {
+    setPickCustom(false)
+    setValues((v) => ({ ...v, expectedDate: localEndOfDayISO(daysFromToday) }))
+  }
 
   function addItemRow() {
-    if (itemMode === 'single' && items.length >= 1) return
-
     const newId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    // Only auto-focus in multiple mode
-    if (itemMode === 'multiple') lastAddedItemIdRef.current = newId
-
-    setItems((prev) => {
-      // For multiple mode: compute the next numeric name (as a string)
-      const nextName =
-        itemMode === 'single'
-          ? ''
-          : (() => {
-              const nums = prev
-                .map((it) => (typeof it?.name === 'string' ? it.name.trim() : ''))
-                .map((n) => (/^\d+$/.test(n) ? parseInt(n, 10) : null))
-                .filter((n): n is number => n != null)
-              const next = nums.length ? Math.max(...nums) + 1 : prev.length + 1
-              return String(next < 1 ? 1 : next)
-            })()
-
-      return [
-        ...prev,
-        {
-          id: newId,
-          name: nextName, // e.g. "1", "2", "3", ...
-          price: null,
-          expectedDate: delivery?.expectedDate
-            ? parseExpectedDate(delivery.expectedDate)
-            : getLocalISOStringForTime(23, 59),
-        },
-      ]
-    })
+    lastAddedItemIdRef.current = newId
+    setItems((prev) => [
+      ...prev,
+      { id: newId, name: '', price: null, expectedDate: values.expectedDate || localEndOfDayISO(0) },
+    ])
   }
 
   function updateItemRow(id: string, patch: Partial<ItemRow>) {
-    modifiedItemsRef.current.add(id)
     setItems((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   }
 
@@ -274,67 +224,37 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setItems((prev) => prev.filter((r) => r.id !== id))
   }
 
-  function handleSetSingleMode() {
-    if (itemMode === 'multiple' && items.length > 0) {
-      draftItemsRef.current = items
-      setConfirmContext('switch')
-      requestAnimationFrame(() => setConfirmSinglePromptOpen(true))
-      return
-    }
-    setItemMode('single')
-  }
-
-  function handleSetMultipleMode() {
-    setItemMode('multiple')
-    if (draftItemsRef.current) setItems(draftItemsRef.current)
-  }
-
-  function confirmSwitchToSingleProceed() {
-    setItems([])
-    setItemMode('single')
-    setConfirmSinglePromptOpen(false)
-  }
-
-  function handleDialogClose() {
-    if (!isEdit && itemMode === 'multiple' && items.length > 0) {
-      draftItemsRef.current = items
-      setConfirmContext('close')
-      requestAnimationFrame(() => setConfirmSinglePromptOpen(true))
-      return
-    }
-    onOpenChange(false)
-  }
-
   const onSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault()
+
     // OFFLINE PATH: enqueue write & mirror locally
     if (!isOnline()) {
       try {
         const now = Date.now()
         const tempId = `offline-${now}`
-        const fam = familyId
-        // Basic single delivery optimistic mirror
+        const type = isBulk ? 'multiple' : 'single'
+        const itemCount = items.length > 0 ? items.length : 1
         await db.deliveries.put({
           id: tempId,
-          familyId: fam!,
+          familyId: familyId!,
           title: values.title?.trim() || 'Untitled',
-          type: itemMode === 'single' ? 'single' : 'multiple',
+          type,
           amount: values.codAmount ?? null,
           note: values.note ?? '',
           eta: values.expectedDate ? Date.parse(values.expectedDate) : null,
           createdAt: now,
           updatedAt: now,
-          itemCount: itemMode === 'single' ? 1 : items.length,
+          itemCount,
         })
         await enqueue({
           op: 'addDelivery',
-          familyId: fam,
+          familyId,
           payload: {
-            familyId: fam,
+            familyId,
             id: tempId,
             payload: {
               title: values.title?.trim() || 'Untitled',
-              type: itemMode === 'single' ? 'single' : 'multiple',
+              type,
               amount: values.codAmount ?? null,
               note: values.note ?? '',
               courier: values.courier?.trim() || null,
@@ -342,7 +262,7 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
               expectedDate: values.expectedDate ? Date.parse(values.expectedDate) : null,
               createdAt: now,
               updatedAt: now,
-              itemCount: itemMode === 'single' ? 1 : items.length,
+              itemCount,
             },
           },
         })
@@ -360,25 +280,19 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     if (!values.title.trim()) errors.title = 'Title is required'
     if (!values.expectedDate?.trim()) {
       errors.expectedDate = 'Expected date is required'
-    } else {
-      const now = new Date()
-      const expected = new Date(values.expectedDate)
-      if (expected < now) errors.expectedDate = 'Expected date cannot be in the past'
+    } else if (endOfDayFromLocalISO(values.expectedDate) < new Date()) {
+      errors.expectedDate = 'Expected date cannot be in the past'
     }
 
-    if (itemMode === 'multiple') {
-      if (items.length < 2) errors.items = 'Please add at least two items for bulk deliveries'
-      const headerExpected = values.expectedDate ? new Date(values.expectedDate) : null
+    // Validate any itemized rows (items are optional; the common case has none).
+    if (items.length > 0) {
+      const headerExpected = values.expectedDate ? endOfDayFromLocalISO(values.expectedDate) : null
       items.forEach((item, index) => {
         if (!item.name.trim()) errors[`item-${item.id}-name`] = `Item ${index + 1}: Name required`
         if (item.price === null || isNaN(item.price)) errors[`item-${item.id}-price`] = `Item ${index + 1}: Price required`
-        if (!item.expectedDate?.trim()) {
-          errors[`item-${item.id}-date`] = `Item ${index + 1}: Date required`
-        } else {
-          const itemDate = new Date(item.expectedDate)
-          const now = new Date()
-          if (itemDate < now) errors[`item-${item.id}-date`] = `Item ${index + 1}: Date cannot be in the past`
-          if (headerExpected && itemDate < headerExpected) errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery ETA`
+        if (item.expectedDate?.trim()) {
+          const itemDate = endOfDayFromLocalISO(item.expectedDate)
+          if (headerExpected && itemDate < headerExpected) errors[`item-${item.id}-date`] = `Item ${index + 1}: Date must be on or after the delivery date`
         }
       })
     }
@@ -391,13 +305,12 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setIsSaving(true)
     try {
       if (isEdit && delivery?.id) {
-        // EDIT MODE — keep times; don't overwrite expectedDate unless changed
+        // EDIT MODE — replace items, keep header time unless changed.
         const deliveryRef = doc(firestore, 'families', familyId, 'deliveries', delivery.id)
         const itemsCol = collection(deliveryRef, 'items')
 
         const existingItemsSnap = await getDocs(itemsCol)
-        const deletePromises = existingItemsSnap.docs.map((doc) => deleteDoc(doc.ref))
-        await Promise.all(deletePromises)
+        await Promise.all(existingItemsSnap.docs.map((d) => deleteDoc(d.ref)))
 
         const batch = writeBatch(firestore)
         items.forEach((it) => {
@@ -407,100 +320,91 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
             price: it.price,
             status: 'pending',
             createdAt: Timestamp.now(),
-            ...(it.expectedDate ? { expectedDate: Timestamp.fromDate(new Date(it.expectedDate)) } : {}),
+            ...(it.expectedDate ? { expectedDate: Timestamp.fromDate(endOfDayFromLocalISO(it.expectedDate)) } : {}),
             ...(it.note ? { note: it.note.trim() } : {}),
           })
         })
 
         const updatePayload: any = {
           title: values.title.trim(),
-          codAmount: values.codAmount ?? null,
+          codAmount: isBulk ? null : (values.codAmount ?? null),
           status: values.status,
           note: values.note?.trim() || '',
           courier: values.courier?.trim() || null,
           trackingNumber: values.trackingNumber?.trim() || null,
           itemCount: items.length,
-          type: items.length > 1 ? 'bulk' : 'single',
+          type: isBulk ? 'bulk' : 'single',
           updatedAt: Timestamp.now(),
         }
         if (values.expectedDate !== initialExpectedRef.current) {
           updatePayload.expectedDate = values.expectedDate
-            ? Timestamp.fromDate(new Date(values.expectedDate))
+            ? Timestamp.fromDate(endOfDayFromLocalISO(values.expectedDate))
             : null
         }
 
         batch.update(deliveryRef, updatePayload)
         await batch.commit()
 
-        draftItemsRef.current = null
-        modifiedItemsRef.current.clear()
         setItems([])
         onOpenChange(false)
         return
-      } else {
-        // CREATE MODE — clamp ALL times to 23:59 local
-        const headerDate = values.expectedDate ? endOfDayFromLocalISO(values.expectedDate) : undefined
+      }
 
-        const determinedType = itemMode === 'multiple' || items.length > 1 ? 'bulk' : 'single'
-        const created = await createDelivery(familyId, {
-          title: values.title.trim(),
-          status: values.status,
-          itemCount: 0,
-          type: determinedType,
-          codAmount: values.codAmount ?? undefined,
-          expectedDate: headerDate ?? undefined,  // 23:59 local
-          note: values.note?.trim() || '',
-          receiverNote: '',
-          courier: values.courier?.trim() || null,
-          trackingNumber: values.trackingNumber?.trim() || null,
-        })
+      // CREATE MODE — clamp all times to 23:59 local.
+      const headerDate = values.expectedDate ? endOfDayFromLocalISO(values.expectedDate) : undefined
+      const created = await createDelivery(familyId, {
+        title: values.title.trim(),
+        status: 'pending',
+        itemCount: 0,
+        type: isBulk ? 'bulk' : 'single',
+        codAmount: isBulk ? undefined : (values.codAmount ?? undefined),
+        expectedDate: headerDate ?? undefined,
+        note: values.note?.trim() || '',
+        receiverNote: '',
+        courier: values.courier?.trim() || null,
+        trackingNumber: values.trackingNumber?.trim() || null,
+      })
 
-        const newId = created.id
-        const itemsCol = collection(firestore, 'families', familyId, 'deliveries', newId, 'items')
+      const newId = created.id
+      const itemsCol = collection(firestore, 'families', familyId, 'deliveries', newId, 'items')
 
-        if (items.length > 0) {
-          for (const it of items) {
-            const itemDate = it.expectedDate?.trim()
-              ? endOfDayFromLocalISO(it.expectedDate)
-              : headerDate
-            await addDoc(itemsCol, {
-              name: it.name.trim(),
-              price: it.price,
-              status: 'pending',
-              createdAt: Timestamp.now(),
-              ...(itemDate ? { expectedDate: Timestamp.fromDate(itemDate) } : {}),
-              ...(it.note ? { note: it.note.trim() } : {}),
-            })
-          }
-
-          await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
-            itemCount: items.length,
-            type: items.length > 1 ? 'bulk' : 'single',
-            updatedAt: Timestamp.now(),
-          })
-        } else {
+      if (items.length > 0) {
+        for (const it of items) {
+          const itemDate = it.expectedDate?.trim() ? endOfDayFromLocalISO(it.expectedDate) : headerDate
           await addDoc(itemsCol, {
-            name: values.title.trim() || 'Delivery',
-            price: null,
+            name: it.name.trim(),
+            price: it.price,
             status: 'pending',
             createdAt: Timestamp.now(),
-            ...(headerDate ? { expectedDate: Timestamp.fromDate(headerDate) } : {}),
-          })
-
-          await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
-            itemCount: 1,
-            type: 'single',
-            note: values.note?.trim() || '',
-            receiverNote: '',
-            updatedAt: Timestamp.now(),
+            ...(itemDate ? { expectedDate: Timestamp.fromDate(itemDate) } : {}),
+            ...(it.note ? { note: it.note.trim() } : {}),
           })
         }
-
-        draftItemsRef.current = null
-        modifiedItemsRef.current.clear()
-        setItems([])
-        onOpenChange(false)
+        await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
+          itemCount: items.length,
+          type: items.length > 1 ? 'bulk' : 'single',
+          updatedAt: Timestamp.now(),
+        })
+      } else {
+        // No explicit items: create one implicit item from the title.
+        await addDoc(itemsCol, {
+          name: values.title.trim() || 'Delivery',
+          price: null,
+          status: 'pending',
+          createdAt: Timestamp.now(),
+          ...(headerDate ? { expectedDate: Timestamp.fromDate(headerDate) } : {}),
+        })
+        await updateDoc(doc(firestore, 'families', familyId, 'deliveries', newId), {
+          itemCount: 1,
+          type: 'single',
+          note: values.note?.trim() || '',
+          receiverNote: '',
+          updatedAt: Timestamp.now(),
+        })
       }
+
+      setItems([])
+      onOpenChange(false)
     } catch (err) {
       console.error('DeliveryFormDialog submit err', err)
       toast.error('Failed to save delivery')
@@ -510,127 +414,75 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
   }
 
   return (
-    <>
-      <Dialog open={open} onOpenChange={(v) => {
-        if (!v) { handleDialogClose() } else { onOpenChange(true) }
-      }}>
-        {/* Remove outer motion wrapper to avoid breaking Radix centering */}
-        <DialogContent
-          aria-describedby={undefined}
-          className="max-h-[90vh] overflow-y-auto"
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent aria-describedby={undefined} className="max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Edit delivery' : 'Add delivery'}</DialogTitle>
+        </DialogHeader>
+
+        <AnimatePresence>
+          {isSaving && (
+            <motion.div
+              key="saving-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md"
+            >
+              <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <form
+          onSubmit={onSubmit}
+          className={`space-y-4 transition-all duration-200 ${isSaving ? 'opacity-50 pointer-events-none blur-[1px]' : ''}`}
         >
-          <DialogHeader>
-            <DialogTitle>{isEdit ? 'Edit Delivery' : 'Add Delivery'}</DialogTitle>
-          </DialogHeader>
+          {/* Title */}
+          <div>
+            <Label htmlFor="title">What's arriving?</Label>
+            <Input
+              id="title"
+              placeholder="e.g. Shopee order, groceries"
+              value={values.title}
+              onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
+              required
+              autoFocus
+              className="mt-1"
+            />
+            {formErrors.title && <p className="text-sm text-red-500 mt-1">{formErrors.title}</p>}
+          </div>
 
-          <AnimatePresence>
-            {isSaving && (
-              <motion.div
-                key="saving-overlay"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 z-10 flex items-center justify-center backdrop-blur-sm bg-background/70 rounded-md"
-              >
-                <div className="animate-spin h-6 w-6 border-2 border-muted-foreground border-t-transparent rounded-full" />
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <form onSubmit={onSubmit}
-            className={`space-y-4 transition-all duration-200 ${isSaving ? 'opacity-50 pointer-events-none blur-[1px]' : ''}`}>
-            <div>
-              <Label>Title</Label>
-              <Input
-                value={values.title}
-                onChange={(e) => setValues((v) => ({ ...v, title: e.target.value }))}
-                required
-                autoFocus
-              />
-              {formErrors.title && <p className="text-sm text-red-500 mt-1">{formErrors.title}</p>}
+          {/* Expected date — friendly chips */}
+          <div>
+            <Label>Expected by</Label>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant={isToday && !pickCustom ? 'default' : 'outline'} onClick={() => setDate(0)}>
+                Today
+              </Button>
+              <Button type="button" size="sm" variant={isTomorrow && !pickCustom ? 'default' : 'outline'} onClick={() => setDate(1)}>
+                Tomorrow
+              </Button>
+              <Button type="button" size="sm" variant={pickCustom ? 'default' : 'outline'} onClick={() => setPickCustom(true)}>
+                Pick a date
+              </Button>
             </div>
-
-            <div>
-              <Label>Expected date &amp; time</Label>
+            {(pickCustom || (!isToday && !isTomorrow)) && (
               <input
-                type="datetime-local"
-                className="mt-1 block h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                value={values.expectedDate}
-                onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value }))}
+                type="date"
+                className="mt-2 block h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                value={dateDP}
+                onChange={(e) => setValues((v) => ({ ...v, expectedDate: e.target.value ? `${e.target.value}T23:59` : '' }))}
               />
-              {formErrors.expectedDate && (
-                <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>
-              )}
-              {!isEdit && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Time is auto-set to <strong>11:59 PM</strong> on create.
-                </p>
-              )}
-            </div>
+            )}
+            {formErrors.expectedDate && <p className="text-sm text-red-500 mt-1">{formErrors.expectedDate}</p>}
+          </div>
 
-            <div>
-              <Label>Item mode</Label>
-              <div className="mt-1 flex gap-2 items-center">
-                <Button type="button" variant={itemMode === 'single' ? 'default' : 'outline'} onClick={handleSetSingleMode} size="sm">
-                  Single
-                </Button>
-                <Button type="button" variant={itemMode === 'multiple' ? 'default' : 'outline'} onClick={handleSetMultipleMode} size="sm">
-                  Multiple
-                </Button>
-              </div>
-              <p className="text-sm text-muted-foreground mt-1">
-                {itemMode === 'single'
-                  ? 'Single delivery — only one item allowed. COD enabled.'
-                  : 'Multiple items (bulk) — COD is disabled and handled per item.'}
-              </p>
-            </div>
-
-            <div>
-              <Label>COD Amount (optional)</Label>
-              <Input
-                type="number"
-                value={values.codAmount ?? ''}
-                onChange={(e) => setValues((v) => ({ ...v, codAmount: e.target.value ? Number(e.target.value) : null }))}
-                min={0}
-                disabled={itemMode === 'multiple' || items.length > 1}
-                title={itemMode === 'multiple' || items.length > 1 ? 'COD is calculated per item in bulk deliveries' : ''}
-              />
-              {(itemMode === 'multiple' || items.length > 1) && (
-                <p className="text-sm text-muted-foreground mt-1">
-                  COD is automatically calculated per item in bulk deliveries.
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="courier">Courier (optional)</Label>
-                <Input
-                  id="courier"
-                  placeholder="e.g. J&T, LBC, Lalamove"
-                  value={values.courier ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, courier: e.target.value }))}
-                />
-              </div>
-              <div>
-                <Label htmlFor="trackingNumber">Tracking number (optional)</Label>
-                <Input
-                  id="trackingNumber"
-                  placeholder="e.g. 1234567890"
-                  value={values.trackingNumber ?? ''}
-                  onChange={(e) => setValues((v) => ({ ...v, trackingNumber: e.target.value }))}
-                />
-              </div>
-            </div>
-
+          {/* Status — edit only */}
+          {isEdit && (
             <div>
               <Label htmlFor="status">Status</Label>
-              <Select
-                value={values.status}
-                onValueChange={(val) =>
-                  setValues((v) => ({ ...v, status: val as DeliveryStatus }))
-                }
-              >
+              <Select value={values.status} onValueChange={(val) => setValues((v) => ({ ...v, status: val as DeliveryStatus }))}>
                 <SelectTrigger id="status" className="mt-1 w-full">
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
@@ -642,210 +494,129 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
                 </SelectContent>
               </Select>
             </div>
+          )}
 
-            <div>
-              <Label>Notes</Label>
-              <Textarea
-                id="note"
-                value={values.note}
-                onChange={(e) => setValues((v) => ({ ...v, note: e.target.value }))}
-              />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <Label>Items</Label>
-                {formErrors.items && (
-                  <p className="text-sm text-red-500 mt-1">{formErrors.items}</p>
+          {/* Optional details */}
+          <div className="rounded-md border">
+            <button
+              type="button"
+              onClick={() => setShowDetails((s) => !s)}
+              className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium"
+            >
+              Add details {isBulk ? '' : '(courier, tracking, COD, notes)'}
+              {showDetails ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showDetails && (
+              <div className="space-y-3 border-t px-3 py-3">
+                {!isBulk && (
+                  <div>
+                    <Label htmlFor="cod">COD amount</Label>
+                    <Input
+                      id="cod"
+                      type="number"
+                      min={0}
+                      placeholder="₱ optional"
+                      value={values.codAmount ?? ''}
+                      onChange={(e) => setValues((v) => ({ ...v, codAmount: e.target.value ? Number(e.target.value) : null }))}
+                      className="mt-1"
+                    />
+                  </div>
                 )}
-                <div className="flex items-center gap-3">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={addItemRow}
-                    disabled={addItemDisabled}
-                    title={addItemDisabled ? 'Switch to Multiple to add items' : 'Add item'}
-                  >
-                    Add item
-                  </Button>
-                  {addItemDisabled && !isEdit && (
-                    <span className="text-sm text-muted-foreground max-w-[200px]">
-                      Switch to <strong>Multiple</strong> mode to add more items.
-                    </span>
-                  )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="courier">Courier</Label>
+                    <Input id="courier" placeholder="e.g. J&T, LBC, Lalamove" value={values.courier ?? ''} onChange={(e) => setValues((v) => ({ ...v, courier: e.target.value }))} className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="trackingNumber">Tracking number</Label>
+                    <Input id="trackingNumber" placeholder="e.g. 1234567890" value={values.trackingNumber ?? ''} onChange={(e) => setValues((v) => ({ ...v, trackingNumber: e.target.value }))} className="mt-1" />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="note">Notes</Label>
+                  <Textarea id="note" value={values.note} onChange={(e) => setValues((v) => ({ ...v, note: e.target.value }))} className="mt-1" />
                 </div>
               </div>
+            )}
+          </div>
 
-              <div className="space-y-2 mt-2">
-                <AnimatePresence>
-                  {items.map((it) => (
-                    <motion.div
-                      key={it.id}
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -5 }}
-                      transition={{ duration: 0.2 }}
-                      className="flex flex-wrap items-start sm:items-center gap-3 border rounded-md p-3"
-                    >
-                      <div className="flex-1 min-w-0">
-                        <Input
-                          placeholder="Name"
-                          value={it.name}
-                          onChange={(e) => updateItemRow(it.id, { name: e.target.value })}
-                        />
-                        {formErrors[`item-${it.id}-name`] && (
-                          <p className="text-xs text-red-500 mt-1">
-                            {formErrors[`item-${it.id}-name`]}
-                          </p>
-                        )}
-                      </div>
+          {/* Items (optional itemization) */}
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <Label>Items <span className="font-normal text-muted-foreground">(optional)</span></Label>
+              <Button type="button" size="sm" variant="outline" onClick={addItemRow}>
+                <Plus className="h-4 w-4 mr-1" /> Add item
+              </Button>
+            </div>
+            {items.length > 0 && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isBulk ? 'Multiple items — COD is tracked per item.' : 'Add another item to split this into a multi-item delivery.'}
+              </p>
+            )}
 
+            <div className="space-y-2 mt-2">
+              <AnimatePresence>
+                {items.map((it, idx) => (
+                  <motion.div
+                    key={it.id}
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -5 }}
+                    transition={{ duration: 0.2 }}
+                    className="rounded-md border p-3 space-y-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Input
+                        data-name-for={it.id}
+                        placeholder={`Item ${idx + 1} name`}
+                        value={it.name}
+                        onChange={(e) => updateItemRow(it.id, { name: e.target.value })}
+                        className="flex-1"
+                      />
+                      <Button type="button" variant="ghost" size="icon" aria-label="Remove item" onClick={() => removeItemRow(it.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {formErrors[`item-${it.id}-name`] && <p className="text-xs text-red-500">{formErrors[`item-${it.id}-name`]}</p>}
+                    <div className="flex flex-wrap gap-2">
                       <div className="w-28">
                         <Input
                           placeholder="Price"
                           type="number"
-                          data-price-for={it.id}
-                          value={it.price ?? ''}
                           min={0}
-                          onChange={(e) =>
-                            updateItemRow(it.id, {
-                              price: e.target.value ? Number(e.target.value) : null,
-                            })
-                          }
+                          value={it.price ?? ''}
+                          onChange={(e) => updateItemRow(it.id, { price: e.target.value ? Number(e.target.value) : null })}
                         />
-                        {formErrors[`item-${it.id}-price`] && (
-                          <p className="text-xs text-red-500 mt-1">
-                            {formErrors[`item-${it.id}-price`]}
-                          </p>
-                        )}
+                        {formErrors[`item-${it.id}-price`] && <p className="text-xs text-red-500 mt-1">{formErrors[`item-${it.id}-price`]}</p>}
                       </div>
-
-                      <div className="w-full sm:w-56">
-                        <Input
-                          type="datetime-local"
-                          value={it.expectedDate}
-                          onChange={(e) => updateItemRow(it.id, { expectedDate: e.target.value })}
+                      <div className="flex-1 min-w-[10rem]">
+                        <input
+                          type="date"
+                          className="block h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                          value={it.expectedDate?.slice(0, 10) || ''}
+                          onChange={(e) => updateItemRow(it.id, { expectedDate: e.target.value ? `${e.target.value}T23:59` : '' })}
                         />
-                        {formErrors[`item-${it.id}-date`] && (
-                          <p className="text-xs text-red-500 mt-1">
-                            {formErrors[`item-${it.id}-date`]}
-                          </p>
-                        )}
+                        {formErrors[`item-${it.id}-date`] && <p className="text-xs text-red-500 mt-1">{formErrors[`item-${it.id}-date`]}</p>}
                       </div>
-
-                      <div className="flex-shrink-0">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          onClick={() => removeItemRow(it.id)}
-                          className="text-sm"
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-
-                {items.length === 0 && (
-                  <motion.p
-                    className="text-sm text-muted-foreground italic mt-2"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                  >
-                    No items added yet.
-                  </motion.p>
-                )}
-              </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
             </div>
+          </div>
 
-            <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-2 border-t mt-6">
-              <div className="flex gap-2 justify-end w-full">
-                <Button type="button" variant="ghost" onClick={handleDialogClose} disabled={isSaving}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={isSaving}>
-                  {isEdit ? 'Save' : 'Create'}
-                </Button>
-              </div>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <AnimatePresence mode="wait">
-        {confirmSinglePromptOpen && (
-          <Dialog open={true} onOpenChange={setConfirmSinglePromptOpen}>
-            <DialogContent aria-describedby={undefined}>
-              <DialogHeader>
-                <DialogTitle>
-                  {confirmContext === 'switch' ? 'Switch to Single delivery?' : 'Discard this delivery?'}
-                </DialogTitle>
-              </DialogHeader>
-
-              <div className="py-2">
-                <p className="mb-3">
-                  You currently have <strong>{(draftItemsRef.current ?? items).length}</strong>{' '}
-                  item{(draftItemsRef.current ?? items).length > 1 ? 's' : ''} in this delivery.
-                </p>
-
-                <div className="mb-3">
-                  <p className="text-sm font-medium">
-                    Preview (first {Math.min(5, (draftItemsRef.current ?? items).length)}):
-                  </p>
-                  <ul className="list-disc ml-5 text-sm">
-                    {(draftItemsRef.current ?? items).slice(0, 5).map((it, idx) => (
-                      <li key={idx}>{it.name?.trim() || '(unnamed item)'}</li>
-                    ))}
-                  </ul>
-                  {(draftItemsRef.current ?? items).length > 5 && (
-                    <p className="text-sm text-muted-foreground mt-1">
-                      ...and {(draftItemsRef.current ?? items).length - 5} more.
-                    </p>
-                  )}
-                </div>
-
-                <p className="mb-1 text-sm text-muted-foreground">
-                  If you proceed, <strong>all items will be removed</strong> and the delivery will become a single-item delivery.
-                </p>
-              </div>
-
-              <DialogFooter className="pt-4">
-                <div className="flex gap-2 justify-end w-full">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setConfirmSinglePromptOpen(false)
-                      setConfirmContext(null)
-                    }}
-                  >
-                    Cancel
-                  </Button>
-
-                  {confirmContext === 'switch' ? (
-                    <Button type="button" onClick={confirmSwitchToSingleProceed}>
-                      Proceed — remove all items
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      onClick={() => {
-                        draftItemsRef.current = null
-                        setConfirmSinglePromptOpen(false)
-                        setConfirmContext(null)
-                        onOpenChange(false)
-                      }}
-                    >
-                      Discard and Close
-                    </Button>
-                  )}
-                </div>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
-      </AnimatePresence>
-    </>
+          <DialogFooter className="sticky bottom-0 bg-background pt-4 pb-2 border-t mt-6">
+            <div className="flex gap-2 justify-end w-full">
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={isSaving}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSaving}>
+                {isEdit ? 'Save' : 'Create'}
+              </Button>
+            </div>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
