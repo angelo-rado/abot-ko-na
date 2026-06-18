@@ -332,7 +332,10 @@ export default function HomePage() {
                   return (
                     <>
                       {homeBanner}
-                      <p className="text-muted-foreground text-sm">No members yet.</p>
+                      <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed py-6 text-center">
+                        <p className="text-sm text-muted-foreground">No members yet.</p>
+                        <p className="text-xs text-muted-foreground">Invite family from the Family tab.</p>
+                      </div>
                     </>
                   )
                 }

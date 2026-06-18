@@ -13,7 +13,13 @@ import { useSelectedFamily } from '@/lib/selected-family'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Plus, Loader2, MessageSquareText, Package, Search, PackageOpen } from 'lucide-react'
+import { Plus, Loader2, MessageSquareText, Package, Search, PackageOpen, MoreHorizontal, Pencil, Trash2 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
 import DeliveryFormDialog from '@/app/components/DeliveryFormDialog'
 import DeliveryCard from '@/app/components/DeliveryCard'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -357,6 +363,40 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
 
   const keyFor = (d: any) => `${d.id}-${d.updatedAt?.seconds || d.createdAt?.seconds || ''}`
 
+  // Compact per-card actions: Notes stays inline; Edit/Delete move into an overflow menu.
+  const CardActions = ({ d, locked, openNotes }: { d: any; locked: boolean; openNotes: boolean }) => (
+    <div className="mt-2 flex items-center gap-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setNotesOpen((m) => ({ ...m, [d.id]: !m[d.id] }))}
+      >
+        <MessageSquareText className="h-4 w-4 mr-1" />
+        {openNotes ? 'Hide notes' : 'Notes'}
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="More actions">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {!locked && (
+            <DropdownMenuItem onClick={() => { setEditingDelivery(d); setOpenForm(true) }}>
+              <Pencil className="h-4 w-4 mr-2" /> Edit
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem
+            className="text-destructive focus:text-destructive"
+            onClick={() => handleDelete(d.id)}
+          >
+            <Trash2 className="h-4 w-4 mr-2" /> Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+
   /* ---------------- Derived groups for current tab ---------------- */
   const sourceList = tab === 'upcoming' ? upcoming : archived
   const filtered = applyFilters(sourceList)
@@ -496,37 +536,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
                         <DeliveryCard familyId={familyId} {...props} />
 
                         {!selectionMode && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setNotesOpen((m) => ({ ...m, [d.id]: !m[d.id] }))
-                              }
-                            >
-                              <MessageSquareText className="h-4 w-4 mr-1" />
-                              {openNotes ? 'Hide Notes' : 'Notes'}
-                            </Button>
-                            {!locked && (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => {
-                                  setEditingDelivery(d)
-                                  setOpenForm(true)
-                                }}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleDelete(d.id)}
-                            >
-                              Delete
-                            </Button>
-                          </div>
+                          <CardActions d={d} locked={locked} openNotes={openNotes} />
                         )}
 
                         {openNotes && (
@@ -588,37 +598,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
                         <DeliveryCard familyId={familyId} {...props} />
 
                         {!selectionMode && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() =>
-                                setNotesOpen((m) => ({ ...m, [d.id]: !m[d.id] }))
-                              }
-                            >
-                              <MessageSquareText className="h-4 w-4 mr-1" />
-                              {openNotes ? 'Hide Notes' : 'Notes'}
-                            </Button>
-                            {!locked && (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => {
-                                  setEditingDelivery(d)
-                                  setOpenForm(true)
-                                }}
-                              >
-                                Edit
-                              </Button>
-                            )}
-                            <Button
-                              variant="destructive"
-                              size="sm"
-                              onClick={() => handleDelete(d.id)}
-                            >
-                              Delete
-                            </Button>
-                          </div>
+                          <CardActions d={d} locked={locked} openNotes={openNotes} />
                         )}
 
                         {openNotes && (
