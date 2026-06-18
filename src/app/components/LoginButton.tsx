@@ -1,8 +1,7 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { auth, provider } from '@/lib/firebase'
-import { signInWithPopup } from 'firebase/auth'
+import { signInWithGoogle } from '@/lib/auth-signin'
 import { useState } from 'react'
 import { FcGoogle } from 'react-icons/fc'
 import { HomeIcon, MapPinIcon, PackageIcon, ShieldIcon } from 'lucide-react'
@@ -36,8 +35,8 @@ export default function LoginButton() {
   const handleLogin = async () => {
     setLoading(true)
     try {
-      await signInWithPopup(auth, provider)
-      // layout handles redirect
+      await signInWithGoogle()
+      // layout handles redirect (desktop popup); mobile navigates away via redirect
     } catch (err) {
       console.error('Login failed:', err)
     } finally {
