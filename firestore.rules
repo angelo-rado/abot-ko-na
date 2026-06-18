@@ -33,6 +33,22 @@ service cloud.firestore {
         )
       );
       allow update, delete: if isMe(userId);
+
+      // Owner-only access to user-owned subcollections (e.g. the notifications
+      // fallback feed and joined-families records). Keeps them private even
+      // though the user doc itself is readable by family members above.
+      match /{sub=**} {
+        allow read, write: if isMe(userId);
+      }
+    }
+
+    // === IN-APP NOTIFICATION FEED ===
+    // Events are written by Cloud Functions and addressed via a `targets`
+    // array of recipient uids; a user may read events that target them.
+    // The recursive wildcard is required for collectionGroup('events') reads —
+    // without this rule the notifications feed gets permission-denied.
+    match /{path=**}/events/{eventId} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.targets;
     }
 
     // === FAMILIES ===
