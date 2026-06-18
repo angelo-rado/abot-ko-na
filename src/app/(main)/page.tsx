@@ -13,7 +13,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
-import { Loader2, Home as HomeIcon, DoorOpen, MapPin } from 'lucide-react'
+import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
@@ -467,6 +467,23 @@ export default function HomePage() {
             )}
           </CardContent>
         </Card>
+
+        {familyId && (
+          <Link href="/shopping" className="block">
+            <Card className="transition-colors hover:bg-muted/40">
+              <CardContent className="flex items-center justify-between py-4">
+                <div className="flex items-center gap-3">
+                  <ShoppingCart className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium">Shopping List</div>
+                    <div className="text-xs text-muted-foreground">Shared family errands &amp; groceries</div>
+                  </div>
+                </div>
+                <span className="text-sm text-muted-foreground">Open →</span>
+              </CardContent>
+            </Card>
+          </Link>
+        )}
 
         <div className="flex gap-4">
           {(presenceLoading || loadingFamilies) ? (
