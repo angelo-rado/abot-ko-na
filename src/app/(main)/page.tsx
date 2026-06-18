@@ -10,7 +10,6 @@ import {
   doc,
   onSnapshot,
   serverTimestamp,
-  Timestamp,
   setDoc,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'
@@ -38,6 +37,13 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useIsIOS } from '@/lib/useIsIOS'
 import { onJoined, getLastSelectedFamily } from '@/lib/join-bus'
 import { toast } from 'sonner'
+import {
+  type RawMember,
+  normalizeMemberStatus,
+  normalizeMemberSource,
+  normalizeMember,
+} from '@/lib/models/presence'
+import { hasHomeLocation as familyHasHomeLocation } from '@/lib/models/family'
 
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth()
@@ -48,7 +54,7 @@ export default function HomePage() {
   const [myStatusSource, setMyStatusSource] = useState<string | null>(null)
   const [presenceLoading, setPresenceLoading] = useState(true)
 
-  const [membersLive, setMembersLive] = useState<any[]>([])
+  const [membersLive, setMembersLive] = useState<RawMember[]>([])
   const [membersLoading, setMembersLoading] = useState(true)
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -84,18 +90,6 @@ export default function HomePage() {
     return () => clearTimeout(id)
   }, [justChangedStatusAt])
 
-  function toMillisSafe(value: unknown): number | null {
-    if (value == null) return null
-    if (value instanceof Timestamp) return value.toMillis()
-    if (typeof value === 'number') return value
-    if (value instanceof Date) return value.getTime()
-    return null
-  }
-  const toDateSafe = (ts?: Timestamp | number | Date | null | undefined) => {
-    const millis = toMillisSafe(ts)
-    return millis ? new Date(millis) : null
-  }
-
   // Ensure current user's profile exists in members doc
   useEffect(() => {
     if (!user?.uid || !familyId) return
@@ -103,8 +97,8 @@ export default function HomePage() {
     setDoc(
       ref,
       {
-        name: (user as any).name ?? 'Unknown',
-        photoURL: (user as any).photoURL ?? null,
+        name: user.name ?? 'Unknown',
+        photoURL: user.photoURL ?? null,
         uid: user.uid,
       },
       { merge: true }
@@ -119,7 +113,7 @@ export default function HomePage() {
     if (!user?.uid) { setUserAutoPresence(null); return }
     const unsub = onSnapshot(
       doc(firestore, 'users', user.uid),
-      (snap) => setUserAutoPresence((snap.data() as any)?.autoPresence === true),
+      (snap) => setUserAutoPresence(snap.data()?.autoPresence === true),
       () => setUserAutoPresence(null)
     )
     return () => unsub()
@@ -133,51 +127,12 @@ export default function HomePage() {
     const unsub = onSnapshot(
       doc(firestore, 'families', familyId),
       (snap) => {
-        const d = snap.data() as any
-        const isNum = (v: any) => typeof v === 'number' && Number.isFinite(v)
-        const hasGeo = (obj: any) =>
-          !!obj && (
-            (isNum(obj.latitude) && isNum(obj.longitude)) ||     // Firestore GeoPoint
-            (isNum(obj.lat) && (isNum(obj.lng) || isNum(obj.lon))) || // {lat,lng} OR {lat,lon}
-            (Array.isArray(obj.coordinates) && isNum(obj.coordinates?.[1]) && isNum(obj.coordinates?.[0])) // [lon,lat]
-          )
-
-        const has =
-          hasGeo(d?.homeLocation) ||
-          hasGeo(d?.home) ||
-          hasGeo(d?.location) ||
-          (isNum(d?.homeLat) && (isNum(d?.homeLng) || isNum(d?.homeLon))) // accept lng or lon
-        setHasHomeLocation(!!has)
+        setHasHomeLocation(familyHasHomeLocation(snap.data()))
       },
       () => setHasHomeLocation(false)
     )
     return () => unsub()
   }, [familyId])
-
-  // Helpers to normalize presence/status across data shapes
-  const normalizeStatus = (m: any): 'home' | 'away' | null => {
-    const s =
-      m?.status ??
-      m?.statusText ??
-      m?.state ??
-      (typeof m?.presence === 'string' ? m.presence : m?.presence?.status) ??
-      null
-
-    if (s === 'home' || s === 'away') return s
-
-    // boolean fallbacks
-    const b = m?.isHome ?? m?.atHome ?? m?.home
-    if (b === true) return 'home'
-    if (b === false) return 'away'
-    return null
-  }
-
-  const normalizeSource = (m: any, isMe: boolean): 'geo' | 'manual' | null => {
-    const raw = (m?.statusSource ?? m?.source ?? m?.status_source) || null
-    // if either member-level autoPresence or global user autoPresence is on, consider 'geo'
-    if (m?.autoPresence === true || (isMe && userAutoPresence === true)) return 'geo'
-    return raw === 'geo' || raw === 'manual' ? raw : (raw ? String(raw) as any : null)
-  }
 
   // Subscribe to members
   useEffect(() => {
@@ -191,7 +146,7 @@ export default function HomePage() {
       membersRef,
       (snapshot) => {
         if (!user?.uid) return
-        const docs = snapshot.docs.map((d) => ({ uid: d.id, ...(d.data() as any) }))
+        const docs: RawMember[] = snapshot.docs.map((d) => ({ uid: d.id, ...(d.data() as Record<string, unknown>) }))
         setMembersLive(docs)
         setMembersLoading(false)
         setPresenceLoading(false)
@@ -199,9 +154,9 @@ export default function HomePage() {
         const me = docs.find((m) => m.uid === user.uid)
         if (me) {
           const isRecentChange = justChangedStatusAt && Date.now() - justChangedStatusAt < 1500
-          if (!isRecentChange) setIsHome(normalizeStatus(me) === 'home')
+          if (!isRecentChange) setIsHome(normalizeMemberStatus(me) === 'home')
 
-          const effective = normalizeSource(me, true)
+          const effective = normalizeMemberSource(me, { autoPresenceOverride: userAutoPresence === true })
           setMyStatusSource(effective)
         }
       },
@@ -221,8 +176,8 @@ export default function HomePage() {
       status: newStatus,
       statusSource: 'manual',
       updatedAt: serverTimestamp(),
-      name: (user as any).name ?? 'Unknown',
-      photoURL: (user as any).photoURL ?? null,
+      name: user.name ?? 'Unknown',
+      photoURL: user.photoURL ?? null,
       uid: user.uid,
     }, { merge: true })
     setIsHome(newStatus === 'home')
@@ -326,14 +281,11 @@ export default function HomePage() {
 
                 const presenceMap = new Map(
                   members.map((m) => {
-                    const status = normalizeStatus(m)
                     const isMe = Boolean(user?.uid && m.uid === user.uid)
-                    const statusSource = normalizeSource(m, isMe)
-                    const updatedAt = (m.updatedAt ?? m.updated_at ?? m.lastUpdated ?? null) as any
-                    const photoURL = (m.photoURL ?? m.photo ?? null) as string | null
-                    const name = (m.name ?? m.displayName ?? 'Unknown') as string
-
-                    return [m.uid, { status, statusSource, updatedAt, photoURL, name }]
+                    return [
+                      m.uid,
+                      normalizeMember(m, { autoPresenceOverride: isMe && userAutoPresence === true }),
+                    ]
                   })
                 )
 
@@ -361,8 +313,8 @@ export default function HomePage() {
 
                 const activity = members
                   .map((m) => {
-                    const millis = toMillisSafe(m.updatedAt as unknown)
-                    return { uid: m.uid, name: m.name, status: normalizeStatus(m) ?? 'unknown', ts: millis }
+                    const p = presenceMap.get(m.uid)!
+                    return { uid: p.uid, name: p.name, status: p.status ?? 'unknown', ts: p.updatedAt?.getTime() ?? null }
                   })
                   .filter((x) => x.ts)
                   .sort((a, b) => (b.ts! - a.ts!))
@@ -377,7 +329,7 @@ export default function HomePage() {
                         <AnimatePresence>
                           {members.map((m) => {
                             const presence = presenceMap.get(m.uid)!
-                            const updatedDate = toDateSafe(presence?.updatedAt)
+                            const updatedDate = presence.updatedAt
                             const initials = (presence.name ?? '')
                               .split(' ')
                               .map((s: string) => s[0])
@@ -430,7 +382,7 @@ export default function HomePage() {
 
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                       <span className="capitalize">{presence.status ?? 'unknown'}</span>
-                                      {presence.statusSource && (<span>• {presence.statusSource === 'geo' ? 'Auto' : 'Manual'}</span>)}
+                                      {presence.source && (<span>• {presence.source === 'geo' ? 'Auto' : 'Manual'}</span>)}
                                       {updatedDate && <span>• {formatDistanceToNow(updatedDate, { addSuffix: true })}</span>}
                                     </div>
                                   </div>
@@ -440,14 +392,14 @@ export default function HomePage() {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10 cursor-default">
-                                        {presence.statusSource === 'geo' ? 'Auto' : presence.statusSource === 'manual' ? 'Manual' : '—'}
+                                        {presence.source === 'geo' ? 'Auto' : presence.source === 'manual' ? 'Manual' : '—'}
                                       </span>
                                     </TooltipTrigger>
                                     <TooltipContent side="top" align="end">
                                       <p>
-                                        {presence.statusSource === 'geo'
+                                        {presence.source === 'geo'
                                           ? 'Set automatically based on location'
-                                          : presence.statusSource === 'manual'
+                                          : presence.source === 'manual'
                                             ? 'Manually set by user'
                                             : 'No source available'}
                                       </p>
