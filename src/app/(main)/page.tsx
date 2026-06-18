@@ -54,7 +54,7 @@ export default function HomePage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
 
-  const [now, setNow] = useState(0)
+  const [, setNow] = useState(0)
 
   const isOnline = useOnlineStatus()
   const offlineBanner = !isOnline ? (
@@ -227,12 +227,6 @@ export default function HomePage() {
     }, { merge: true })
     setIsHome(newStatus === 'home')
     setJustChangedStatusAt(Date.now())
-  }
-
-  function formatUpdatedAt(ts: Timestamp | Date | number | undefined) {
-    if (!ts) return 'Unknown time'
-    const date = ts instanceof Timestamp ? ts.toDate() : (typeof ts === 'number' ? new Date(ts) : ts)
-    return formatDistanceToNow(date, { addSuffix: true })
   }
 
   // NEW: post-join hydration via query param

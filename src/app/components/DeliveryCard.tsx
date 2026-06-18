@@ -130,20 +130,6 @@ function friendlyDeliveredLabel(raw: any) {
 }
 
 /* ---------- tiny UI helpers ---------- */
-const MetaChip = ({ children, tone = 'muted' }: MetaChipProps) => {
-  const toneCls =
-    tone === 'info'
-      ? 'bg-sky-50 text-sky-700 border border-sky-200 dark:bg-sky-950/30 dark:text-sky-300 dark:border-sky-800/50'
-      : tone === 'warn'
-      ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800/50'
-      : 'bg-muted text-muted-foreground border border-muted-foreground/10'
-
-  return (
-    <span className={`text-[11px] px-2 py-0.5 rounded ${toneCls}`}>
-      {children}
-    </span>
-  )
-}
 const Dot = () => <span className="mx-1.5 text-muted-foreground/60">•</span>
 
 /* ---------- lock helper (kept for parity) ---------- */

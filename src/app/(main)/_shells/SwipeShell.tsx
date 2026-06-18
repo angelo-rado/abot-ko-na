@@ -7,13 +7,6 @@ import { motion, useMotionValue, animate } from 'framer-motion'
 import { Bell, HomeIcon, PackageIcon, UsersIcon, SettingsIcon } from 'lucide-react'
 import PullToRefresh from '@/app/components/PullToRefresh'
 
-const VAPID_KEY =
-  (
-    process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY ||
-    process.env.NEXT_PUBLIC_VAPID_KEY ||
-    ''
-  )
-
 const EDGE = 24
 const STIFF = 220
 const DAMP = 30
@@ -61,7 +54,6 @@ export default function SwipeShell({ children }: { children: React.ReactNode[] |
   const startY = useRef<number>(0)
   const lastX = useRef<number>(0)
   const lastT = useRef<number>(0)
-  const velRef = useRef(0)
   const baseRef = useRef(0)
 
   // Pane refs (for per-pane scroll element)

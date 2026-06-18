@@ -287,12 +287,6 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     setConfirmSinglePromptOpen(false)
   }
 
-  function confirmSwitchToSingleCancel() {
-    if (draftItemsRef.current) setItems(draftItemsRef.current)
-    setConfirmSinglePromptOpen(false)
-    setItemMode('multiple')
-  }
-
   function handleDialogClose() {
     if (!isEdit && itemMode === 'multiple' && items.length > 0) {
       draftItemsRef.current = items

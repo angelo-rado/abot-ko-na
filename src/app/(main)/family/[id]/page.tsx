@@ -2,7 +2,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import {
   arrayRemove,
@@ -39,7 +39,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { Skeleton } from '@/components/ui/skeleton'
 
 type Family = {
   id: string
@@ -77,7 +76,6 @@ export default function FamilyDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
   const { user } = useAuth()
-  const search = useSearchParams()
 
   const [family, setFamily] = useState<Family | null | undefined>()
   const [members, setMembers] = useState<MemberRow[] | undefined>()

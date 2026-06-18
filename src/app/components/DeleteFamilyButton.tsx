@@ -9,7 +9,6 @@ import {
   getDocs,
   writeBatch,
   deleteDoc,
-  updateDoc,
   arrayRemove,
 } from 'firebase/firestore'
 import { firestore } from '@/lib/firebase'

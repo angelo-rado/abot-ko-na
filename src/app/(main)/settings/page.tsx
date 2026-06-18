@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/useAuth';
-import { useSelectedFamily } from '@/lib/selected-family';
 import { useRouter } from 'next/navigation';
 import { Separator } from '@/components/ui/separator';
 import PresenceSettings from '@/app/components/PresenceSettings';
@@ -46,7 +45,6 @@ const VAPID_KEY = (
 export default function SettingsPage() {
   const router = useRouter();
   const { user, loading } = useAuth();
-  const { familyId } = useSelectedFamily();
   const isOnline = useOnlineStatus();
   const [permission, setPermission] = useState<NotificationPermission>('default');
   const [working, setWorking] = useState(false);
