@@ -100,6 +100,14 @@ service cloud.firestore {
         match /items/{itemId} {
           allow read, create, update, delete: if isSignedIn() && isFamilyMember(familyId);
         }
+
+        // === DELIVERY NOTES SUBCOLLECTION ===
+        // Shared per-delivery notes thread. Any family member can read and post;
+        // the UI restricts edit/delete to a note's author. Without this rule the
+        // notes thread returns "missing or insufficient permissions".
+        match /notes/{noteId} {
+          allow read, create, update, delete: if isSignedIn() && isFamilyMember(familyId);
+        }
       }
 
       // === SHOPPING LIST SUBCOLLECTION ===
