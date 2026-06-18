@@ -1,8 +1,8 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { auth, provider, firestore } from '@/lib/firebase'
-import { signInWithPopup } from 'firebase/auth'
+import { firestore } from '@/lib/firebase'
+import { signInWithGoogle } from '@/lib/auth-signin'
 import { useEffect, useRef, useState } from 'react'
 import { FcGoogle } from 'react-icons/fc'
 import { HomeIcon, MapPinIcon, PackageIcon, ShieldIcon, Loader2 } from 'lucide-react'
@@ -37,7 +37,8 @@ export default function LoginPage() {
   useEffect(() => {
     if (authLoading) return
     if (!user) return
-    if (redirect === null && invite === null) return
+    // Route any signed-in user onward — including after a mobile redirect
+    // sign-in returns to /login with no redirect/invite param.
     if (redirectedRef.current) return
 
     const go = async () => {
@@ -72,7 +73,9 @@ export default function LoginPage() {
   async function handleLogin() {
     setLoading(true)
     try {
-      await signInWithPopup(auth, provider)
+      await signInWithGoogle()
+      // On desktop (popup) auth resolves here and useAuth handles the rest.
+      // On mobile (redirect) the page navigates away before reaching this point.
     } catch (err) {
       console.error('Login failed:', err)
       setLoading(false)
