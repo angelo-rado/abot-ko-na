@@ -101,9 +101,11 @@ npm run dev          # start dev server (Turbopack) at http://localhost:3000
 
 ## Deployment
 
-**Web (Vercel):** push to the deploy branch; ensure the `NEXT_PUBLIC_*` env vars
-above are set in the Vercel project. `vercel.json` maps them to Vercel secrets
-and configures PWA/service-worker headers.
+**Web (Vercel):** push to the deploy branch; set the `NEXT_PUBLIC_*` env vars
+above directly in the Vercel project (Settings → Environment Variables) for
+Production and Preview. `NEXT_PUBLIC_*` values are inlined at build time, so they
+must be configured there. `vercel.json` only configures PWA/service-worker
+headers and rewrites.
 
 **Firebase (functions, rules, indexes):**
 ```bash
