@@ -1,7 +1,7 @@
 // lib/useAuth.ts
 import { useEffect, useState } from 'react'
 import { auth, firestore } from './firebase'
-import { onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged, getRedirectResult } from 'firebase/auth'
 import { doc, onSnapshot, setDoc } from 'firebase/firestore'
 import { ensureUserPresence } from './firestoreUtils'
 
@@ -19,6 +19,13 @@ export function useAuth() {
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null
+
+    // Finalize a pending mobile-redirect sign-in (signInWithRedirect). Without
+    // this, on some mobile browsers the returning redirect isn't completed and
+    // the user lands back on /login still signed-out — the "sign-in loop".
+    getRedirectResult(auth).catch((err) => {
+      console.error('[useAuth] getRedirectResult failed:', err)
+    })
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
