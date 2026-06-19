@@ -251,7 +251,8 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
       setScreenshotUrl(result.url)
     } catch (err) {
       console.error('screenshot upload failed', err)
-      toast.error('Could not upload screenshot')
+      const msg = err instanceof Error ? err.message : 'Could not upload screenshot'
+      toast.error(`Upload failed: ${msg}`)
     } finally {
       setUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''

@@ -261,11 +261,13 @@ export default function HomePage() {
 
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const greetEmoji = hour < 12 ? '☀️' : hour < 18 ? '🌤️' : '🌙'
   const firstName = (user?.name ?? '').trim().split(' ')[0] || ''
 
   return (
     <>
       {offlineBanner}
+      <div className="bg-gradient-to-b from-amber-50/70 via-background to-background dark:from-amber-950/10">
       <main className={`max-w-2xl mx-auto p-5 sm:p-6 space-y-5 ios-scroll ${isIOS ? 'ios-screen ios-stack' : ''}`}>
         <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
@@ -277,11 +279,12 @@ export default function HomePage() {
           transition={{ type: 'spring', stiffness: 300, damping: 26 }}
         >
           <h1 className="text-2xl font-bold tracking-tight truncate">
-            {greeting}{firstName ? `, ${firstName}` : ''} <span className="inline-block">👋</span>
+            {greeting}{firstName ? `, ${firstName}` : ''} {greetEmoji}
           </h1>
+          <p className="text-sm text-muted-foreground">Welcome home 🏡</p>
           <Link
             href="/settings#default-family"
-            className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <span className="inline-flex h-2 w-2 rounded-full bg-primary/70" />
             {families.find((f) => f.id === familyId)?.name ?? familyId ?? 'No family set'}
@@ -310,8 +313,9 @@ export default function HomePage() {
               </>
             ) : families.length === 0 ? (
               <div className="flex flex-col items-center text-center space-y-3 py-4">
+                <div className="text-3xl">🏡</div>
                 <p className="text-sm text-muted-foreground">
-                  You don't have any families yet — create one or join with an invite link.
+                  No family yet — create one or join with an invite link.
                 </p>
                 <div className="flex gap-2">
                   <Button type="button" onClick={() => setCreateOpen(true)}>Create Family</Button>
@@ -373,7 +377,8 @@ export default function HomePage() {
                   return (
                     <>
                       {homeBanner}
-                      <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed py-6 text-center">
+                      <div className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-dashed py-6 text-center">
+                        <div className="text-2xl">🏡</div>
                         <p className="text-sm text-muted-foreground">No members yet.</p>
                         <p className="text-xs text-muted-foreground">Invite family from the Family tab.</p>
                       </div>
@@ -397,10 +402,10 @@ export default function HomePage() {
 
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                          <HomeIcon className="h-3.5 w-3.5" /> {homeCount} home
+                          🏠 {homeCount} home
                         </span>
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
-                          <DoorOpen className="h-3.5 w-3.5" /> {outCount} out
+                          🚪 {outCount} out
                         </span>
                       </div>
 
@@ -433,7 +438,7 @@ export default function HomePage() {
                                   {presence.photoURL ? (
                                     <img src={presence.photoURL} alt={presence.name} className="h-9 w-9 rounded-full object-cover ring-2 ring-background shadow-sm" />
                                   ) : (
-                                    <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 text-primary flex items-center justify-center text-xs font-semibold ring-2 ring-background shadow-sm">
+                                    <div className="h-9 w-9 rounded-full bg-gradient-to-br from-amber-200/70 to-orange-100/40 text-amber-700 dark:from-amber-900/40 dark:to-amber-900/10 dark:text-amber-300 flex items-center justify-center text-xs font-semibold ring-2 ring-background shadow-sm">
                                       {initials || '?'}
                                     </div>
                                   )}
@@ -629,10 +634,10 @@ export default function HomePage() {
             ) : (
               <div className="grid grid-cols-2 gap-2.5">
                 <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="h-12 rounded-2xl text-base transition-transform active:scale-[0.97]">
-                  <HomeIcon className="w-4 h-4 mr-2" /> I’m home
+                  <span className="mr-2">🏠</span> I’m home
                 </Button>
                 <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="h-12 rounded-2xl text-base transition-transform active:scale-[0.97]">
-                  <DoorOpen className="w-4 h-4 mr-2" /> I’m out
+                  <span className="mr-2">👋</span> I’m out
                 </Button>
               </div>
             )}
@@ -679,6 +684,7 @@ export default function HomePage() {
           </CardContent>
         </Card>
       </main>
+      </div>
     </>
   )
 }
