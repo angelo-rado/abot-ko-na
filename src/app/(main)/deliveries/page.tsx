@@ -404,12 +404,12 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
   const multiples = filtered.filter(isMultiple)
 
   return (
-    <div className="px-4 py-6 pb-24 max-w-4xl mx-auto space-y-6 bg-background text-foreground">
+    <div className="px-4 py-8 pb-28 max-w-4xl mx-auto space-y-7 bg-background text-foreground">
       {/* Top controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex-1">
           {/* Settings-driven default family (no inline picker here) */}
-          <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between">
+          <div className="rounded-2xl border p-3.5 bg-muted/30 flex items-center justify-between">
             <div className="text-sm">
               <span className="font-medium">Default family:</span>{' '}
               <span>{families.find((f) => f.id === familyId)?.name ?? familyId ?? 'None set'}</span>
@@ -444,13 +444,13 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
       </div>
 
       {/* Filters and Tabs */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-2 bg-muted rounded-md p-1">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-1 bg-muted rounded-full p-1">
           {(['upcoming', 'archived'] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className={`px-3 py-1 rounded text-sm ${tab === t ? 'bg-background shadow border' : 'text-muted-foreground'}`}
+              className={`px-4 py-1.5 rounded-full text-sm transition-colors ${tab === t ? 'bg-background shadow-sm border font-medium' : 'text-muted-foreground'}`}
             >
               {t === 'upcoming' ? 'Upcoming' : 'Archived'}
             </button>
@@ -500,7 +500,7 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
         <>
           {/* ---------------- Single Deliveries ---------------- */}
           <section>
-            <div className="mb-2 flex items-center gap-2">
+            <div className="mb-4 flex items-center gap-2">
               <h3 className="text-lg font-semibold">Single Deliveries</h3>
               <Badge variant="secondary">{singles.length}</Badge>
             </div>
@@ -553,8 +553,8 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
           </section>
 
           {/* ---------------- Multiple Deliveries ---------------- */}
-          <section className="mt-8">
-            <div className="mb-2 flex items-center gap-2">
+          <section className="mt-10">
+            <div className="mb-4 flex items-center gap-2">
               <h3 className="text-lg font-semibold">Multiple Deliveries</h3>
               <Badge variant="secondary">{multiples.length}</Badge>
             </div>
