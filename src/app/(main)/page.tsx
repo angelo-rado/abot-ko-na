@@ -18,10 +18,7 @@ import { Loader2, Home as HomeIcon, DoorOpen, MapPin, ShoppingCart, Truck, X, Be
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAutoPresence } from '@/lib/useAutoPresence'
 import {
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { formatDistanceToNow } from 'date-fns'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -492,31 +489,6 @@ export default function HomePage() {
                                       {watchingMember ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
                                     </motion.button>
                                   )}
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground border border-muted-foreground/10 cursor-default">
-                                        {presence.source === 'geo' ? 'Auto' : presence.source === 'manual' ? 'Manual' : '—'}
-                                      </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top" align="end">
-                                      <p>
-                                        {presence.source === 'geo'
-                                          ? 'Set automatically based on location'
-                                          : presence.source === 'manual'
-                                            ? 'Manually set by user'
-                                            : 'No source available'}
-                                      </p>
-                                      {updatedDate && (
-                                        <p className="text-xs text-muted-foreground">
-                                          Updated {formatDistanceToNow(updatedDate, { addSuffix: true })}
-                                        </p>
-                                      )}
-                                    </TooltipContent>
-                                  </Tooltip>
-
-                                  <div className="text-xs text-muted-foreground sm:hidden">
-                                    {updatedDate ? formatDistanceToNow(updatedDate, { addSuffix: true }) : 'unknown time'}
-                                  </div>
                                 </div>
                               </motion.div>
                             )
