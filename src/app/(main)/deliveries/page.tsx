@@ -405,46 +405,59 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
 
   return (
     <div className="px-4 py-8 pb-28 max-w-4xl mx-auto space-y-7 bg-background text-foreground">
-      {/* Top controls */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex-1">
-          {/* Settings-driven default family (no inline picker here) */}
-          <div className="rounded-2xl border p-3.5 bg-muted/30 flex items-center justify-between">
-            <div className="text-sm">
-              <span className="font-medium">Default family:</span>{' '}
-              <span>{families.find((f) => f.id === familyId)?.name ?? familyId ?? 'None set'}</span>
-            </div>
-            <Link href="/settings" className="text-sm underline">Change</Link>
-          </div>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight">Deliveries 📦</h1>
+          <Link
+            href="/settings"
+            className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span className="inline-flex h-2 w-2 rounded-full bg-primary/70" />
+            {families.find((f) => f.id === familyId)?.name ?? familyId ?? 'No family set'}
+            <span className="underline underline-offset-2">change</span>
+          </Link>
         </div>
 
-        {/* top-right controls */}
-        <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             type="button"
-            variant="outline"
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setSelectionMode((s) => !s)
               if (selectionMode) clearSelection()
             }}
           >
-            {selectionMode ? 'Exit edit' : 'Edit / Delete'}
+            {selectionMode ? 'Done' : 'Edit'}
           </Button>
           <Button
             type="button"
+            className="rounded-full h-11 px-5"
             onClick={() => {
               setEditingDelivery(null)
               setOpenForm(true)
             }}
           >
             <Plus className="w-4 h-4" />
-            <span className="ml-2 hidden sm:inline">Add Delivery</span>
+            <span className="ml-1.5">Add</span>
           </Button>
         </div>
       </div>
 
-      {/* Filters and Tabs */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* Search */}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <input
+          value={queryText}
+          onChange={(e) => setQueryText(e.target.value)}
+          placeholder="Search deliveries…"
+          className="h-12 w-full rounded-2xl border border-input bg-card text-foreground placeholder:text-muted-foreground pl-11 pr-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+        />
+      </div>
+
+      {/* Tabs + status filter */}
+      <div className="flex items-center justify-between gap-3">
         <div className="flex gap-1 bg-muted rounded-full p-1">
           {(['upcoming', 'archived'] as const).map((t) => (
             <button
@@ -456,21 +469,10 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
             </button>
           ))}
         </div>
-
-        {/* Search + status filter */}
-        <div className="relative w-full sm:w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            value={queryText}
-            onChange={(e) => setQueryText(e.target.value)}
-            placeholder="Search deliveries…"
-            className="h-9 w-full rounded-md border border-input bg-background text-foreground placeholder:text-muted-foreground pl-8 pr-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-          />
-        </div>
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value as any)}
-          className="h-9 rounded-md border border-input bg-background text-foreground px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="h-10 rounded-full border border-input bg-card text-foreground px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <option value="all">All statuses</option>
           <option value="pending">Pending</option>
@@ -501,30 +503,30 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
           {/* ---------------- Single Deliveries ---------------- */}
           <section>
             <div className="mb-4 flex items-center gap-2">
-              <h3 className="text-lg font-semibold">Single Deliveries</h3>
+              <h3 className="text-xl font-semibold">Single Deliveries</h3>
               <Badge variant="secondary">{singles.length}</Badge>
             </div>
 
             {singles.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-8 text-center">
-                <PackageOpen className="h-6 w-6 text-muted-foreground" />
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center">
+                <PackageOpen className="h-8 w-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">No single deliveries {tab === 'archived' ? 'archived yet' : 'yet'}.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {singles.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
                   const openNotes = !!notesOpen[d.id]
                   return (
-                    <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
+                    <div key={keyFor(d)} className="relative group rounded-2xl border bg-card text-card-foreground p-5 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
                         </div>
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-3">
                           <Badge variant="outline" className="text-xs">Single</Badge>
                           {d.codAmount != null && (
                             <div className="text-xs text-muted-foreground">
@@ -555,17 +557,17 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
           {/* ---------------- Multiple Deliveries ---------------- */}
           <section className="mt-10">
             <div className="mb-4 flex items-center gap-2">
-              <h3 className="text-lg font-semibold">Multiple Deliveries</h3>
+              <h3 className="text-xl font-semibold">Multiple Deliveries</h3>
               <Badge variant="secondary">{multiples.length}</Badge>
             </div>
 
             {multiples.length === 0 ? (
-              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed py-8 text-center">
-                <PackageOpen className="h-6 w-6 text-muted-foreground" />
+              <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-14 text-center">
+                <PackageOpen className="h-8 w-8 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">No multiple-item deliveries {tab === 'archived' ? 'archived yet' : 'yet'}.</p>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {multiples.map((d) => {
                   const props = d.type === 'order' ? { order: d } : { delivery: d }
                   const locked = ['delivered', 'cancelled'].includes(d.status)
@@ -574,14 +576,14 @@ function DeliveriesPageContent({ familyId, families, myUid }: { familyId: string
                   const total = itemsTotal(items) || (typeof d.codAmount === 'number' ? d.codAmount : 0)
 
                   return (
-                    <div key={keyFor(d)} className="relative group rounded border bg-card text-card-foreground p-3 shadow-sm">
+                    <div key={keyFor(d)} className="relative group rounded-2xl border bg-card text-card-foreground p-5 shadow-sm">
                       {selectionMode && (
                         <div className="absolute left-2 top-2 z-10">
                           <Checkbox checked={!!selectedIds[d.id]} onCheckedChange={() => toggleSelect(d.id)} />
                         </div>
                       )}
                       <div className={`${selectionMode ? 'pl-8' : ''}`}>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-xs">Multiple</Badge>
                             <span className="text-xs text-muted-foreground flex items-center gap-1">
