@@ -259,24 +259,44 @@ export default function HomePage() {
     )
   }
 
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
+  const firstName = (user?.name ?? '').trim().split(' ')[0] || ''
+
   return (
     <>
       {offlineBanner}
-      <main className={`max-w-2xl mx-auto p-6 space-y-6 ios-scroll ${isIOS ? 'ios-screen ios-stack' : ''}`}>
+      <main className={`max-w-2xl mx-auto p-5 sm:p-6 space-y-5 ios-scroll ${isIOS ? 'ios-screen ios-stack' : ''}`}>
         <CreateFamilyModal open={createOpen} onOpenChange={setCreateOpen} />
         <JoinFamilyModal open={joinOpen} onOpenChange={setJoinOpen} />
 
-        <div className="rounded-lg border p-3 bg-muted/30 flex items-center justify-between">
-          <div className="text-sm">
-            <span className="font-medium">Default family:</span>{' '}
-            <span>{families.find((f) => f.id === familyId)?.name ?? familyId ?? 'None set'}</span>
-          </div>
-          <Link href="/settings#default-family" className="text-sm underline">Change</Link>
-        </div>
+        {/* Greeting */}
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+        >
+          <h1 className="text-2xl font-bold tracking-tight truncate">
+            {greeting}{firstName ? `, ${firstName}` : ''} <span className="inline-block">👋</span>
+          </h1>
+          <Link
+            href="/settings#default-family"
+            className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <span className="inline-flex h-2 w-2 rounded-full bg-primary/70" />
+            {families.find((f) => f.id === familyId)?.name ?? familyId ?? 'No family set'}
+            <span className="underline underline-offset-2">change</span>
+          </Link>
+        </motion.div>
 
-        <Card>
+        <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
           <CardHeader>
-            <CardTitle>Who's Home</CardTitle>
+            <CardTitle className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-600">
+                <HomeIcon className="h-4 w-4" />
+              </span>
+              Who&apos;s home
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
             {presenceLoading || loadingFamilies ? (
@@ -306,7 +326,7 @@ export default function HomePage() {
                 const loading = membersLoading
 
                 const homeBanner = hasHomeLocation === false ? (
-                  <div className="flex items-start gap-3 p-3 border rounded bg-muted/30 mb-2">
+                  <div className="flex items-start gap-3 p-3 border rounded-2xl bg-muted/30 mb-2">
                     <MapPin className="h-4 w-4 mt-0.5 text-muted-foreground" />
                     <div className="text-xs">
                       <div className="font-medium">Family Home Location not set</div>
@@ -375,11 +395,11 @@ export default function HomePage() {
                     <div className="space-y-2">
                       {homeBanner}
 
-                      <div className="flex items-center gap-3 px-2 text-xs text-muted-foreground">
-                        <span className="inline-flex items-center gap-1">
-                          <HomeIcon className="h-3.5 w-3.5 text-green-600" /> {homeCount} home
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                          <HomeIcon className="h-3.5 w-3.5" /> {homeCount} home
                         </span>
-                        <span className="inline-flex items-center gap-1">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-xs font-medium text-muted-foreground">
                           <DoorOpen className="h-3.5 w-3.5" /> {outCount} out
                         </span>
                       </div>
@@ -406,14 +426,14 @@ export default function HomePage() {
                                 initial={{ opacity: 0, y: -8 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, y: 8 }}
-                                transition={{ duration: 0.2 }}
-                                className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 px-2 py-1 rounded-md ${isCurrentUser ? 'bg-muted/10' : ''}`}
+                                transition={{ type: 'spring', stiffness: 320, damping: 28 }}
+                                className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-2 px-2.5 py-2 rounded-2xl transition-colors ${isCurrentUser ? 'bg-primary/5 ring-1 ring-primary/10' : 'hover:bg-muted/40'}`}
                               >
                                 <div className="flex items-center gap-3 min-h-[48px]">
                                   {presence.photoURL ? (
-                                    <img src={presence.photoURL} alt={presence.name} className="h-8 w-8 rounded-full object-cover" />
+                                    <img src={presence.photoURL} alt={presence.name} className="h-9 w-9 rounded-full object-cover ring-2 ring-background shadow-sm" />
                                   ) : (
-                                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center text-xs font-medium">
+                                    <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 text-primary flex items-center justify-center text-xs font-semibold ring-2 ring-background shadow-sm">
                                       {initials || '?'}
                                     </div>
                                   )}
@@ -440,8 +460,8 @@ export default function HomePage() {
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                                      <span className="capitalize">{presence.status ?? 'unknown'}</span>
+                                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                                      <span className={`capitalize rounded-full px-2 py-0.5 font-medium ${presence.status === 'home' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground'}`}>{presence.status ?? 'unknown'}</span>
                                       {presence.enRoute && (
                                         <span className="inline-flex items-center gap-1 text-sky-600 font-medium">
                                           <Truck className="w-3 h-3" /> on the way{presence.etaMinutes != null ? ` (~${presence.etaMinutes}m)` : ''}
@@ -455,15 +475,17 @@ export default function HomePage() {
 
                                 <div className="flex items-center gap-2">
                                   {!isCurrentUser && (
-                                    <button
+                                    <motion.button
                                       type="button"
+                                      whileTap={{ scale: 0.82 }}
+                                      transition={{ type: 'spring', stiffness: 400, damping: 17 }}
                                       onClick={() => toggleWatch(m.uid as string)}
                                       aria-label={watchingMember ? `Stop home alerts for ${presence.name}` : `Notify me when ${presence.name} gets home`}
                                       title={watchingMember ? 'Watching — you’ll be alerted when they get home' : 'Notify me when they get home'}
-                                      className={`rounded-md p-1.5 transition-colors active:scale-95 ${watchingMember ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+                                      className={`rounded-full p-2 transition-colors ${watchingMember ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                                     >
                                       {watchingMember ? <BellRing className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-                                    </button>
+                                    </motion.button>
                                   )}
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -498,7 +520,7 @@ export default function HomePage() {
                       </div>
 
                       {activity.length > 0 && (
-                        <div className="mt-2 p-2 bg-muted/5 rounded-md text-sm">
+                        <div className="mt-3 p-3 bg-muted/40 rounded-2xl text-sm">
                           <div className="text-xs text-muted-foreground mb-1">Recent activity</div>
                           <ul className="space-y-1">
                             {activity.map((a) => (
@@ -523,9 +545,14 @@ export default function HomePage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
           <CardHeader>
-            <CardTitle>Deliveries Today</CardTitle>
+            <CardTitle className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-sky-500/10 text-sky-600">
+                <Truck className="h-4 w-4" />
+              </span>
+              Deliveries today
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {presenceLoading || loadingFamilies ? (
@@ -546,32 +573,41 @@ export default function HomePage() {
 
         {familyId && (
           <Link href="/shopping" className="block">
-            <Card className="transition-colors hover:bg-muted/40">
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3">
-                  <ShoppingCart className="h-5 w-5 text-muted-foreground" />
-                  <div>
-                    <div className="font-medium">Shopping List</div>
-                    <div className="text-xs text-muted-foreground">Shared family errands &amp; groceries</div>
+            <motion.div whileTap={{ scale: 0.985 }} transition={{ type: 'spring', stiffness: 400, damping: 25 }}>
+              <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03] transition-colors hover:bg-muted/40">
+                <CardContent className="flex items-center justify-between py-4">
+                  <div className="flex items-center gap-3">
+                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-600">
+                      <ShoppingCart className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <div className="font-medium">Shopping list</div>
+                      <div className="text-xs text-muted-foreground">Shared family errands &amp; groceries</div>
+                    </div>
                   </div>
-                </div>
-                <span className="text-sm text-muted-foreground">Open →</span>
-              </CardContent>
-            </Card>
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-muted text-muted-foreground">→</span>
+                </CardContent>
+              </Card>
+            </motion.div>
           </Link>
         )}
 
         {/* Your status */}
-        <Card>
+        <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
           <CardHeader>
-            <CardTitle>Your status</CardTitle>
+            <CardTitle className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <MapPin className="h-4 w-4" />
+              </span>
+              Your status
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             {(presenceLoading || loadingFamilies) ? (
               <Skeleton className="h-11 w-full rounded-md" />
             ) : myStatusSource === 'geo' ? (
               <>
-                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-3 rounded-2xl border bg-muted/30 p-3">
                   <div className="flex items-center gap-3">
                     {isHome ? (
                       <HomeIcon className="h-5 w-5 text-green-600" />
@@ -591,12 +627,12 @@ export default function HomePage() {
                 </p>
               </>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="h-11">
-                  <HomeIcon className="w-4 h-4 mr-2" /> I’m Home
+              <div className="grid grid-cols-2 gap-2.5">
+                <Button type="button" variant={isHome ? 'default' : 'outline'} onClick={() => handlePresenceChange('home')} className="h-12 rounded-2xl text-base transition-transform active:scale-[0.97]">
+                  <HomeIcon className="w-4 h-4 mr-2" /> I’m home
                 </Button>
-                <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="h-11">
-                  <DoorOpen className="w-4 h-4 mr-2" /> I’m Out
+                <Button type="button" variant={isHome === false ? 'default' : 'outline'} onClick={() => handlePresenceChange('away')} className="h-12 rounded-2xl text-base transition-transform active:scale-[0.97]">
+                  <DoorOpen className="w-4 h-4 mr-2" /> I’m out
                 </Button>
               </div>
             )}
@@ -604,7 +640,7 @@ export default function HomePage() {
             {/* On my way home — secondary action, only when not currently home */}
             {!presenceLoading && !loadingFamilies && familyId && !isHome && (
               myPresence?.enRoute ? (
-                <div className="flex items-center justify-between gap-3 rounded-lg border bg-sky-50/60 dark:bg-sky-950/20 p-3">
+                <div className="flex items-center justify-between gap-3 rounded-2xl border bg-sky-50/60 dark:bg-sky-950/20 p-3">
                   <div className="flex items-center gap-2 text-sm min-w-0">
                     <Truck className="w-4 h-4 text-sky-600 shrink-0" />
                     <span className="font-medium">On the way home</span>
