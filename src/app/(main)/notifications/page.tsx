@@ -182,7 +182,7 @@ export default function NotificationsPage() {
 
   return (
     <main
-      className="mx-auto w-full max-w-2xl p-4 md:p-6 leading-tight"
+      className="mx-auto w-full max-w-2xl px-5 py-7 md:px-6"
       style={{ WebkitFontSmoothing: 'antialiased' }}
     >
       {!isOnline && (
@@ -194,7 +194,7 @@ export default function NotificationsPage() {
       {/* Header — mark as no-swipe to keep it tappable on mobile */}
       <div
         data-no-swipe
-        className="mb-3 flex items-center justify-between gap-2 sm:gap-3 pointer-events-auto"
+        className="mb-5 flex items-center justify-between gap-2 sm:gap-3 pointer-events-auto"
       >
         <div className="flex items-center gap-2 min-h-[44px]">
           <Bell className="h-5 w-5 shrink-0" />
@@ -293,7 +293,7 @@ export default function NotificationsPage() {
 
       <Separator />
 
-      <div className="mt-4 space-y-2" aria-busy={loading ? 'true' : 'false'} aria-live="polite">
+      <div className="mt-5 space-y-3" aria-busy={loading ? 'true' : 'false'} aria-live="polite">
         {loading && (
           <>
             {Array.from({ length: 6 }).map((_, i) => (

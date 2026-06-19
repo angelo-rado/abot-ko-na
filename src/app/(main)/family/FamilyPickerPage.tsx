@@ -196,6 +196,7 @@ export default function FamilyPickerPage() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0 }}
         transition={{ type: 'spring', stiffness: 260, damping: 22 }}
+        className="mb-3 last:mb-0"
       >
         <Card
           role="button"
@@ -240,8 +241,8 @@ export default function FamilyPickerPage() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-4">
-      <div className="flex items-center justify-between mb-4">
+    <div className="max-w-2xl mx-auto px-5 py-8">
+      <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Your Families</h1>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => setJoinOpen(true)}>Join</Button>
