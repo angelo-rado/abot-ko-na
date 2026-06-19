@@ -27,6 +27,8 @@ export function useAutoPresence(familyId?: string | null) {
   const lastStatusRef = useRef<'home' | 'away' | null>(null)
   const lastWriteAtRef = useRef<number>(0)
   const lastPosRef = useRef<{ lat: number; lng: number; acc?: number } | null>(null)
+  const lastGeoWriteAtRef = useRef<number>(0)
+  const lastGeoPosRef = useRef<{ lat: number; lng: number } | null>(null)
   const unsubFamilyRef = useRef<null | (() => void)>(null)
 
   const debug = () => (typeof window !== 'undefined' && localStorage.getItem('debugAutoPresence') === '1')
@@ -41,6 +43,7 @@ export function useAutoPresence(familyId?: string | null) {
         const { latitude, longitude, accuracy } = pos.coords
         lastPosRef.current = { lat: latitude, lng: longitude, acc: accuracy }
         evaluate(latitude, longitude, accuracy)
+        void maybeWriteGeo(latitude, longitude, accuracy)
       },
       (err) => {
         if (debug()) console.warn('[autoPresence] watch error', err)
@@ -97,6 +100,29 @@ export function useAutoPresence(familyId?: string | null) {
       },
       { merge: true }
     )
+  }
+
+  // Keep the map fresh: periodically persist the live position (throttled by
+  // time + distance) so member pins move, not just on home/away transitions.
+  async function maybeWriteGeo(lat: number, lng: number, accuracy?: number) {
+    const user = auth.currentUser
+    if (!user || !familyId) return
+    const now = Date.now()
+    if (now - lastGeoWriteAtRef.current < 60_000) return // at most once per minute
+    const last = lastGeoPosRef.current
+    if (last && haversine(lat, lng, last.lat, last.lng) < 25) return // skip if barely moved
+    lastGeoWriteAtRef.current = now
+    lastGeoPosRef.current = { lat, lng }
+    try {
+      await setDoc(
+        doc(firestore, 'families', familyId, 'members', user.uid),
+        { lastGeo: { lat, lng, accuracy: accuracy ?? null, updatedAt: serverTimestamp() }, uid: user.uid },
+        { merge: true }
+      )
+      if (debug()) console.log('[autoPresence] live geo write', { lat, lng })
+    } catch (e) {
+      if (debug()) console.warn('[autoPresence] live geo write failed', e)
+    }
   }
 
   function evaluate(lat: number, lng: number, accuracy?: number) {

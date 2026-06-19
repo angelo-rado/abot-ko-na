@@ -275,31 +275,31 @@ export default function HomePage() {
   const firstName = (user?.name ?? '').trim().split(' ')[0] || ''
 
   // Members with auto-presence on that have a last-known location → map pins.
-  const mapMembers: PresenceMember[] = membersLive
-    .map((m) => {
-      const lg = (m as any).lastGeo
-      const lat = lg?.lat, lng = lg?.lng
-      if (typeof lat !== 'number' || typeof lng !== 'number') return null
-      const auto =
-        (m as any).statusSource === 'geo' ||
-        (m as any).autoPresence === true ||
-        (m as any).presence?.statusSource === 'geo'
-      if (!auto) return null
-      const ts = lg?.updatedAt?.toDate
-        ? lg.updatedAt.toDate().getTime()
-        : typeof lg?.updatedAt?.seconds === 'number'
-          ? lg.updatedAt.seconds * 1000
-          : null
-      return {
-        uid: m.uid as string,
-        name: ((m as any).name as string) ?? 'Member',
-        status: normalizeMemberStatus(m) as 'home' | 'away' | null,
-        lat,
-        lng,
-        updatedAt: ts,
-      }
-    })
-    .filter((x): x is PresenceMember => x !== null)
+  const mapMembers: PresenceMember[] = membersLive.flatMap((m) => {
+    const lg = (m as any).lastGeo
+    const lat = lg?.lat, lng = lg?.lng
+    if (typeof lat !== 'number' || typeof lng !== 'number') return []
+    const auto =
+      (m as any).statusSource === 'geo' ||
+      (m as any).autoPresence === true ||
+      (m as any).presence?.statusSource === 'geo'
+    if (!auto) return []
+    const ts = lg?.updatedAt?.toDate
+      ? lg.updatedAt.toDate().getTime()
+      : typeof lg?.updatedAt?.seconds === 'number'
+        ? lg.updatedAt.seconds * 1000
+        : null
+    const pm: PresenceMember = {
+      uid: m.uid as string,
+      name: ((m as any).name as string) ?? 'Member',
+      photoURL: ((m as any).photoURL as string | null) ?? null,
+      status: normalizeMemberStatus(m) as 'home' | 'away' | null,
+      lat,
+      lng,
+      updatedAt: ts,
+    }
+    return [pm]
+  })
 
   return (
     <>

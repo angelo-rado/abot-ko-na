@@ -14,18 +14,52 @@ L.Icon.Default.mergeOptions({
   shadowUrl: '/leaflet/marker-shadow.png',
 })
 
-const homeIcon = L.icon({
-  iconUrl: '/leaflet/marker-icon-red.png',
-  shadowUrl: '/leaflet/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-  popupAnchor: [1, -34],
-  shadowSize: [41, 41],
+const homeDivIcon = L.divIcon({
+  className: 'presence-pin',
+  html:
+    `<div style="width:40px;height:40px;border-radius:9999px;background:#b45309;` +
+    `display:flex;align-items:center;justify-content:center;font-size:18px;` +
+    `border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);">🏡</div>`,
+  iconSize: [40, 40],
+  iconAnchor: [20, 20],
+  popupAnchor: [0, -22],
 })
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ))
+}
+
+function initialsOf(name: string): string {
+  return (
+    name.trim().split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase() || '?'
+  )
+}
+
+/** Google-Maps-style avatar pin: photo if available, else initials chip. */
+function memberIcon(m: PresenceMember): L.DivIcon {
+  const ring = m.status === 'home' ? '#16a34a' : '#9ca3af'
+  const inner = m.photoURL
+    ? `<img src="${escapeHtml(m.photoURL)}" alt="" referrerpolicy="no-referrer" style="width:100%;height:100%;object-fit:cover;border-radius:9999px;" />`
+    : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;` +
+      `border-radius:9999px;background:linear-gradient(135deg,#f5d0a9,#f8e4c9);color:#92400e;` +
+      `font-weight:600;font-size:13px;font-family:system-ui,-apple-system,sans-serif;">${escapeHtml(initialsOf(m.name))}</div>`
+  return L.divIcon({
+    className: 'presence-pin',
+    html:
+      `<div style="width:38px;height:38px;border-radius:9999px;background:#fff;padding:2px;` +
+      `box-sizing:border-box;border:2.5px solid ${ring};box-shadow:0 2px 6px rgba(0,0,0,.3);">${inner}</div>`,
+    iconSize: [38, 38],
+    iconAnchor: [19, 19],
+    popupAnchor: [0, -20],
+  })
+}
 
 export type PresenceMember = {
   uid: string
   name: string
+  photoURL?: string | null
   status: 'home' | 'away' | null
   lat: number
   lng: number
@@ -78,13 +112,13 @@ export default function PresenceMap({
         radius={radius}
         pathOptions={{ color: '#b45309', fillColor: '#d97706', fillOpacity: 0.08, weight: 1.5 }}
       />
-      <Marker position={[home.lat, home.lng]} icon={homeIcon}>
+      <Marker position={[home.lat, home.lng]} icon={homeDivIcon}>
         <Popup>🏡 Home</Popup>
       </Marker>
 
       {/* Members with auto-presence on */}
       {members.map((m) => (
-        <Marker key={m.uid} position={[m.lat, m.lng]}>
+        <Marker key={m.uid} position={[m.lat, m.lng]} icon={memberIcon(m)}>
           <Popup>
             <div className="text-sm font-medium">{m.name}</div>
             <div className="text-xs">{m.status === 'home' ? '🏠 Home' : '🚪 Out'} · Auto</div>
