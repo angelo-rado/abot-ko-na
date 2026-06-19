@@ -156,7 +156,7 @@ export default function ShoppingListPage() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto p-6 space-y-6">
+    <main className="max-w-2xl mx-auto px-5 py-8 space-y-7">
       <div className="flex items-center gap-3">
         <Link href="/" className="text-muted-foreground hover:text-foreground" aria-label="Back to home">
           <ArrowLeft className="h-5 w-5" />

@@ -153,7 +153,7 @@ export default function SettingsPage() {
   return (
     <>
       {offlineBanner}
-      <main className="mx-auto w-full max-w-2xl p-6 space-y-6">
+      <main className="mx-auto w-full max-w-2xl px-5 py-8 space-y-7">
         <div className="space-y-2">
           <h1 className="text-xl font-semibold">Settings</h1>
           <Separator />
