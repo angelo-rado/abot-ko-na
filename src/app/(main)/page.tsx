@@ -40,8 +40,15 @@ import {
   normalizeMemberSource,
   normalizeMember,
 } from '@/lib/models/presence'
-import { hasHomeLocation as familyHasHomeLocation } from '@/lib/models/family'
+import { hasHomeLocation as familyHasHomeLocation, getHomeLocation } from '@/lib/models/family'
 import { setEnRoute, clearEnRoute, ETA_OPTIONS } from '@/lib/enroute'
+import dynamic from 'next/dynamic'
+import type { PresenceMember } from '../components/PresenceMap'
+
+const PresenceMap = dynamic(() => import('../components/PresenceMap'), {
+  ssr: false,
+  loading: () => <Skeleton className="h-[260px] w-full rounded-2xl" />,
+})
 
 export default function HomePage() {
   const { user, loading: authLoading } = useAuth()
@@ -119,15 +126,21 @@ export default function HomePage() {
 
   // Family Home Location detector (robust: GeoPoint | {lat,lng} | {lat,lon} | legacy fields)
   const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
+  const [homeLoc, setHomeLoc] = useState<{ lat: number; lng: number } | null>(null)
+  const [homeRadius, setHomeRadius] = useState<number>(120)
   useEffect(() => {
-    if (!familyId) { setHasHomeLocation(null); return }
+    if (!familyId) { setHasHomeLocation(null); setHomeLoc(null); return }
 
     const unsub = onSnapshot(
       doc(firestore, 'families', familyId),
       (snap) => {
-        setHasHomeLocation(familyHasHomeLocation(snap.data()))
+        const data = snap.data()
+        setHasHomeLocation(familyHasHomeLocation(data))
+        setHomeLoc(getHomeLocation(data))
+        const r = (data as any)?.homeRadiusMeters
+        setHomeRadius(typeof r === 'number' && Number.isFinite(r) ? Math.max(30, Math.min(1000, r)) : 120)
       },
-      () => setHasHomeLocation(false)
+      () => { setHasHomeLocation(false); setHomeLoc(null) }
     )
     return () => unsub()
   }, [familyId])
@@ -260,6 +273,33 @@ export default function HomePage() {
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
   const greetEmoji = hour < 12 ? '☀️' : hour < 18 ? '🌤️' : '🌙'
   const firstName = (user?.name ?? '').trim().split(' ')[0] || ''
+
+  // Members with auto-presence on that have a last-known location → map pins.
+  const mapMembers: PresenceMember[] = membersLive
+    .map((m) => {
+      const lg = (m as any).lastGeo
+      const lat = lg?.lat, lng = lg?.lng
+      if (typeof lat !== 'number' || typeof lng !== 'number') return null
+      const auto =
+        (m as any).statusSource === 'geo' ||
+        (m as any).autoPresence === true ||
+        (m as any).presence?.statusSource === 'geo'
+      if (!auto) return null
+      const ts = lg?.updatedAt?.toDate
+        ? lg.updatedAt.toDate().getTime()
+        : typeof lg?.updatedAt?.seconds === 'number'
+          ? lg.updatedAt.seconds * 1000
+          : null
+      return {
+        uid: m.uid as string,
+        name: ((m as any).name as string) ?? 'Member',
+        status: normalizeMemberStatus(m) as 'home' | 'away' | null,
+        lat,
+        lng,
+        updatedAt: ts,
+      }
+    })
+    .filter((x): x is PresenceMember => x !== null)
 
   return (
     <>
@@ -521,6 +561,26 @@ export default function HomePage() {
             )}
           </CardContent>
         </Card>
+
+        {familyId && homeLoc && (
+          <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2.5">
+                <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-600">
+                  <MapPin className="h-4 w-4" />
+                </span>
+                Family map
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2.5">
+              <PresenceMap home={homeLoc} radius={homeRadius} members={mapMembers} />
+              <p className="text-xs text-muted-foreground">
+                Home 🏡 and the last-known spots of members with auto-presence on — updated when someone arrives or leaves.
+                {mapMembers.length === 0 && ' No member locations to show yet.'}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
           <CardHeader>
