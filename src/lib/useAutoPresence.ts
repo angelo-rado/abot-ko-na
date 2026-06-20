@@ -54,6 +54,21 @@ export function useAutoPresence(familyId?: string | null) {
         timeout: 25_000,
       }
     )
+
+    // One-shot FRESH fix (maximumAge: 0) so opening the app snaps the map/status
+    // to where you actually are, instead of a cached/stale position.
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords
+        lastPosRef.current = { lat: latitude, lng: longitude, acc: accuracy }
+        evaluate(latitude, longitude, accuracy)
+        void maybeWriteGeo(latitude, longitude, accuracy)
+      },
+      (err) => {
+        if (debug()) console.warn('[autoPresence] one-shot error', err)
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
+    )
     if (debug()) console.log('[autoPresence] watch started', watchIdRef.current)
   }
 

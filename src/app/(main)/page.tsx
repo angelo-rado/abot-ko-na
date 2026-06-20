@@ -275,6 +275,8 @@ export default function HomePage() {
   const firstName = (user?.name ?? '').trim().split(' ')[0] || ''
 
   // Members with auto-presence on that have a last-known location → map pins.
+  // Members with auto-presence on that have a RECENT last-known location → map pins.
+  const FRESH_MS = 3 * 60 * 60 * 1000 // 3 hours
   const mapMembers: PresenceMember[] = membersLive.flatMap((m) => {
     const lg = (m as any).lastGeo
     const lat = lg?.lat, lng = lg?.lng
@@ -289,6 +291,8 @@ export default function HomePage() {
       : typeof lg?.updatedAt?.seconds === 'number'
         ? lg.updatedAt.seconds * 1000
         : null
+    // Skip stale fixes (e.g. months-old) so the map shows current-ish positions.
+    if (ts == null || Date.now() - ts > FRESH_MS) return []
     const pm: PresenceMember = {
       uid: m.uid as string,
       name: ((m as any).name as string) ?? 'Member',
@@ -575,8 +579,9 @@ export default function HomePage() {
             <CardContent className="space-y-2.5">
               <PresenceMap home={homeLoc} radius={homeRadius} members={mapMembers} />
               <p className="text-xs text-muted-foreground">
-                Home 🏡 and the last-known spots of members with auto-presence on — updated when someone arrives or leaves.
-                {mapMembers.length === 0 && ' No member locations to show yet.'}
+                Home 🏡 and recent spots of members with auto-presence on. Locations refresh while the app is open
+                (the web can’t track in the background), so they can lag a little.
+                {mapMembers.length === 0 && ' No recent member locations to show.'}
               </p>
             </CardContent>
           </Card>
