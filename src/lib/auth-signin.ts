@@ -4,16 +4,18 @@
 import { signInWithPopup, signInWithRedirect } from 'firebase/auth'
 import { auth, provider } from '@/lib/firebase'
 
-/** iOS Safari and installed PWAs block auth popups, so prefer redirect there. */
+/**
+ * Only installed PWAs need the redirect flow (they block popups). Mobile
+ * browsers can use a popup, which returns the credential via postMessage to
+ * our own origin — avoiding the iOS Safari / ITP cross-domain redirect loop.
+ */
 function prefersRedirect(): boolean {
   if (typeof navigator === 'undefined' || typeof window === 'undefined') return false
-  const ua = navigator.userAgent || ''
-  const isMobileUA = /iPhone|iPad|iPod|Android/i.test(ua)
   const isStandalone =
     window.matchMedia?.('(display-mode: standalone)')?.matches === true ||
     // iOS Safari "Add to Home Screen"
     (navigator as unknown as { standalone?: boolean }).standalone === true
-  return isMobileUA || isStandalone
+  return isStandalone
 }
 
 /**
