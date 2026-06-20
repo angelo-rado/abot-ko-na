@@ -285,11 +285,6 @@ export default function HomePage() {
     const lg = (m as any).lastGeo
     const lat = lg?.lat, lng = lg?.lng
     if (typeof lat !== 'number' || typeof lng !== 'number') return []
-    const auto =
-      (m as any).statusSource === 'geo' ||
-      (m as any).autoPresence === true ||
-      (m as any).presence?.statusSource === 'geo'
-    if (!auto) return []
     const ts = lg?.updatedAt?.toDate
       ? lg.updatedAt.toDate().getTime()
       : typeof lg?.updatedAt?.seconds === 'number'
@@ -318,6 +313,37 @@ export default function HomePage() {
     }
     setFocusTarget({ lat: pin.lat, lng: pin.lng })
     mapCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+
+  const meOnMap = mapMembers.some((p) => p.uid === user?.uid)
+  const showMeOnMap = () => {
+    if (!user?.uid || !familyId) return
+    if (!('geolocation' in navigator)) {
+      toast.error('Location not supported on this device')
+      return
+    }
+    toast('Getting your location…')
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords
+        try {
+          await setDoc(
+            doc(firestore, 'families', familyId, 'members', user.uid),
+            {
+              lastGeo: { lat: latitude, lng: longitude, accuracy: accuracy ?? null, updatedAt: serverTimestamp() },
+              uid: user.uid,
+            },
+            { merge: true }
+          )
+          setFocusTarget({ lat: latitude, lng: longitude })
+          toast.success('You’re on the map')
+        } catch {
+          toast.error('Could not update your location')
+        }
+      },
+      () => toast.error('Allow location access to appear on the map'),
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
+    )
   }
 
   return (
@@ -605,11 +631,14 @@ export default function HomePage() {
               </CardHeader>
               <CardContent className="space-y-2.5">
                 <PresenceMap home={homeLoc} radius={homeRadius} members={mapMembers} focus={focusTarget} />
-                <p className="text-xs text-muted-foreground">
-                  Home 🏡 and recent spots of members with auto-presence on. Tap the 📍 on a member to fly there.
-                  Locations refresh while the app is open (the web can’t track in the background), so they can lag a little.
-                  {mapMembers.length === 0 && ' No recent member locations to show.'}
-                </p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Home 🏡 and recent spots. Tap 📍 on a member to fly there. Locations refresh while the app is open.
+                  </p>
+                  <Button type="button" size="sm" variant="outline" className="rounded-full shrink-0" onClick={showMeOnMap}>
+                    <MapPin className="h-4 w-4 mr-1.5" /> {meOnMap ? 'Update me' : 'Show me'}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           </div>
