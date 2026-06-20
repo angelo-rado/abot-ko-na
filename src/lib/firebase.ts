@@ -9,25 +9,9 @@ import {
 // DO NOT import getMessaging here at top-level
 import type { Messaging } from 'firebase/messaging'
 
-// Hosts that proxy Firebase's auth handler at /__/auth/* (see vercel.json).
-// On these we use the app's own origin as authDomain so signInWithPopup /
-// signInWithRedirect stay same-origin — avoiding the iOS Safari / ITP
-// cross-domain sign-in loop. Extendable via env for custom domains.
-const SAME_ORIGIN_AUTH_HOSTS = (
-  process.env.NEXT_PUBLIC_SAME_ORIGIN_AUTH_HOSTS || 'abot-ko-na.vercel.app'
-)
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-
-const resolvedAuthDomain =
-  typeof window !== 'undefined' && SAME_ORIGIN_AUTH_HOSTS.includes(window.location.host)
-    ? window.location.host
-    : process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
-
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: resolvedAuthDomain,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
   storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
