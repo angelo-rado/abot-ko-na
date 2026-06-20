@@ -1,7 +1,7 @@
 // src/app/(main)/page.tsx
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/lib/useAuth'
@@ -61,6 +61,10 @@ export default function HomePage() {
 
   const [membersLive, setMembersLive] = useState<RawMember[]>([])
   const [membersLoading, setMembersLoading] = useState(true)
+
+  // Map focus (tap a member to fly to them) + ref to scroll the map into view.
+  const [focusTarget, setFocusTarget] = useState<{ lat: number; lng: number } | null>(null)
+  const mapCardRef = useRef<HTMLDivElement | null>(null)
 
   const [createOpen, setCreateOpen] = useState(false)
   const [joinOpen, setJoinOpen] = useState(false)
@@ -291,8 +295,9 @@ export default function HomePage() {
       : typeof lg?.updatedAt?.seconds === 'number'
         ? lg.updatedAt.seconds * 1000
         : null
-    // Skip stale fixes (e.g. months-old) so the map shows current-ish positions.
-    if (ts == null || Date.now() - ts > FRESH_MS) return []
+    // Hide only confidently-stale fixes (e.g. months-old). A null timestamp means
+    // the server write is still pending (the freshest case) — keep it.
+    if (ts != null && Date.now() - ts > FRESH_MS) return []
     const pm: PresenceMember = {
       uid: m.uid as string,
       name: ((m as any).name as string) ?? 'Member',
@@ -304,6 +309,16 @@ export default function HomePage() {
     }
     return [pm]
   })
+
+  const locateMember = (uid: string, name: string) => {
+    const pin = mapMembers.find((p) => p.uid === uid)
+    if (!pin) {
+      toast(`No recent location for ${name}`)
+      return
+    }
+    setFocusTarget({ lat: pin.lat, lng: pin.lng })
+    mapCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 
   return (
     <>
@@ -520,6 +535,17 @@ export default function HomePage() {
                                 </div>
 
                                 <div className="flex items-center gap-2">
+                                  <motion.button
+                                    type="button"
+                                    whileTap={{ scale: 0.82 }}
+                                    transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                                    onClick={() => locateMember(m.uid as string, presence.name)}
+                                    aria-label={`Show ${presence.name} on the map`}
+                                    title="Show on map"
+                                    className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                                  >
+                                    <MapPin className="h-4 w-4" />
+                                  </motion.button>
                                   {!isCurrentUser && (
                                     <motion.button
                                       type="button"
@@ -567,24 +593,26 @@ export default function HomePage() {
         </Card>
 
         {familyId && homeLoc && (
-          <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2.5">
-                <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-600">
-                  <MapPin className="h-4 w-4" />
-                </span>
-                Family map
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2.5">
-              <PresenceMap home={homeLoc} radius={homeRadius} members={mapMembers} />
-              <p className="text-xs text-muted-foreground">
-                Home 🏡 and recent spots of members with auto-presence on. Locations refresh while the app is open
-                (the web can’t track in the background), so they can lag a little.
-                {mapMembers.length === 0 && ' No recent member locations to show.'}
-              </p>
-            </CardContent>
-          </Card>
+          <div ref={mapCardRef}>
+            <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2.5">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-600">
+                    <MapPin className="h-4 w-4" />
+                  </span>
+                  Family map
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2.5">
+                <PresenceMap home={homeLoc} radius={homeRadius} members={mapMembers} focus={focusTarget} />
+                <p className="text-xs text-muted-foreground">
+                  Home 🏡 and recent spots of members with auto-presence on. Tap the 📍 on a member to fly there.
+                  Locations refresh while the app is open (the web can’t track in the background), so they can lag a little.
+                  {mapMembers.length === 0 && ' No recent member locations to show.'}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         <Card className="rounded-3xl border-border/60 shadow-sm shadow-black/[0.03]">
