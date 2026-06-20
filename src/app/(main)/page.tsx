@@ -132,8 +132,9 @@ export default function HomePage() {
   const [hasHomeLocation, setHasHomeLocation] = useState<boolean | null>(null)
   const [homeLoc, setHomeLoc] = useState<{ lat: number; lng: number } | null>(null)
   const [homeRadius, setHomeRadius] = useState<number>(120)
+  const [familyName, setFamilyName] = useState<string | null>(null)
   useEffect(() => {
-    if (!familyId) { setHasHomeLocation(null); setHomeLoc(null); return }
+    if (!familyId) { setHasHomeLocation(null); setHomeLoc(null); setFamilyName(null); return }
 
     const unsub = onSnapshot(
       doc(firestore, 'families', familyId),
@@ -141,6 +142,7 @@ export default function HomePage() {
         const data = snap.data()
         setHasHomeLocation(familyHasHomeLocation(data))
         setHomeLoc(getHomeLocation(data))
+        setFamilyName(((data as any)?.name as string) ?? null)
         const r = (data as any)?.homeRadiusMeters
         setHomeRadius(typeof r === 'number' && Number.isFinite(r) ? Math.max(30, Math.min(1000, r)) : 120)
       },
@@ -379,7 +381,7 @@ export default function HomePage() {
             className="mt-1.5 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <span className="inline-flex h-2 w-2 rounded-full bg-primary/70" />
-            {families.find((f) => f.id === familyId)?.name ?? familyId ?? 'No family set'}
+            {families.find((f) => f.id === familyId)?.name ?? familyName ?? (familyId ? 'Loading…' : 'No family set')}
             <span className="underline underline-offset-2">change</span>
           </Link>
         </motion.div>
@@ -403,7 +405,7 @@ export default function HomePage() {
                   </div>
                 ))}
               </>
-            ) : families.length === 0 ? (
+            ) : (!familyId && families.length === 0) ? (
               <div className="flex flex-col items-center text-center space-y-3 py-4">
                 <div className="text-3xl">🏡</div>
                 <p className="text-sm text-muted-foreground">
