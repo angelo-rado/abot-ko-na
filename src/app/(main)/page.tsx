@@ -64,6 +64,7 @@ export default function HomePage() {
 
   // Map focus (tap a member to fly to them) + ref to scroll the map into view.
   const [focusTarget, setFocusTarget] = useState<{ lat: number; lng: number } | null>(null)
+  const [locMsg, setLocMsg] = useState<string | null>(null)
   const mapCardRef = useRef<HTMLDivElement | null>(null)
 
   const [createOpen, setCreateOpen] = useState(false)
@@ -325,6 +326,7 @@ export default function HomePage() {
       return
     }
     toast('Getting your location…')
+    setLocMsg('Getting your location…')
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude, accuracy } = pos.coords
@@ -338,9 +340,12 @@ export default function HomePage() {
             { merge: true }
           )
           setFocusTarget({ lat: latitude, lng: longitude })
+          setLocMsg(`On map ✓ — ${latitude.toFixed(4)}, ${longitude.toFixed(4)} (±${Math.round(accuracy ?? 0)}m)`)
           toast.success('You’re on the map 📍')
         } catch (e) {
-          toast.error(`Couldn’t save location: ${e instanceof Error ? e.message : 'unknown error'}`)
+          const m = e instanceof Error ? e.message : 'unknown error'
+          setLocMsg(`Save failed: ${m}`)
+          toast.error(`Couldn’t save location: ${m}`)
         }
       },
       (err) => {
@@ -352,6 +357,7 @@ export default function HomePage() {
               : err.code === err.TIMEOUT
                 ? 'Location timed out — tap again'
                 : 'Could not get your location'
+        setLocMsg(`${msg} (code ${err.code})`)
         toast.error(`${msg} (code ${err.code})`)
       },
       { enableHighAccuracy: false, maximumAge: 30_000, timeout: 15_000 }
@@ -651,6 +657,11 @@ export default function HomePage() {
                     <MapPin className="h-4 w-4 mr-1.5" /> {meOnMap ? 'Update me' : 'Show me'}
                   </Button>
                 </div>
+                {locMsg && (
+                  <p className="rounded-lg bg-muted px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+                    {locMsg} · pins on map: {mapMembers.length}{meOnMap ? ' · you’re shown ✓' : ''}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
