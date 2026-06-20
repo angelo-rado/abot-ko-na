@@ -336,13 +336,23 @@ export default function HomePage() {
             { merge: true }
           )
           setFocusTarget({ lat: latitude, lng: longitude })
-          toast.success('You’re on the map')
-        } catch {
-          toast.error('Could not update your location')
+          toast.success('You’re on the map 📍')
+        } catch (e) {
+          toast.error(`Couldn’t save location: ${e instanceof Error ? e.message : 'unknown error'}`)
         }
       },
-      () => toast.error('Allow location access to appear on the map'),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 20_000 }
+      (err) => {
+        const msg =
+          err.code === err.PERMISSION_DENIED
+            ? 'Location is off for Safari — Settings → Privacy → Location Services → Safari Websites → While Using'
+            : err.code === err.POSITION_UNAVAILABLE
+              ? 'Location unavailable right now — try again (better signal helps)'
+              : err.code === err.TIMEOUT
+                ? 'Location timed out — tap again'
+                : 'Could not get your location'
+        toast.error(`${msg} (code ${err.code})`)
+      },
+      { enableHighAccuracy: false, maximumAge: 30_000, timeout: 15_000 }
     )
   }
 
