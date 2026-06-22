@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { collection, addDoc, Timestamp, doc, updateDoc, getDocs, deleteDoc, writeBatch } from 'firebase/firestore'
-import { firestore } from '@/lib/firebase'
+import { firestore, auth } from '@/lib/firebase'
 import { createDelivery } from '@/lib/deliveries'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Textarea } from '@/components/ui/textarea'
@@ -244,9 +244,15 @@ export default function DeliveryFormDialog({ open, onOpenChange, familyId, deliv
     }
     setUploading(true)
     try {
+      const idToken = await auth.currentUser?.getIdToken()
+      if (!idToken) {
+        toast.error('Please sign in again to upload')
+        return
+      }
       const result = await upload(file.name, file, {
         access: 'public',
         handleUploadUrl: '/api/upload-screenshot',
+        clientPayload: idToken,
       })
       setScreenshotUrl(result.url)
     } catch (err) {
