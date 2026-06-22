@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-const ALLOWED_ORIGIN = 'https://example.com'
+// Auth is enforced via the Firebase ID token below; CORS is permissive because
+// there are no cookies (bearer-token auth). Previously a placeholder origin here
+// could 403 legitimate same-origin calls.
+const ALLOWED_ORIGIN = '*'
 
 type Body = { token?: string; userId?: string };
 
@@ -25,13 +28,7 @@ function looksValidToken(t?: string) {
   return true;
 }
 
-export async function OPTIONS(req: NextRequest) {
-  const origin = req.headers.get('origin') || ''
-  if (origin && origin !== ALLOWED_ORIGIN)
-    return new NextResponse(null, {
-      status: 403,
-      headers: { 'access-control-allow-origin': ALLOWED_ORIGIN },
-    })
+export async function OPTIONS(_req: NextRequest) {
   // Allow same-origin callers and preflights cleanly
   return new NextResponse(null, {
     status: 204,
@@ -45,10 +42,6 @@ export async function OPTIONS(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const origin = req.headers.get('origin') || ''
-  if (origin && origin !== ALLOWED_ORIGIN)
-    return json({ ok: false, error: 'forbidden origin' }, 403)
-
   const admin = await import('firebase-admin');
 
   if (!admin.apps.length) {

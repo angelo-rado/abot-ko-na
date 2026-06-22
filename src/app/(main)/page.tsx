@@ -658,7 +658,7 @@ export default function HomePage() {
                   </Button>
                 </div>
                 {locMsg && (
-                  <p className="rounded-lg bg-muted px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+                  <p className={`rounded-lg px-3 py-2 text-[11px] leading-snug ${/code|off|failed|unavailable|timed/i.test(locMsg) ? 'bg-amber-500/10 text-amber-700 dark:text-amber-400' : 'bg-muted text-muted-foreground'}`}>
                     {locMsg} · pins on map: {mapMembers.length}{meOnMap ? ' · you’re shown ✓' : ''}
                   </p>
                 )}

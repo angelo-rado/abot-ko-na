@@ -53,7 +53,12 @@ service cloud.firestore {
 
     // === FAMILIES ===
     match /families/{familyId} {
-      allow list: if isSignedIn();
+      // Scoped list only: a query may return a family doc only if the requester
+      // is in its members array (the picker queries members array-contains uid).
+      // Prevents enumerating every family + leaking home locations.
+      allow list: if isSignedIn() &&
+        resource.data.members is list &&
+        request.auth.uid in resource.data.members;
 
       allow create: if isSignedIn() &&
         request.resource.data.createdBy == request.auth.uid &&
